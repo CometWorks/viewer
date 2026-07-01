@@ -5,6 +5,7 @@ import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api
 import { pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder } from "./content-folder.js";
 import { renderGridScene } from "./grid-renderer.js";
 import { downloadLog, exportStatistics, log } from "./logging.js";
+import { startQuasarThemeSync } from "./theme.js";
 
 document.addEventListener("DOMContentLoaded", start);
 window.addEventListener("pagehide", disposeViewer, { once: true });
@@ -13,6 +14,7 @@ window.addEventListener("pageshow", event => {
 });
 
 async function start() {
+    startQuasarThemeSync();
     cacheElements();
     showLoading("Loading scene", "Initializing renderer...");
     state.voxelSupport = parseVoxelFlag();

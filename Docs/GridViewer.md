@@ -9,7 +9,9 @@ Quasar includes a first-pass browser viewer for live grid and asteroid voxel ent
 3. Refresh the entity list.
 4. Click the eye icon beside a grid or asteroid voxel entity.
 
-The viewer opens grid rows as `/viewer/entity?agentId=...&entityId=...&voxels=1&context=1` and asteroid rows as `/viewer/entity?agentId=...&entityId=...&voxels=1`. The eye icon performs a full document navigation because the viewer is a standalone static page outside the Blazor router. It requests a scene snapshot from `/api/viewer/entities/{agentId}/{entityId}/scene`. Direct viewer URLs without a `voxels` parameter keep voxel data support disabled; direct grid URLs without a `context` parameter keep context mode disabled.
+The viewer opens grid rows in Quasar's fullscreen entity dialog with `/viewer/entity?agentId=...&entityId=...&voxels=1&context=1` and asteroid rows with `/viewer/entity?agentId=...&entityId=...&voxels=1`. The dialog embeds the static viewer page in a same-origin iframe so Quasar navigation stays in place while the viewer keeps its standalone runtime boundary. It requests a scene snapshot from `/api/viewer/entities/{agentId}/{entityId}/scene`. Direct viewer URLs without a `voxels` parameter keep voxel data support disabled; direct grid URLs without a `context` parameter keep context mode disabled.
+
+When embedded by Quasar, the viewer mirrors MudBlazor palette, typography, and border-radius variables from the parent document for surfaces, text, borders, actions, progress, overlays, the Three.js scene background, floor-grid accents, clipping bounds, and sun marker colors. Standalone direct viewer URLs use the same CSS tokens with a fallback palette.
 
 ## Asset Boundary
 

@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { els, state } from "./state.js";
 import { boundsToBox3 } from "./geometry.js";
 import { disposeTextureCache } from "./content-folder.js";
+import { themeColor } from "./theme.js";
 
 export const SMALL_GRID_CUBE_SIZE = 0.5;
 export const LARGE_GRID_CUBE_SIZE = SMALL_GRID_CUBE_SIZE * 5;
@@ -53,9 +54,10 @@ const MATERIAL_TEXTURE_PROPERTIES = [
 
 export function initScene() {
     state.viewerDisposed = false;
+    const sceneBackground = themeColor("--bg", 0x070b12);
     state.scene = new THREE.Scene();
-    state.scene.background = new THREE.Color(0x070b12);
-    state.scene.fog = new THREE.FogExp2(0x070b12, DEFAULT_FOG_DENSITY);
+    state.scene.background = new THREE.Color(sceneBackground);
+    state.scene.fog = new THREE.FogExp2(sceneBackground, DEFAULT_FOG_DENSITY);
 
     state.camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200000);
     state.camera.position.set(28, 24, 32);
@@ -99,6 +101,7 @@ export function initScene() {
     state.renderer.domElement.addEventListener("pointermove", onFlyPointerMove);
     state.renderer.domElement.addEventListener("click", onViewportClick);
     document.addEventListener("pointerlockchange", updateCameraHint);
+    window.addEventListener("quasar-viewer-theme-changed", applySceneTheme);
 
     state.resizeObserver = new ResizeObserver(resize);
     state.resizeObserver.observe(els.viewport);
@@ -131,6 +134,7 @@ export function disposeViewer() {
     canvas?.removeEventListener("pointermove", onFlyPointerMove);
     canvas?.removeEventListener("click", onViewportClick);
     document.removeEventListener("pointerlockchange", updateCameraHint);
+    window.removeEventListener("quasar-viewer-theme-changed", applySceneTheme);
     if (document.pointerLockElement === canvas) document.exitPointerLock();
 
     if (state.scene) disposeObjectTree(state.scene);
@@ -152,6 +156,17 @@ export function disposeViewer() {
     state.clippingBox = null;
     state.fpsFrameCount = 0;
     state.fpsLastUpdateTime = 0;
+}
+
+function applySceneTheme() {
+    if (!state.scene) return;
+
+    const background = themeColor("--bg", 0x070b12);
+    state.scene.background = new THREE.Color(background);
+    if (state.scene.fog) state.scene.fog.color.set(background);
+    if (state.clippingBox?.material) state.clippingBox.material.color.set(themeColor("--hint", 0x7dd3fc));
+    if (state.sunMarker?.material) state.sunMarker.material.color.set(themeColor("--warning", 0xfacc15));
+    if (state.sunMarkerLine?.material) state.sunMarkerLine.material.color.set(themeColor("--warning", 0xfacc15));
 }
 
 export function updateFpsOverlay(now = performance.now()) {
@@ -198,8 +213,8 @@ function createFloorGrid(bounds, gridSize, alignment) {
     const layout = floorGridLayout(bounds, gridSize, alignment);
     const positions = [];
     const colors = [];
-    const minorColor = colorComponents(0x1e293b);
-    const majorColor = colorComponents(0x2563eb);
+    const minorColor = colorComponents(themeColor("--border", 0x1e293b));
+    const majorColor = colorComponents(themeColor("--accent", 0x2563eb));
     const majorEveryCells = Math.max(1, Math.round(layout.majorStep / layout.minorStep));
 
     appendFloorGridLines({
@@ -308,7 +323,7 @@ function replaceClippingBox(layout) {
     const boxGeometry = new THREE.BoxGeometry(width, height, depth);
     const geometry = new THREE.EdgesGeometry(boxGeometry);
     boxGeometry.dispose();
-    const material = new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.85, depthWrite: false });
+    const material = new THREE.LineBasicMaterial({ color: themeColor("--hint", 0x7dd3fc), transparent: true, opacity: 0.85, depthWrite: false });
     const box = new THREE.LineSegments(geometry, material);
     box.name = "ClippingBounds";
     box.position.copy(center);
@@ -550,7 +565,7 @@ function resize() {
 
 function createSunMarker() {
     const geometry = new THREE.SphereGeometry(1, 24, 24);
-    const material = new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: false, depthWrite: false });
+    const material = new THREE.MeshBasicMaterial({ color: themeColor("--warning", 0xfacc15), depthTest: false, depthWrite: false });
     const marker = new THREE.Mesh(geometry, material);
     marker.name = "SunPositionMarker";
     marker.frustumCulled = false;
@@ -562,7 +577,7 @@ function createSunMarker() {
 function createSunMarkerLine() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
-    const material = new THREE.LineBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.38, depthTest: false, depthWrite: false });
+    const material = new THREE.LineBasicMaterial({ color: themeColor("--warning", 0xfacc15), transparent: true, opacity: 0.38, depthTest: false, depthWrite: false });
     const line = new THREE.Line(geometry, material);
     line.name = "SunDirectionLine";
     line.frustumCulled = false;

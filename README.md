@@ -11,10 +11,15 @@ Browser-side Space Engineers grid and asteroid viewer used by Quasar.
 
 ## Quasar Integration
 
-Quasar vendors this repository as the `Viewer/` subtree. During
+Quasar vendors this repository as the `Viewer/` submodule. During
 `Quasar/Quasar.csproj` build, `Viewer/src` is copied to
 `Quasar/wwwroot/viewer` and npm packages are restored from `Viewer/package-lock.json`.
 
-Future subtree updates should land under `Viewer/**` in Quasar. The Quasar
+Future submodule updates should move the `Viewer` gitlink in Quasar. The Quasar
 release workflow watches that path, so a merge to `main` that updates the
-viewer subtree triggers the release build.
+viewer submodule pointer triggers the release build.
+
+When Quasar embeds the viewer in its fullscreen entity dialog, the viewer reads
+MudBlazor CSS palette, typography, and border-radius variables from the parent
+document and maps them onto its own CSS/Three.js theme tokens. Standalone direct
+viewer URLs keep the built-in fallback palette.
