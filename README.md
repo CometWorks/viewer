@@ -18,9 +18,9 @@ Quasar vendors this repository as the `Viewer/` submodule. During
 
 The repository also contains `quasar-plugin.json` and a thin adapter project at
 `quasar-plugin/CometWorks.GridViewer.QuasarPlugin`. The adapter contributes the
-viewer column on Quasar's Entities page and currently invokes Quasar's
-`OpenEntityViewer` callback, reusing the existing fullscreen dialog and
-`/viewer/entity` route while the viewer is extracted from Quasar core.
+viewer column on Quasar's Entities page and opens a fullscreen MudBlazor dialog
+that serves the viewer from Quasar's plugin static asset mount:
+`/_quasar/plugins/cometworks.gridviewer/`.
 
 Future submodule updates should move the `Viewer` gitlink in Quasar. The Quasar
 release workflow watches that path, so a merge to `main` that updates the

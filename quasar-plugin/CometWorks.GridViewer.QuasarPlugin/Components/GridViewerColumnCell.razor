@@ -1,3 +1,5 @@
+@inject IDialogService DialogService
+
 <MudTd DataLabel="" Class="quasar-actions-column">
     <span @onclick:stopPropagation="true">
         <MudTooltip Text="@TooltipText">
@@ -12,6 +14,8 @@
 
 @code
 {
+    private const string PluginViewerPath = "/_quasar/plugins/cometworks.gridviewer/index.html";
+
     [Parameter]
     public string? AgentId { get; set; }
 
@@ -42,7 +46,10 @@
     [Parameter]
     public EventCallback OpenEntityViewer { get; set; }
 
-    private bool CanOpenViewer => CanViewEntity && OpenEntityViewer.HasDelegate;
+    private bool CanOpenViewer => CanViewEntity
+                                  && (!string.IsNullOrWhiteSpace(AgentId)
+                                      || !string.IsNullOrWhiteSpace(ViewerUrl)
+                                      || OpenEntityViewer.HasDelegate);
 
     private string TooltipText => CanOpenViewer
         ? "Open viewer"
@@ -50,7 +57,50 @@
 
     private async Task OpenViewerAsync()
     {
-        if (CanOpenViewer)
+        if (!CanOpenViewer)
+            return;
+
+        var viewerUrl = BuildPluginViewerUrl() ?? ViewerUrl;
+        if (!string.IsNullOrWhiteSpace(viewerUrl))
+        {
+            var title = string.IsNullOrWhiteSpace(EntityDisplayName)
+                ? $"Entity {EntityId}"
+                : EntityDisplayName;
+            var subtitle = $"{ServerName ?? AgentId ?? "Unknown server"} - {EntityType ?? "Entity"} #{EntityId}";
+            var parameters = new DialogParameters
+            {
+                [nameof(GridViewerDialog.ViewerUrl)] = viewerUrl,
+                [nameof(GridViewerDialog.Title)] = title,
+                [nameof(GridViewerDialog.Subtitle)] = subtitle,
+            };
+            var options = new DialogOptions
+            {
+                CloseOnEscapeKey = true,
+                FullScreen = true,
+            };
+
+            await DialogService.ShowAsync<GridViewerDialog>(title, parameters, options);
+            return;
+        }
+
+        if (OpenEntityViewer.HasDelegate)
             await OpenEntityViewer.InvokeAsync();
+    }
+
+    private string? BuildPluginViewerUrl()
+    {
+        if (string.IsNullOrWhiteSpace(AgentId) || EntityId == 0)
+            return null;
+
+        var parts = new List<string>
+        {
+            $"agentId={Uri.EscapeDataString(AgentId)}",
+            $"entityId={EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            "voxels=1",
+        };
+        if (string.Equals(EntityType, "Grid", StringComparison.OrdinalIgnoreCase))
+            parts.Add("context=1");
+
+        return $"{PluginViewerPath}?{string.Join("&", parts)}";
     }
 }
