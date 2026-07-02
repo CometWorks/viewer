@@ -1,0 +1,56 @@
+<MudTd DataLabel="" Class="quasar-actions-column">
+    <span @onclick:stopPropagation="true">
+        <MudTooltip Text="@TooltipText">
+            <MudIconButton Icon="@Icons.Material.Filled.Visibility"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           Disabled="@(!CanOpenViewer)"
+                           OnClick="OpenViewerAsync" />
+        </MudTooltip>
+    </span>
+</MudTd>
+
+@code
+{
+    [Parameter]
+    public string? AgentId { get; set; }
+
+    [Parameter]
+    public string? ServerName { get; set; }
+
+    [Parameter]
+    public long EntityId { get; set; }
+
+    [Parameter]
+    public string? EntityType { get; set; }
+
+    [Parameter]
+    public string? EntitySubType { get; set; }
+
+    [Parameter]
+    public string? EntityDisplayName { get; set; }
+
+    [Parameter]
+    public ulong? OwnerSteamId { get; set; }
+
+    [Parameter]
+    public bool CanViewEntity { get; set; }
+
+    [Parameter]
+    public string? ViewerUrl { get; set; }
+
+    [Parameter]
+    public EventCallback OpenEntityViewer { get; set; }
+
+    private bool CanOpenViewer => CanViewEntity && OpenEntityViewer.HasDelegate;
+
+    private string TooltipText => CanOpenViewer
+        ? "Open viewer"
+        : "Entity is not viewable";
+
+    private async Task OpenViewerAsync()
+    {
+        if (CanOpenViewer)
+            await OpenEntityViewer.InvokeAsync();
+    }
+}

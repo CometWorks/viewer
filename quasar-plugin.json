@@ -1,0 +1,11 @@
+{
+  "id": "cometworks.gridviewer",
+  "displayName": "Grid Viewer",
+  "version": "0.1.0",
+  "entryAssembly": "CometWorks.GridViewer.QuasarPlugin.dll",
+  "entryType": "CometWorks.GridViewer.QuasarPlugin.GridViewerQuasarPlugin",
+  "projectPath": "quasar-plugin/CometWorks.GridViewer.QuasarPlugin/CometWorks.GridViewer.QuasarPlugin.csproj",
+  "staticAssets": "src",
+  "quasarVersion": ">=0.1.0",
+  "companionPlugins": []
+}

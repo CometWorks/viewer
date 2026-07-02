@@ -1,6 +1,10 @@
 # Grid Viewer
 
 Quasar includes a first-pass browser viewer for live grid and asteroid voxel entities listed on the Entities page.
+The viewer repository also ships a thin Quasar UI plugin adapter that contributes
+the Entities page viewer column through Quasar's fine-grained extension targets.
+At this stage the plugin adapter reuses Quasar's current fullscreen dialog and
+`/viewer/entity` route through the host-provided `OpenEntityViewer` callback.
 
 ## How to open it
 
