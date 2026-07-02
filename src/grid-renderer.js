@@ -133,7 +133,7 @@ export async function renderGridScene(scene, options = {}) {
     state.lastScene = scene;
     state.stats = {};
     reportProgress("Preparing scene", "Registering scene mod roots...");
-    await setSceneModRoots(scene.mods || scene.Mods || []);
+    await setSceneModRoots(sceneModList(scene));
 
     reportProgress("Preparing scene", "Configuring viewer transform...");
     configureRelativeView(scene);
@@ -258,6 +258,12 @@ export async function renderGridScene(scene, options = {}) {
     addTiming("finalSceneSwap", performance.now() - finalSwapStart);
     updateTimingStats();
     reportProgress("Scene ready", "Finalizing viewport...", 1, 1);
+}
+
+function sceneModList(scene) {
+    if (Array.isArray(scene?.mods)) return scene.mods;
+    if (Array.isArray(scene?.Mods)) return scene.Mods;
+    return null;
 }
 
 function nextAnimationFrame() {

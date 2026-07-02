@@ -18,6 +18,8 @@ const inFlightPathCache = new Map();
 const fileMetadataByCanonicalPath = new Map();
 const inFlightMetadataByCanonicalPath = new Map();
 let directoryNodesByKey = new Map();
+let sceneModAliases = new Map();
+let sceneModContextLocked = false;
 let assetCacheGeneration = 0;
 const lookupQueue = createAsyncQueue(LOOKUP_CONCURRENCY);
 const metadataQueue = createAsyncQueue(METADATA_CONCURRENCY);
@@ -264,16 +266,18 @@ function createAbortError(message) {
 }
 
 export async function setSceneModRoots(mods) {
-    state.sceneMods = Array.isArray(mods) ? mods : [];
+    sceneModContextLocked = Array.isArray(mods);
+    state.sceneMods = sceneModContextLocked ? mods : [];
     await refreshSceneModRoots();
 }
 
 async function refreshSceneModRoots() {
     state.modRoots = new Map();
+    sceneModAliases = new Map();
     for (const mod of state.sceneMods || []) {
         const rootId = String(mod.rootId || mod.RootId || "");
         if (!rootId) continue;
-        state.modRoots.set(rootId, {
+        const root = {
             id: rootId,
             kind: "mod-pending",
             name: String(mod.name || mod.Name || ""),
@@ -283,7 +287,9 @@ async function refreshSceneModRoots() {
             resolved: false,
             missing: false,
             warningLogged: false,
-        });
+        };
+        state.modRoots.set(rootId, root);
+        registerSceneModAliases(root);
     }
 }
 
@@ -319,14 +325,20 @@ export async function resolveAssetFile(logicalPath, options = {}) {
 
 async function resolveAssetFileUncached(normalized, rootId, sourceKind, generation) {
     if (normalized.modName) {
-        const direct = await resolveDirectModPath(normalized.modName, normalized.path, generation);
-        if (direct) return direct;
+        const scoped = await resolveSceneModPath(normalized.modName, normalized.path, generation);
+        if (scoped) return scoped;
+        if (!sceneModContextLocked) {
+            const direct = await resolveDirectModPath(normalized.modName, normalized.path, generation);
+            if (direct) return direct;
+        }
     }
 
-    const directModName = directModNameFromRootId(rootId);
-    if (directModName) {
-        const direct = await resolveDirectModPath(directModName, normalized.path, generation);
-        if (direct) return direct;
+    if (!sceneModContextLocked) {
+        const directModName = directModNameFromRootId(rootId);
+        if (directModName) {
+            const direct = await resolveDirectModPath(directModName, normalized.path, generation);
+            if (direct) return direct;
+        }
     }
 
     if (rootId) {
@@ -337,19 +349,15 @@ async function resolveAssetFileUncached(normalized, rootId, sourceKind, generati
         }
     }
 
+    if (!rootId && sourceKind.toLowerCase() === "mod") {
+        const resolved = await resolveInSceneModRoots(normalized.path, generation);
+        if (resolved) return resolved;
+    }
+
     const contentRoot = getContentRoot();
     if (contentRoot) {
         const resolved = await resolveInRoot(contentRoot, normalized.path, generation);
         if (resolved) return resolved;
-    }
-
-    if (!rootId && sourceKind.toLowerCase() === "mod") {
-        for (const id of state.modRoots.keys()) {
-            const root = await getSceneModRoot(id);
-            if (!root) continue;
-            const resolved = await resolveInRoot(root, normalized.path, generation);
-            if (resolved) return resolved;
-        }
     }
 
     return null;
@@ -404,6 +412,23 @@ async function resolveDirectModPath(modName, logicalPath, generation) {
     return await resolveInRoot(root, logicalPath, generation);
 }
 
+async function resolveSceneModPath(modName, logicalPath, generation) {
+    const rootId = sceneModRootIdForName(modName);
+    if (!rootId) return null;
+    const root = await getSceneModRoot(rootId);
+    return root ? await resolveInRoot(root, logicalPath, generation) : null;
+}
+
+async function resolveInSceneModRoots(logicalPath, generation) {
+    for (const id of state.modRoots.keys()) {
+        const root = await getSceneModRoot(id);
+        if (!root) continue;
+        const resolved = await resolveInRoot(root, logicalPath, generation);
+        if (resolved) return resolved;
+    }
+    return null;
+}
+
 function directModNameFromRootId(rootId) {
     const value = String(rootId || "");
     return value.startsWith("mods-direct:") ? value.slice("mods-direct:".length) : "";
@@ -432,12 +457,33 @@ async function getSceneModRoot(rootId) {
 
 function modRootCandidateNames(metadata, fallbackName) {
     const names = [];
+    const publishedFileId = String(metadata?.publishedFileId || metadata?.PublishedFileId || "").trim();
+    if (publishedFileId && publishedFileId !== "0") addUniqueName(names, publishedFileId);
     addUniqueName(names, fallbackName);
     addUniqueName(names, metadata?.name || metadata?.Name || "");
     addUniqueName(names, metadata?.friendlyName || metadata?.FriendlyName || "");
-    const publishedFileId = String(metadata?.publishedFileId || metadata?.PublishedFileId || "").trim();
-    if (publishedFileId && publishedFileId !== "0") addUniqueName(names, publishedFileId);
     return names;
+}
+
+function registerSceneModAliases(root) {
+    const aliases = [root.id, ...modRootCandidateNames(root.metadata, root.name)];
+    for (const alias of aliases) addSceneModAlias(root.id, alias);
+}
+
+function addSceneModAlias(rootId, value) {
+    const alias = normalizeSceneModAlias(value);
+    if (!alias) return;
+    if (!sceneModAliases.has(alias)) sceneModAliases.set(alias, rootId);
+    const stem = archiveStem(alias);
+    if (stem && !sceneModAliases.has(stem)) sceneModAliases.set(stem, rootId);
+}
+
+function sceneModRootIdForName(name) {
+    return sceneModAliases.get(normalizeSceneModAlias(name)) || "";
+}
+
+function normalizeSceneModAlias(value) {
+    return String(value || "").trim().replaceAll("\\", "/").split("/").filter(Boolean)[0]?.toLowerCase() || "";
 }
 
 function addUniqueName(names, name) {
