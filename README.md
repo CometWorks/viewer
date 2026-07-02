@@ -29,7 +29,10 @@ The repository follows the Quasar UI plugin template split:
   Entities page viewer column extension targets.
 
 `quasar-plugin.json` points Quasar at the adapter project and exposes
-`src/CometWorks.GridViewer/wwwroot` as the plugin static asset directory. The
+`src/CometWorks.GridViewer/wwwroot` as the plugin static asset directory. It
+also asks Quasar to inject scoped `quasar-plugin.css` from that static asset
+directory so the viewer dialog and replacement column can share host page
+styling without loading the iframe-global viewer runtime CSS into Quasar. The
 adapter opens a fullscreen MudBlazor dialog that serves the viewer from:
 `/_quasar/plugins/cometworks.gridviewer/`.
 

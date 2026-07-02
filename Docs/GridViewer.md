@@ -16,7 +16,7 @@ iframe from Quasar's plugin static asset mount:
 
 The Quasar UI plugin opens grid rows with `/_quasar/plugins/cometworks.gridviewer/index.html?agentId=...&entityId=...&voxels=1&context=1` and asteroid rows with `/_quasar/plugins/cometworks.gridviewer/index.html?agentId=...&entityId=...&voxels=1`. The dialog embeds the static viewer page in a same-origin iframe so Quasar navigation stays in place while the viewer keeps its standalone runtime boundary. It requests a scene snapshot from `/api/viewer/entities/{agentId}/{entityId}/scene`. Direct viewer URLs without a `voxels` parameter keep voxel data support disabled; direct grid URLs without a `context` parameter keep context mode disabled. Quasar's built-in `/viewer/entity` route remains a fallback for hosts that have not loaded the UI plugin.
 
-When embedded by Quasar, the viewer mirrors MudBlazor palette, typography, and border-radius variables from the parent document for surfaces, text, borders, actions, progress, overlays, the Three.js scene background, floor-grid accents, clipping bounds, and sun marker colors. Standalone direct viewer URLs use the same CSS tokens with a fallback palette.
+When embedded by Quasar, the viewer mirrors MudBlazor palette, typography, and border-radius variables from the parent document for surfaces, text, borders, actions, progress, overlays, the Three.js scene background, floor-grid accents, clipping bounds, and sun marker colors. `quasar-plugin.json` declares scoped `quasar-plugin.css` as a Quasar-injected stylesheet for the replacement column and dialog shell. The iframe still loads its own `styles.css` internally. Standalone direct viewer URLs use the same CSS tokens with a fallback palette.
 
 ## Asset Boundary
 

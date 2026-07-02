@@ -6,6 +6,9 @@
   "entryType": "CometWorks.GridViewer.Quasar.GridViewerQuasarPlugin",
   "projectPath": "src/CometWorks.GridViewer.Quasar/CometWorks.GridViewer.Quasar.csproj",
   "staticAssets": "src/CometWorks.GridViewer/wwwroot",
+  "stylesheets": [
+    "quasar-plugin.css"
+  ],
   "quasarVersion": ">=0.1.0",
   "companionPlugins": []
 }
