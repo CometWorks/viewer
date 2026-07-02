@@ -25,7 +25,7 @@ Quasar still needs a narrow viewer data path to request the selected grid scene 
 1. User opens `Entities` in Quasar.
 2. Quasar shows an eye icon before each grid name.
 3. User clicks the eye icon.
-4. Quasar opens `/viewer/entity?agentId=...&entityId=...`.
+4. Quasar opens the UI plugin asset route `/_quasar/plugins/cometworks.gridviewer/index.html?agentId=...&entityId=...`.
 5. Viewer asks Quasar for a scene snapshot for that agent/entity.
 6. Quasar sends a command to `Quasar.Agent` over the existing agent WebSocket.
 7. `Quasar.Agent` builds a metadata-only scene snapshot on the game thread.
@@ -42,7 +42,7 @@ Quasar still needs a narrow viewer data path to request the selected grid scene 
 
 ## Quasar Web App
 
-- Add a small viewer route under static assets, with `src` copied to `Quasar/wwwroot/viewer`.
+- Add a small viewer route under static assets, with `src/CometWorks.GridViewer/wwwroot` copied to `Quasar/wwwroot/viewer`.
 - Add a narrow endpoint such as `/api/viewer/entities/{agentId}/{entityId}/scene`.
 - Protect the endpoint with the existing Quasar view authorization policy.
 - Implement a service that sends a new agent command and returns the scene snapshot payload.
@@ -92,7 +92,7 @@ The agent must not include:
 
 ## Renderer Split
 
-Split the proof-of-concept `Viewer/src/app.js` into smaller modules before integrating it into Quasar.
+Split the proof-of-concept app into smaller modules under `Viewer/src/CometWorks.GridViewer/wwwroot` before integrating it into Quasar.
 
 Suggested modules:
 

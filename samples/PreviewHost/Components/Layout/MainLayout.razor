@@ -1,0 +1,77 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider Theme="@_theme" IsDarkMode="@_isDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Color="Color.Default">
+        <MudText Typo="Typo.h6">Grid Viewer Preview</MudText>
+        <MudSpacer />
+        <MudTooltip Text="Toggle preview theme">
+            <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="ToggleTheme" />
+        </MudTooltip>
+    </MudAppBar>
+
+    <MudDrawer Open="true"
+               Variant="DrawerVariant.Responsive"
+               Breakpoint="Breakpoint.Md"
+               ClipMode="DrawerClipMode.Always"
+               Elevation="0"
+               Width="220px">
+        <MudNavMenu Class="pa-4">
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.ViewInAr">
+                Preview
+            </MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.False" Class="preview-content">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code
+{
+    private bool _isDarkMode = true;
+
+    private string ThemeIcon => _isDarkMode
+        ? Icons.Material.Filled.LightMode
+        : Icons.Material.Filled.DarkMode;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = Colors.Gray.Darken3,
+            Secondary = Colors.Blue.Darken2,
+            AppbarBackground = Colors.Gray.Lighten5,
+            AppbarText = Colors.Gray.Darken4,
+            DrawerBackground = Colors.Gray.Lighten5,
+            Background = Colors.Gray.Lighten4,
+            Surface = Colors.Shades.White,
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = Colors.Gray.Lighten2,
+            Secondary = Colors.Blue.Lighten2,
+            AppbarBackground = "#111418",
+            AppbarText = Colors.Shades.White,
+            DrawerBackground = "#15191f",
+            Background = "#0f1216",
+            Surface = "#1b2027",
+        },
+        LayoutProperties = new LayoutProperties
+        {
+            DefaultBorderRadius = "6px",
+        },
+    };
+
+    private void ToggleTheme()
+    {
+        _isDarkMode = !_isDarkMode;
+    }
+}

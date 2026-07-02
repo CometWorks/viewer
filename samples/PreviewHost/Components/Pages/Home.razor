@@ -1,0 +1,76 @@
+@page "/"
+
+<PageTitle>Grid Viewer Preview</PageTitle>
+
+<MudStack Spacing="3">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+        <MudText Typo="Typo.h4">Grid Viewer</MudText>
+        <MudButton Href="@ViewerAssetUrl"
+                   Target="_blank"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.OpenInNew">
+            Open Static Viewer
+        </MudButton>
+    </MudStack>
+
+    <MudGrid>
+        <MudItem xs="12" lg="7">
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h6">Entities Column</MudText>
+                    <MudTable T="PreviewEntity" Items="@_entities" Dense="true" Hover="true">
+                        <HeaderContent>
+                            <MudTh>Type</MudTh>
+                            <MudTh>Entity ID</MudTh>
+                            <MudTh>Name</MudTh>
+                            <GridViewerColumnHeader />
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Type">@context.Type</MudTd>
+                            <MudTd DataLabel="Entity ID" Class="mono">@context.EntityId</MudTd>
+                            <MudTd DataLabel="Name">@context.Name</MudTd>
+                            <GridViewerColumnCell
+                                ServerName="Preview Server"
+                                EntityId="@context.EntityId"
+                                EntityType="@context.Type"
+                                EntitySubType="@context.SubType"
+                                EntityDisplayName="@context.Name"
+                                CanViewEntity="@context.CanView"
+                                ViewerUrl="@ViewerAssetUrl" />
+                        </RowTemplate>
+                    </MudTable>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="5">
+            <MudPaper Class="pa-4" Outlined="true">
+                <MudStack Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                        <MudText Typo="Typo.h6">Static Runtime</MudText>
+                        <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined">Iframe</MudChip>
+                    </MudStack>
+                    <div class="preview-frame-host">
+                        <iframe src="@ViewerAssetUrl"
+                                title="Grid Viewer static runtime"
+                                class="preview-frame"></iframe>
+                    </div>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</MudStack>
+
+@code
+{
+    private const string ViewerAssetUrl = "_content/CometWorks.GridViewer/index.html";
+
+    private readonly PreviewEntity[] _entities =
+    [
+        new(281474976710681, "Grid", "LargeShip", "Mining Platform", true),
+        new(281474976710682, "VoxelMap", "Asteroid", "Asteroid Cluster", true),
+        new(281474976710683, "Character", "Player", "Engineer", false),
+    ];
+
+    private sealed record PreviewEntity(long EntityId, string Type, string SubType, string Name, bool CanView);
+}

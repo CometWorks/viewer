@@ -241,10 +241,10 @@ Expected log changes:
 Update:
 
 - `Docs/GridViewer.md`
-- Quasar generated reference docs for `Viewer/src/content-folder.js`
-- Quasar generated reference docs for `Viewer/src/mwm-loader.js`
-- Quasar generated reference docs for `Viewer/src/texture-loader.js`
-- Quasar generated reference docs for `Viewer/src/logging.js`
+- Quasar generated reference docs for `Viewer/src/CometWorks.GridViewer/wwwroot/content-folder.js`
+- Quasar generated reference docs for `Viewer/src/CometWorks.GridViewer/wwwroot/mwm-loader.js`
+- Quasar generated reference docs for `Viewer/src/CometWorks.GridViewer/wwwroot/texture-loader.js`
+- Quasar generated reference docs for `Viewer/src/CometWorks.GridViewer/wwwroot/logging.js`
 - `Docs/Reference/Modules/Quasar.Host.md`
 - `Docs/Reference/Index.md`
 

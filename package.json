@@ -2,7 +2,7 @@
   "name": "quasar-viewer",
   "private": true,
   "scripts": {
-    "check": "find src -name '*.js' -print0 | xargs -0 -n1 node --check"
+    "check": "find src/CometWorks.GridViewer/wwwroot -name '*.js' -print0 | xargs -0 -n1 node --check"
   },
   "dependencies": {
     "@zip.js/zip.js": "2.7.72",

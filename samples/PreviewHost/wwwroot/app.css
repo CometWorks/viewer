@@ -1,0 +1,57 @@
+html,
+body {
+    min-height: 100%;
+    margin: 0;
+    font-family: Roboto, Arial, sans-serif;
+}
+
+.preview-content {
+    padding: 24px;
+}
+
+#blazor-error-ui {
+    display: none;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.quasar-actions-column {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.quasar-actions-column > * {
+    margin-left: auto;
+}
+
+.quasar-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.preview-frame-host {
+    height: min(42rem, calc(100dvh - 14rem));
+    min-height: 24rem;
+    overflow: hidden;
+    background: #05080c;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--mud-default-borderradius);
+}
+
+.preview-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #05080c;
+}

@@ -1,0 +1,20 @@
+@using System.Reflection
+
+<Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="@PluginAssemblies">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.MainLayout)">
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                Preview route not found.
+            </MudAlert>
+        </LayoutView>
+    </NotFound>
+</Router>
+
+@code
+{
+    private static readonly Assembly[] PluginAssemblies = [typeof(GridViewerColumnCell).Assembly];
+}

@@ -5,9 +5,10 @@ using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Extensions;
 using Quasar.Plugin.Abstractions.Navigation;
 using Quasar.Plugin.Abstractions.Security;
-using CometWorks.GridViewer.QuasarPlugin.Components;
+using CometWorks.GridViewer.Components;
+using CometWorks.GridViewer.Services;
 
-namespace CometWorks.GridViewer.QuasarPlugin;
+namespace CometWorks.GridViewer.Quasar;
 
 public sealed class GridViewerQuasarPlugin : IQuasarPlugin
 {
@@ -17,6 +18,7 @@ public sealed class GridViewerQuasarPlugin : IQuasarPlugin
 
     public void ConfigureServices(IServiceCollection services, QuasarPluginContext context)
     {
+        services.AddGridViewerUi();
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)

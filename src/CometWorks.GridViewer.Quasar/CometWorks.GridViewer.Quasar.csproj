@@ -1,15 +1,16 @@
-<Project Sdk="Microsoft.NET.Sdk.Razor">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>CometWorks.GridViewer.QuasarPlugin</AssemblyName>
-    <RootNamespace>CometWorks.GridViewer.QuasarPlugin</RootNamespace>
+    <AssemblyName>CometWorks.GridViewer.Quasar</AssemblyName>
+    <RootNamespace>CometWorks.GridViewer.Quasar</RootNamespace>
     <QuasarPluginAbstractionsProject Condition="'$(QuasarPluginAbstractionsProject)' == ''">../../../Quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj</QuasarPluginAbstractionsProject>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CometWorks.GridViewer\CometWorks.GridViewer.csproj" />
     <PackageReference Include="MudBlazor" Version="9.4.0" />
   </ItemGroup>
 

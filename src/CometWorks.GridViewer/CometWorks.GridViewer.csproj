@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CometWorks.GridViewer</AssemblyName>
+    <RootNamespace>CometWorks.GridViewer</RootNamespace>
+    <PackageId>CometWorks.GridViewer</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MudBlazor" Version="9.4.0" />
+  </ItemGroup>
+
+</Project>
