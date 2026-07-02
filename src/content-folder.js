@@ -6,6 +6,8 @@ const DB_NAME = "quasar-viewer";
 const STORE_NAME = "handles";
 const CONTENT_HANDLE_KEY = "space-engineers-content";
 const MODS_HANDLE_KEY = "space-engineers-mods";
+const CONTENT_STORAGE_KEY = "quasar-viewer.folder.space-engineers-content";
+const MODS_STORAGE_KEY = "quasar-viewer.folder.space-engineers-mods";
 const LOOKUP_CONCURRENCY = 32;
 const METADATA_CONCURRENCY = 16;
 const KNOWN_FILE_EXTENSION = /\.(mwm|dds|png|jpe?g|webp|sbc|xml)$/i;
@@ -21,11 +23,14 @@ const lookupQueue = createAsyncQueue(LOOKUP_CONCURRENCY);
 const metadataQueue = createAsyncQueue(METADATA_CONCURRENCY);
 
 export async function restoreContentFolder() {
+    const saved = readFolderStorage(CONTENT_STORAGE_KEY);
+    if (saved?.name) state.contentFolderName = saved.name;
     if (!window.indexedDB || !window.showDirectoryPicker) return null;
     const handle = await readHandle(CONTENT_HANDLE_KEY);
     if (!handle) return null;
     if (await ensurePermission(handle, false)) {
         activateContentFolder(handle, handle.name || "Content");
+        writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "file-system-access");
         return handle;
     }
     return null;
@@ -39,16 +44,20 @@ export async function pickContentFolder() {
     }
     activateContentFolder(handle, handle.name || "Content");
     await writeHandle(CONTENT_HANDLE_KEY, handle);
+    writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "file-system-access");
     log(`Selected local Content folder: ${state.contentFolderName}`);
     return handle;
 }
 
 export async function restoreModsFolder() {
+    const saved = readFolderStorage(MODS_STORAGE_KEY);
+    if (saved?.name) state.modsFolderName = saved.name;
     if (!window.indexedDB || !window.showDirectoryPicker) return null;
     const handle = await readHandle(MODS_HANDLE_KEY);
     if (!handle) return null;
     if (await ensurePermission(handle, false)) {
         await activateModsFolder(handle, handle.name || "Mods");
+        writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "file-system-access");
         return handle;
     }
     return null;
@@ -60,8 +69,17 @@ export async function pickModsFolder() {
     await validateModsFolder(handle);
     await activateModsFolder(handle, handle.name || "Mods");
     await writeHandle(MODS_HANDLE_KEY, handle);
+    writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "file-system-access");
     log(`Selected local Mods folder: ${state.modsFolderName}`);
     return handle;
+}
+
+export function getSavedContentFolderName() {
+    return state.contentFolderName || readFolderStorage(CONTENT_STORAGE_KEY)?.name || "";
+}
+
+export function getSavedModsFolderName() {
+    return state.modsFolderName || readFolderStorage(MODS_STORAGE_KEY)?.name || "";
 }
 
 async function pickContentFolderFromFileList() {
@@ -75,6 +93,7 @@ async function pickContentFolderFromFileList() {
     }
 
     activateContentFolder(handle, handle.name || "Content");
+    writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "folder-input");
     log(`Selected local Content folder: ${state.contentFolderName} (${files.length.toLocaleString()} files).`);
     return handle;
 }
@@ -85,6 +104,7 @@ async function pickModsFolderFromFileList() {
     const handle = createFileListDirectoryHandle(files, "Mods");
     await validateModsFolder(handle);
     await activateModsFolder(handle, handle.name || "Mods");
+    writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "folder-input");
     log(`Selected local Mods folder: ${state.modsFolderName} (${files.length.toLocaleString()} files).`);
     return handle;
 }
@@ -870,6 +890,37 @@ function addTiming(key, durationMs) {
 function addCacheCounter(key) {
     const label = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, value => value.toUpperCase());
     state.stats[label] = (state.stats[label] || 0) + 1;
+}
+
+function readFolderStorage(key) {
+    try {
+        const raw = window.localStorage?.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const name = String(parsed?.name || "").trim();
+        if (!name) return null;
+        return {
+            name,
+            source: String(parsed?.source || ""),
+            savedAt: String(parsed?.savedAt || ""),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function writeFolderStorage(key, name, source) {
+    const folderName = String(name || "").trim();
+    if (!folderName) return;
+    try {
+        window.localStorage?.setItem(key, JSON.stringify({
+            version: 1,
+            name: folderName,
+            source,
+            savedAt: new Date().toISOString(),
+        }));
+    } catch {
+    }
 }
 
 async function ensurePermission(handle, request) {

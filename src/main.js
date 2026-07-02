@@ -2,7 +2,7 @@ import { cacheElements, els, state } from "./state.js";
 import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
-import { pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder } from "./content-folder.js";
+import { getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder } from "./content-folder.js";
 import { renderGridScene } from "./grid-renderer.js";
 import { downloadLog, exportStatistics, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
@@ -28,17 +28,18 @@ async function start() {
     try {
         showLoading("Loading scene", "Restoring saved Content folder...");
         const restored = await restoreContentFolder();
-        updateContentStatus(restored ? `Using saved Content folder: ${state.contentFolderName}` : "No Content folder selected.");
+        updateContentStatus(restored ? `Using saved Content folder: ${state.contentFolderName}` : savedContentFolderStatus());
     } catch (error) {
+        updateContentStatus(savedContentFolderStatus());
         log(`Could not restore Content folder: ${error.message}`, true);
     }
 
     try {
         showLoading("Loading scene", "Restoring saved Mods folder...");
         const restored = await restoreModsFolder();
-        updateModsStatus(restored ? `Using saved Mods folder: ${state.modsFolderName}` : "No Mods folder selected.");
+        updateModsStatus(restored ? `Using saved Mods folder: ${state.modsFolderName}` : savedModsFolderStatus());
     } catch (error) {
-        updateModsStatus("No Mods folder selected.");
+        updateModsStatus(savedModsFolderStatus());
         log(`Could not restore Mods folder: ${error.message}`, true);
     }
 
@@ -96,6 +97,16 @@ function showLoading(title, text, options = {}) {
 
 function hideLoading() {
     if (els.loadingOverlay) els.loadingOverlay.classList.add("is-hidden");
+}
+
+function savedContentFolderStatus() {
+    const name = getSavedContentFolderName();
+    return name ? `Last saved Content folder: ${name}. Select it again to grant browser access.` : "No Content folder selected.";
+}
+
+function savedModsFolderStatus() {
+    const name = getSavedModsFolderName();
+    return name ? `Last saved Mods folder: ${name}. Select it again to grant browser access.` : "No Mods folder selected.";
 }
 
 async function selectModsFolder() {
