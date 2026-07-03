@@ -18,6 +18,14 @@ The Quasar UI plugin opens grid rows with `/_quasar/plugins/cometworks.gridviewe
 
 When embedded by Quasar, the viewer mirrors MudBlazor palette, typography, and border-radius variables from the parent document for surfaces, text, borders, actions, progress, overlays, the Three.js scene background, floor-grid accents, clipping bounds, and sun marker colors. `quasar-plugin.json` declares scoped `quasar-plugin.css` as a Quasar-injected stylesheet for the replacement column and dialog shell. The iframe still loads its own `styles.css` internally. Standalone direct viewer URLs use the same CSS tokens with a fallback palette.
 
+The iframe serves its own browser module dependencies from `wwwroot/vendor/`
+using relative import-map URLs. This is required for Quasar UI plugin hosting,
+where the viewer page is mounted below `/_quasar/plugins/cometworks.gridviewer/`
+and root-relative `/vendor/...` URLs would resolve outside the plugin static
+asset path. A small startup error shim runs before the module entrypoint so
+missing vendor assets or module graph failures are shown in the loading overlay
+instead of leaving the scene spinner active indefinitely.
+
 ## Asset Boundary
 
 Quasar does not serve Space Engineers assets to the browser.

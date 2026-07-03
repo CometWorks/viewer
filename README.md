@@ -54,6 +54,11 @@ shared `CometWorks.GridViewer` UI project. It can render the replacement
 Entities page column, the fullscreen dialog, and the static viewer runtime
 without loading Quasar.
 
+The static viewer vendors the browser modules it needs under
+`src/CometWorks.GridViewer/wwwroot/vendor/` and resolves them with relative
+import-map URLs. This keeps the viewer working when Quasar serves it from
+`/_quasar/plugins/cometworks.gridviewer/` instead of from the web root.
+
 Future submodule updates should move the `Viewer` gitlink in Quasar. The Quasar
 release workflow watches that path, so a merge to `main` that updates the
 viewer submodule pointer triggers the release build.
