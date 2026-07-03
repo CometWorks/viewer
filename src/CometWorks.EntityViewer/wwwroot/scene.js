@@ -101,7 +101,7 @@ export function initScene() {
     state.renderer.domElement.addEventListener("pointermove", onFlyPointerMove);
     state.renderer.domElement.addEventListener("click", onViewportClick);
     document.addEventListener("pointerlockchange", updateCameraHint);
-    window.addEventListener("quasar-viewer-theme-changed", applySceneTheme);
+    window.addEventListener("quasar-entity-viewer-theme-changed", applySceneTheme);
 
     state.resizeObserver = new ResizeObserver(resize);
     state.resizeObserver.observe(els.viewport);
@@ -134,7 +134,7 @@ export function disposeViewer() {
     canvas?.removeEventListener("pointermove", onFlyPointerMove);
     canvas?.removeEventListener("click", onViewportClick);
     document.removeEventListener("pointerlockchange", updateCameraHint);
-    window.removeEventListener("quasar-viewer-theme-changed", applySceneTheme);
+    window.removeEventListener("quasar-entity-viewer-theme-changed", applySceneTheme);
     if (document.pointerLockElement === canvas) document.exitPointerLock();
 
     if (state.scene) disposeObjectTree(state.scene);

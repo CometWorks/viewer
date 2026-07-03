@@ -1,5 +1,5 @@
-using CometWorks.GridViewer.Components;
-using CometWorks.GridViewer.Services;
+using CometWorks.EntityViewer.Components;
+using CometWorks.EntityViewer.Services;
 using Microsoft.Extensions.FileProviders;
 using MudBlazor.Services;
 using PreviewHost.Components;
@@ -9,7 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddMudServices();
-builder.Services.AddGridViewerUi();
+builder.Services.AddEntityViewerUi();
 
 var app = builder.Build();
 
@@ -28,7 +28,7 @@ app.MapGet("/api/viewer/entities/{agentId}/{entityId:long}/scene", () =>
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
-    .AddAdditionalAssemblies(typeof(GridViewerColumnCell).Assembly);
+    .AddAdditionalAssemblies(typeof(EntityViewerColumnCell).Assembly);
 
 app.Run();
 

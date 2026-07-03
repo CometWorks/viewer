@@ -1,5 +1,5 @@
 const LINKED_CLASS = "quasar-theme-linked";
-const THEME_EVENT = "quasar-viewer-theme-changed";
+const THEME_EVENT = "quasar-entity-viewer-theme-changed";
 const TOKEN_MAP = [
     ["--mud-palette-background", "--bg"],
     ["--mud-palette-surface", "--panel"],

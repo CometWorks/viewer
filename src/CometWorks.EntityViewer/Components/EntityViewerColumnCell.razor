@@ -14,7 +14,7 @@
 
 @code
 {
-    private const string PluginViewerPath = "/_quasar/plugins/cometworks.gridviewer/index.html";
+    private const string PluginViewerPath = "/_quasar/plugins/cometworks.entityviewer/index.html";
 
     [Parameter]
     public string? AgentId { get; set; }
@@ -69,9 +69,9 @@
             var subtitle = $"{ServerName ?? AgentId ?? "Unknown server"} - {EntityType ?? "Entity"} #{EntityId}";
             var parameters = new DialogParameters
             {
-                [nameof(GridViewerDialog.ViewerUrl)] = viewerUrl,
-                [nameof(GridViewerDialog.Title)] = title,
-                [nameof(GridViewerDialog.Subtitle)] = subtitle,
+                [nameof(EntityViewerDialog.ViewerUrl)] = viewerUrl,
+                [nameof(EntityViewerDialog.Title)] = title,
+                [nameof(EntityViewerDialog.Subtitle)] = subtitle,
             };
             var options = new DialogOptions
             {
@@ -79,7 +79,7 @@
                 FullScreen = true,
             };
 
-            await DialogService.ShowAsync<GridViewerDialog>(title, parameters, options);
+            await DialogService.ShowAsync<EntityViewerDialog>(title, parameters, options);
             return;
         }
 

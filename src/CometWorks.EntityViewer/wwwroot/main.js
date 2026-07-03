@@ -3,7 +3,7 @@ import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder } from "./content-folder.js";
-import { renderGridScene } from "./grid-renderer.js";
+import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, exportStatistics, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
 
@@ -59,7 +59,7 @@ async function reloadScene() {
         const fetchStart = performance.now();
         const scene = await fetchEntityScene();
         addTiming("sceneSnapshotFetch", performance.now() - fetchStart);
-        await renderGridScene(scene, { onProgress: updateLoadingProgress });
+        await renderEntityScene(scene, { onProgress: updateLoadingProgress });
         const firstVoxel = scene.voxels && scene.voxels[0];
         log(`Loaded scene ${scene.grid && scene.grid.id || firstVoxel && (firstVoxel.displayName || firstVoxel.id) || "unknown"}.`);
         hideLoading();
@@ -116,7 +116,7 @@ async function selectModsFolder() {
         updateModsStatus(`Using Mods folder: ${handle.name || "Mods"}`);
         if (state.lastScene) {
             showLoading("Reloading assets", "Preparing scene with selected Mods folder...");
-            await renderGridScene(state.lastScene, { onProgress: updateLoadingProgress });
+            await renderEntityScene(state.lastScene, { onProgress: updateLoadingProgress });
             hideLoading();
         }
     } catch (error) {
@@ -144,7 +144,7 @@ async function selectContentFolder() {
         updateContentStatus(`Using Content folder: ${handle.name || "Content"}`);
         if (state.lastScene) {
             showLoading("Reloading assets", "Preparing scene with selected Content folder...");
-            await renderGridScene(state.lastScene, { onProgress: updateLoadingProgress });
+            await renderEntityScene(state.lastScene, { onProgress: updateLoadingProgress });
             hideLoading();
         }
     } catch (error) {

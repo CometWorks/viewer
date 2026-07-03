@@ -2,12 +2,12 @@
 <PluginData xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="GitHubPlugin">
     <Id>a67dd531-79e7-4a3a-b979-7bfed023ab77</Id>
     <RepoId>CometWorks/viewer</RepoId>
-    <FriendlyName>Grid Viewer</FriendlyName>
+    <FriendlyName>Entity Viewer</FriendlyName>
     <Author>CometWorks</Author>
-    <Tooltip>Quasar entity viewer column and browser-side Space Engineers grid viewer.</Tooltip>
-    <Description>Grid Viewer contributes the viewer column on Quasar's Entities page, opens a fullscreen MudBlazor dialog, and serves the browser-side Space Engineers grid and asteroid viewer assets.</Description>
+    <Tooltip>Quasar entity viewer column and browser-side Space Engineers entity viewer.</Tooltip>
+    <Description>Entity Viewer contributes the viewer column on Quasar's Entities page, opens a fullscreen MudBlazor dialog, and serves the browser-side Space Engineers entity viewer runtime.</Description>
     <PluginKind>QuasarUiPlugin</PluginKind>
-    <ProjectPath>src/CometWorks.GridViewer.Quasar/CometWorks.GridViewer.Quasar.csproj</ProjectPath>
+    <ProjectPath>src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj</ProjectPath>
     <PackageManifest>quasar-plugin.json</PackageManifest>
     <QuasarVersion>&gt;=0.1.0</QuasarVersion>
     <Commit>Set in quasar-hub when publishing</Commit>

@@ -1,6 +1,6 @@
-# Grid Viewer Slow Path Findings
+# Entity Viewer Slow Path Findings
 
-Source log: `/tmp/quasar-viewer.log`
+Source log: `/tmp/quasar-entity-viewer.log`
 
 ## Summary
 

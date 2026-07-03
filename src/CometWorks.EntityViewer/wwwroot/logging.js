@@ -11,12 +11,12 @@ export function log(message, isWarning = false) {
 }
 
 export function downloadLog() {
-    downloadText("quasar-viewer.log", `${entries.join("\n")}\n`);
+    downloadText("quasar-entity-viewer.log", `${entries.join("\n")}\n`);
 }
 
 export function exportStatistics() {
     const lines = [
-        "Quasar Viewer Statistics",
+        "Quasar Entity Viewer Statistics",
         `Generated: ${new Date().toISOString()}`,
         `URL: ${window.location.href}`,
         "",
@@ -26,7 +26,7 @@ export function exportStatistics() {
         "Statistics",
         ...Object.entries(state.stats || {}).map(([key, value]) => `${key}: ${formatStatValue(value)}`),
     ];
-    downloadText("quasar-viewer-statistics.txt", `${lines.join("\n")}\n`);
+    downloadText("quasar-entity-viewer-statistics.txt", `${lines.join("\n")}\n`);
 }
 
 function collectDefinitionListLines(list) {

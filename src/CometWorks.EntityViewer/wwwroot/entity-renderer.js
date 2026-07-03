@@ -127,7 +127,7 @@ const VOXEL_MATERIAL_TYPE_FALLBACK_COLORS = new Map(Object.entries({
     "stone": 0x5d5b57,
 }));
 
-export async function renderGridScene(scene, options = {}) {
+export async function renderEntityScene(scene, options = {}) {
     const renderToken = ++modelRenderToken;
     const reportProgress = createProgressReporter(options.onProgress);
     state.lastScene = scene;
@@ -3903,7 +3903,7 @@ if (seUseTransparentMaterial) {
     diffuseColor.rgb = diffuseColor.rgb * seTransparentLightFactor + seTransparentColorAdd.rgb * seTransparentColorAdd.a * seTransparentSpecularFactor * 0.04;
 }`);
     };
-    material.customProgramCacheKey = () => transparentParameters ? "se-grid-viewer-color-mask-transparent-v2" : "se-grid-viewer-color-mask-v6";
+    material.customProgramCacheKey = () => transparentParameters ? "se-entity-viewer-color-mask-transparent-v2" : "se-entity-viewer-color-mask-v6";
 }
 
 function applyDefaultBlockColorMaskUniforms(renderer, scene, camera, geometry, material) {

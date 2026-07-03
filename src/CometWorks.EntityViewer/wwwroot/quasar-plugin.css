@@ -1,9 +1,9 @@
-.grid-viewer-title-row,
-.grid-viewer-title-stack {
+.entity-viewer-title-row,
+.entity-viewer-title-stack {
     min-width: 0;
 }
 
-.grid-viewer-subtitle {
+.entity-viewer-subtitle {
     display: block;
     max-width: min(72rem, 78vw);
     overflow: hidden;
@@ -11,7 +11,7 @@
     white-space: nowrap;
 }
 
-.grid-viewer-frame-shell {
+.entity-viewer-frame-shell {
     height: calc(100dvh - 8rem);
     min-height: 24rem;
     overflow: hidden;
@@ -20,7 +20,7 @@
     background: #05080c;
 }
 
-.grid-viewer-frame {
+.entity-viewer-frame {
     display: block;
     width: 100%;
     height: 100%;

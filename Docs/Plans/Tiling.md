@@ -25,7 +25,7 @@
 7. Pass generated cube-part `patternOffset` through the renderer.
 8. Change `createBlockMeshes` so `createModelMesh(...)` receives `part.patternOffset` for `block.modelParts`.
 9. Pass `null` or omit pattern offset for `currentModelAssetId` and runtime `subparts`, since the game's cube-part patterning applies to generated cube topology parts.
-10. Add a small UV transformation helper in `grid-renderer.js`.
+10. Add a small UV transformation helper in `entity-renderer.js`.
 11. Helper behavior:
     - If no UVs or no valid `patternOffset.z/w`, return original UVs.
     - `offsetU = patternOffset.x / patternOffset.z`.
@@ -35,13 +35,13 @@
 13. Keep the existing texture wrapping behavior. Space Engineers relies on repeat addressing; the offset selects the correct pattern tile after UVs are scaled down.
 14. Do not alter server DTOs or transmit any asset data. The needed metadata is already present.
 15. Do not reimplement `MyCubeGrid.GetCubeParts` in JavaScript. The agent already uses the game method, so duplicating it client-side would add drift risk.
-16. Update `Docs/GridViewer.md` to mention armor/cube-part pattern offsets and MWM `PatternScale`.
+16. Update `Docs/EntityViewer.md` to mention armor/cube-part pattern offsets and MWM `PatternScale`.
 17. If generated reference docs include these viewer files, refresh only the relevant generated docs. If the handbook still excludes `wwwroot/viewer`, note that no generated reference update is needed.
 
 ## Verification Plan
 
 1. Run `node --check src/mwm-loader.js`.
-2. Run `node --check src/grid-renderer.js`.
+2. Run `node --check src/CometWorks.EntityViewer/wwwroot/entity-renderer.js`.
 3. Run `dotnet build Quasar/Quasar.csproj`.
 4. Full solution build may still fail if local Space Engineers assemblies are not configured; treat that separately from this browser-only change.
 5. Manual viewer check with vanilla armor:

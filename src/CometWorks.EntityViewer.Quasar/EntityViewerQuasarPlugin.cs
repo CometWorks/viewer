@@ -5,20 +5,20 @@ using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Extensions;
 using Quasar.Plugin.Abstractions.Navigation;
 using Quasar.Plugin.Abstractions.Security;
-using CometWorks.GridViewer.Components;
-using CometWorks.GridViewer.Services;
+using CometWorks.EntityViewer.Components;
+using CometWorks.EntityViewer.Services;
 
-namespace CometWorks.GridViewer.Quasar;
+namespace CometWorks.EntityViewer.Quasar;
 
-public sealed class GridViewerQuasarPlugin : IQuasarPlugin
+public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 {
-    public string Id => "cometworks.gridviewer";
+    public string Id => "cometworks.entityviewer";
 
-    public string DisplayName => "Grid Viewer";
+    public string DisplayName => "Entity Viewer";
 
     public void ConfigureServices(IServiceCollection services, QuasarPluginContext context)
     {
-        services.AddGridViewerUi();
+        services.AddEntityViewerUi();
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
@@ -27,7 +27,7 @@ public sealed class GridViewerQuasarPlugin : IQuasarPlugin
 
     public IEnumerable<Assembly> GetRazorAssemblies()
     {
-        yield return typeof(GridViewerColumnCell).Assembly;
+        yield return typeof(EntityViewerColumnCell).Assembly;
     }
 
     public IEnumerable<QuasarNavItem> GetNavItems()
@@ -39,7 +39,7 @@ public sealed class GridViewerQuasarPlugin : IQuasarPlugin
     {
         yield return new QuasarExtensionContribution(
             QuasarExtensionTargets.EntityViewerColumnHeader,
-            typeof(GridViewerColumnHeader),
+            typeof(EntityViewerColumnHeader),
             QuasarPatchMode.Replace,
             100,
             Id,
@@ -47,7 +47,7 @@ public sealed class GridViewerQuasarPlugin : IQuasarPlugin
 
         yield return new QuasarExtensionContribution(
             QuasarExtensionTargets.EntityViewerColumnCell,
-            typeof(GridViewerColumnCell),
+            typeof(EntityViewerColumnCell),
             QuasarPatchMode.Replace,
             100,
             Id,

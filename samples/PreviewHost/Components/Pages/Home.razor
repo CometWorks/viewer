@@ -1,10 +1,10 @@
 @page "/"
 
-<PageTitle>Grid Viewer Preview</PageTitle>
+<PageTitle>Entity Viewer Preview</PageTitle>
 
 <MudStack Spacing="3">
     <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-        <MudText Typo="Typo.h4">Grid Viewer</MudText>
+        <MudText Typo="Typo.h4">Entity Viewer</MudText>
         <MudButton Href="@ViewerAssetUrl"
                    Target="_blank"
                    Variant="Variant.Filled"
@@ -24,13 +24,13 @@
                             <MudTh>Type</MudTh>
                             <MudTh>Entity ID</MudTh>
                             <MudTh>Name</MudTh>
-                            <GridViewerColumnHeader />
+                            <EntityViewerColumnHeader />
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd DataLabel="Type">@context.Type</MudTd>
                             <MudTd DataLabel="Entity ID" Class="mono">@context.EntityId</MudTd>
                             <MudTd DataLabel="Name">@context.Name</MudTd>
-                            <GridViewerColumnCell
+                            <EntityViewerColumnCell
                                 ServerName="Preview Server"
                                 EntityId="@context.EntityId"
                                 EntityType="@context.Type"
@@ -52,7 +52,7 @@
                     </MudStack>
                     <div class="preview-frame-host">
                         <iframe src="@ViewerAssetUrl"
-                                title="Grid Viewer static runtime"
+                                title="Entity Viewer static runtime"
                                 class="preview-frame"></iframe>
                     </div>
                 </MudStack>
@@ -63,7 +63,7 @@
 
 @code
 {
-    private const string ViewerAssetUrl = "_content/CometWorks.GridViewer/index.html";
+    private const string ViewerAssetUrl = "_content/CometWorks.EntityViewer/index.html";
 
     private readonly PreviewEntity[] _entities =
     [

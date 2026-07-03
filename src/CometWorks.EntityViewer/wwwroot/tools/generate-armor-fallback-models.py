@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument("--content", required=True, help="Path to the Space Engineers Content directory.")
     parser.add_argument("--topology-source", required=True, help="Path to Sandbox.Game/.../MyBlockVerticesCache.cs from decompiled game sources.")
     parser.add_argument("--topology-enum", required=True, help="Path to VRage.Game/.../MyCubeTopology.cs from decompiled game sources.")
-    parser.add_argument("--output", default="Viewer/src/CometWorks.GridViewer/wwwroot/armor-fallback-models.js")
+    parser.add_argument("--output", default="Viewer/src/CometWorks.EntityViewer/wwwroot/armor-fallback-models.js")
     args = parser.parse_args()
 
     rows = list(csv.DictReader(open(args.csv, newline="")))

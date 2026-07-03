@@ -1,16 +1,16 @@
 <MudDialog>
     <TitleContent>
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="grid-viewer-title-row">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="entity-viewer-title-row">
             <MudIconButton Icon="@Icons.Material.Filled.Close"
                            Color="Color.Default"
                            Size="Size.Small"
                            OnClick="Close"
                            title="Close viewer" />
-            <MudStack Spacing="0" Class="grid-viewer-title-stack">
+            <MudStack Spacing="0" Class="entity-viewer-title-stack">
                 <MudText Typo="Typo.h6">@Title</MudText>
                 @if (!string.IsNullOrWhiteSpace(Subtitle))
                 {
-                    <MudText Typo="Typo.caption" Class="grid-viewer-subtitle">@Subtitle</MudText>
+                    <MudText Typo="Typo.caption" Class="entity-viewer-subtitle">@Subtitle</MudText>
                 }
             </MudStack>
         </MudStack>
@@ -22,8 +22,8 @@
         }
         else
         {
-            <div class="grid-viewer-frame-shell">
-                <iframe class="grid-viewer-frame"
+            <div class="entity-viewer-frame-shell">
+                <iframe class="entity-viewer-frame"
                         src="@ViewerUrl"
                         title="@Title"
                         allow="fullscreen"></iframe>
@@ -41,7 +41,7 @@
     public string ViewerUrl { get; set; } = string.Empty;
 
     [Parameter]
-    public string Title { get; set; } = "Grid Viewer";
+    public string Title { get; set; } = "Entity Viewer";
 
     [Parameter]
     public string Subtitle { get; set; } = string.Empty;

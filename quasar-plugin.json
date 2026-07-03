@@ -1,11 +1,11 @@
 {
-  "id": "cometworks.gridviewer",
-  "displayName": "Grid Viewer",
+  "id": "cometworks.entityviewer",
+  "displayName": "Entity Viewer",
   "version": "0.1.0",
-  "entryAssembly": "CometWorks.GridViewer.Quasar.dll",
-  "entryType": "CometWorks.GridViewer.Quasar.GridViewerQuasarPlugin",
-  "projectPath": "src/CometWorks.GridViewer.Quasar/CometWorks.GridViewer.Quasar.csproj",
-  "staticAssets": "src/CometWorks.GridViewer/wwwroot",
+  "entryAssembly": "CometWorks.EntityViewer.Quasar.dll",
+  "entryType": "CometWorks.EntityViewer.Quasar.EntityViewerQuasarPlugin",
+  "projectPath": "src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj",
+  "staticAssets": "src/CometWorks.EntityViewer/wwwroot",
   "stylesheets": [
     "quasar-plugin.css"
   ],
