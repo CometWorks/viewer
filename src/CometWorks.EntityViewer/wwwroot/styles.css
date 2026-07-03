@@ -97,6 +97,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .check-row.is-disabled { opacity: 0.48; cursor: not-allowed; }
 
 .summary-list, .stats-card dl { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 0.75rem; margin: 0; }
+.stats-card dl { max-height: 18rem; overflow: auto; padding-right: 0.15rem; }
 .summary-list dt, .stats-card dt { color: var(--muted); }
 .summary-list dd, .stats-card dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
 

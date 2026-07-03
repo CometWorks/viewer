@@ -51,6 +51,41 @@ const MATERIAL_TEXTURE_PROPERTIES = [
     "thicknessMap",
     "transmissionMap",
 ];
+const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
+const PANEL_STAT_KEYS = [
+    "Blocks",
+    "Model meshes",
+    "Proxy meshes",
+    "Models listed",
+    "Models found locally",
+    "Models parsed",
+    "Models missing",
+    "Textures listed",
+    "Textures found locally",
+    "Textures loaded",
+    "Textures missing",
+    "Textures failed",
+    "Voxel bodies",
+    "Voxel data chunks",
+    "Voxel mesh triangles",
+    "Context mode",
+    "Context grids",
+    "Context clipped grids",
+    "Context blocks",
+    "Context voxels",
+    "Scene mods",
+    "LCD surfaces",
+    "Logistics systems",
+    "Open conveyor paths",
+    "Damaged blocks",
+    "Damaged voxel chunks",
+    "Grid light sources",
+    "Active grid lights",
+    "Viewer grid lights",
+    "Draw calls",
+    "Triangles",
+    "GPU textures",
+];
 
 export function initScene() {
     state.viewerDisposed = false;
@@ -118,7 +153,7 @@ export function animate(time) {
     else state.controls.update();
     state.renderer.render(state.scene, state.camera);
     updateFpsOverlay(now);
-    updateRenderStats();
+    updateRenderStats(now);
 }
 
 export function disposeViewer() {
@@ -156,6 +191,7 @@ export function disposeViewer() {
     state.clippingBox = null;
     state.fpsFrameCount = 0;
     state.fpsLastUpdateTime = 0;
+    state.lastStatsRenderTime = 0;
 }
 
 function applySceneTheme() {
@@ -1050,7 +1086,7 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
-function updateRenderStats() {
+function updateRenderStats(now = performance.now()) {
     const info = state.renderer.info;
     state.stats["Draw calls"] = info.render.calls;
     state.stats.Triangles = info.render.triangles;
@@ -1059,51 +1095,17 @@ function updateRenderStats() {
     state.stats.Geometries = info.memory.geometries;
     state.stats["GPU textures"] = info.memory.textures;
     state.stats.Programs = info.programs ? info.programs.length : 0;
-    Object.assign(state.stats, collectVisibilityStats());
     const modelLodStats = collectLiveModelLodStats();
     if (modelLodStats) Object.assign(state.stats, modelLodStats);
+    if (now - state.lastStatsRenderTime < DIAGNOSTICS_REFRESH_INTERVAL_MS) return;
+    state.lastStatsRenderTime = now;
     renderStats();
-}
-
-function collectVisibilityStats() {
-    const frustum = new THREE.Frustum();
-    const projection = new THREE.Matrix4().multiplyMatrices(state.camera.projectionMatrix, state.camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(projection);
-
-    const stats = { Renderables: 0, Visible: 0, Culled: 0, Meshes: 0, Sprites: 0, Lights: 0 };
-    state.scene.updateMatrixWorld(true);
-    traverseVisible(state.scene, true, object => {
-        if (object.isLight) stats.Lights++;
-        const renderable = object.isMesh || object.isLine || object.isPoints || object.isSprite;
-        if (!renderable) return;
-        stats.Renderables++;
-        if (object.isMesh) stats.Meshes++;
-        if (object.isSprite) stats.Sprites++;
-        if (isObjectCulled(object, frustum)) stats.Culled++;
-        else stats.Visible++;
-    });
-    return stats;
 }
 
 function traverseVisible(object, parentVisible, visitor) {
     const visible = parentVisible && object.visible !== false;
     if (visible) visitor(object);
     for (const child of object.children) traverseVisible(child, visible, visitor);
-}
-
-function isObjectCulled(object, frustum) {
-    if (!object.frustumCulled) return false;
-    if (object.isSprite) return !frustum.containsPoint(object.getWorldPosition(new THREE.Vector3()));
-    if (object.boundingSphere) {
-        const sphere = object.boundingSphere.clone().applyMatrix4(object.matrixWorld);
-        return !frustum.intersectsSphere(sphere);
-    }
-    const geometry = object.geometry;
-    if (!geometry) return false;
-    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
-    if (!geometry.boundingSphere) return false;
-    const sphere = geometry.boundingSphere.clone().applyMatrix4(object.matrixWorld);
-    return !frustum.intersectsSphere(sphere);
 }
 
 function collectLiveModelLodStats() {
@@ -1122,12 +1124,21 @@ function collectLiveModelLodStats() {
 }
 
 function renderStats() {
-    els.stats.innerHTML = "";
-    for (const [key, value] of Object.entries(state.stats)) {
-        const dt = document.createElement("dt");
-        const dd = document.createElement("dd");
-        dt.textContent = key;
-        dd.textContent = typeof value === "number" ? value.toLocaleString() : String(value);
-        els.stats.append(dt, dd);
+    if (!els.stats) return;
+    els.stats.textContent = "";
+    let rendered = 0;
+    for (const key of PANEL_STAT_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(state.stats, key)) continue;
+        appendStatRow(key, state.stats[key]);
+        rendered++;
     }
+    if (!rendered) appendStatRow("Status", "Waiting for scene");
+}
+
+function appendStatRow(key, value) {
+    const dt = document.createElement("dt");
+    const dd = document.createElement("dd");
+    dt.textContent = key;
+    dd.textContent = typeof value === "number" ? value.toLocaleString() : String(value ?? "");
+    els.stats.append(dt, dd);
 }

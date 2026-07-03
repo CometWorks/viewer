@@ -132,6 +132,7 @@ export async function renderEntityScene(scene, options = {}) {
     const reportProgress = createProgressReporter(options.onProgress);
     state.lastScene = scene;
     state.stats = {};
+    state.lastStatsRenderTime = 0;
     reportProgress("Preparing scene", "Registering scene mod roots...");
     await setSceneModRoots(sceneModList(scene));
 

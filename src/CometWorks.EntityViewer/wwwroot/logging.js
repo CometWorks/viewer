@@ -14,19 +14,24 @@ export function downloadLog() {
     downloadText("quasar-entity-viewer.log", `${entries.join("\n")}\n`);
 }
 
-export function exportStatistics() {
+export function exportDiagnostics() {
+    const statEntries = Object.entries(state.stats || {})
+        .sort(([left], [right]) => left.localeCompare(right));
     const lines = [
-        "Quasar Entity Viewer Statistics",
+        "Quasar Entity Viewer Diagnostics",
         `Generated: ${new Date().toISOString()}`,
         `URL: ${window.location.href}`,
         "",
         "Scene",
         ...collectDefinitionListLines(els.sceneSummary),
         "",
-        "Statistics",
-        ...Object.entries(state.stats || {}).map(([key, value]) => `${key}: ${formatStatValue(value)}`),
+        "Visible Diagnostics",
+        ...collectDefinitionListLines(els.stats),
+        "",
+        "All Diagnostics",
+        ...statEntries.map(([key, value]) => `${key}: ${formatStatValue(value)}`),
     ];
-    downloadText("quasar-entity-viewer-statistics.txt", `${lines.join("\n")}\n`);
+    downloadText("quasar-entity-viewer-diagnostics.txt", `${lines.join("\n")}\n`);
 }
 
 function collectDefinitionListLines(list) {

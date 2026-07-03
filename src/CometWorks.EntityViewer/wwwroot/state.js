@@ -60,6 +60,7 @@ export const state = {
     textureLoadPromises: new Map(),
     timings: {},
     stats: {},
+    lastStatsRenderTime: 0,
 };
 
 export const els = {};
