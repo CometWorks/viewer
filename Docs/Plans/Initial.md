@@ -1,5 +1,10 @@
 # Quasar Entity Viewer Integration Plan
 
+This is the historical first integration plan. The current implementation keeps
+the same metadata-only asset boundary, but the scene data path is now owned by
+the Entity Viewer Quasar UI plugin plus its Magnetar companion plugin. Quasar
+core only provides the generic companion channel.
+
 ## Direction
 
 Integrate the proof-of-concept viewer from `~/Documents/se-grid-render` into Quasar as a strict bring-your-own-assets viewer.
@@ -26,9 +31,12 @@ Quasar still needs a narrow viewer data path to request the selected grid scene 
 2. Quasar shows an eye icon before each grid name.
 3. User clicks the eye icon.
 4. Quasar opens the UI plugin asset route `/_quasar/plugins/cometworks.entityviewer/index.html?agentId=...&entityId=...`.
-5. Viewer asks Quasar for a scene snapshot for that agent/entity.
-6. Quasar sends a command to `Quasar.Agent` over the existing agent WebSocket.
-7. `Quasar.Agent` builds a metadata-only scene snapshot on the game thread.
+5. Viewer asks the Entity Viewer UI plugin endpoint for a scene snapshot for
+   that agent/entity.
+6. The UI plugin calls Quasar's `IQuasarCompanionChannel`, which sends a generic
+   `PluginRequest` through `Quasar.Agent`.
+7. The loaded `cometworks.entityviewer` Magnetar companion plugin builds a
+   metadata-only scene snapshot.
 8. Browser asks the user to select their Space Engineers `Content` folder.
 9. Browser resolves `.mwm` models and texture files locally and renders the scene.
 10. Missing local models/textures render as fallbacks with clear warnings.
@@ -42,17 +50,21 @@ Quasar still needs a narrow viewer data path to request the selected grid scene 
 
 ## Quasar Web App
 
-- Add a small viewer route under static assets, with `src/CometWorks.EntityViewer/wwwroot` copied to `Quasar/wwwroot/viewer`.
-- Add a narrow endpoint such as `/api/viewer/entities/{agentId}/{entityId}/scene`.
+- Mount `src/CometWorks.EntityViewer/wwwroot` as Quasar UI plugin static assets.
+- Add a narrow plugin-owned endpoint under
+  `/_quasar/plugins/cometworks.entityviewer/api/entities/{agentId}/{entityId}/scene`.
 - Protect the endpoint with the existing Quasar view authorization policy.
-- Implement a service that sends a new agent command and returns the scene snapshot payload.
+- Implement the endpoint by calling `IQuasarCompanionChannel`.
 - Do not add raw asset or model mesh endpoints.
 
-## Quasar.Agent
+## Magnetar Companion Plugin
 
-- House all plugin-side scene extraction code in `Quasar.Agent`.
-- Add a command type such as `GetEntityRenderScene`.
-- Execute scene extraction on the game thread through the existing `GameBridge` command flow.
+- House all plugin-side scene extraction code in
+  `CometWorks.EntityViewer.Magnetar`.
+- Implement `IQuasarCompanionRequestHandler` for the `get-entity-scene`
+  operation.
+- Resolve the selected entity on the Space Engineers game thread and run the
+  heavier scene snapshot build off the game thread.
 - Return metadata only.
 
 The agent may include:
@@ -75,7 +87,9 @@ The agent must not include:
 
 ## Protocol
 
-- Put shared viewer DTOs in `Magnetar.Protocol`.
+- Keep generic companion request/response envelopes in `Magnetar.Protocol`.
+- Keep viewer-specific DTOs in the Entity Viewer companion plugin unless another
+  plugin genuinely needs to share them.
 - Keep the DTOs explicit and JSON-friendly.
 - Serialize 64-bit entity IDs as strings if they are consumed directly by JavaScript.
 - Keep the first contract focused on grids. Voxel support can be added later with the same no-asset-transfer rule.

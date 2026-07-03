@@ -21,7 +21,8 @@ export function parseContextFlag(params = new URLSearchParams(window.location.se
 export async function fetchEntityScene() {
     const { agentId, entityId, voxels, context } = getViewerParams();
     const query = new URLSearchParams({ voxels: voxels.enabled ? "1" : "0", context: context.enabled ? "1" : "0" });
-    const response = await fetch(`/api/viewer/entities/${encodeURIComponent(agentId)}/${encodeURIComponent(entityId)}/scene?${query}`, {
+    const sceneUrl = new URL(`./api/entities/${encodeURIComponent(agentId)}/${encodeURIComponent(entityId)}/scene?${query}`, import.meta.url);
+    const response = await fetch(sceneUrl, {
         headers: { "Accept": "application/json" },
         credentials: "same-origin",
     });

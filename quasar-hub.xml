@@ -10,5 +10,9 @@
     <ProjectPath>src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj</ProjectPath>
     <PackageManifest>quasar-plugin.json</PackageManifest>
     <QuasarVersion>&gt;=0.1.0</QuasarVersion>
+    <ImplicitLoading>true</ImplicitLoading>
+    <CompanionPluginIds>
+        <CompanionPluginId>cometworks.entityviewer</CompanionPluginId>
+    </CompanionPluginIds>
     <Commit>Set in quasar-hub when publishing</Commit>
 </PluginData>

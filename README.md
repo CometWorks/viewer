@@ -9,6 +9,8 @@ asteroid voxels, and future entity-focused views.
   services, and the static viewer runtime under `wwwroot/`.
 - `src/CometWorks.EntityViewer.Quasar/` contains the thin Quasar UI plugin
   adapter.
+- `src/CometWorks.EntityViewer.Magnetar/` contains the Magnetar companion
+  plugin that captures live scene snapshots for the viewer.
 - `samples/PreviewHost/` contains a standalone MudBlazor preview host for
   checking plugin components without running Quasar.
 - `Docs/` contains viewer user/developer documentation.
@@ -27,19 +29,31 @@ The repository follows the Quasar UI plugin template split:
 - `CometWorks.EntityViewer` owns Razor components, MudBlazor dialog UI, shared UI
   service registration, and static assets.
 - `CometWorks.EntityViewer.Quasar` implements `IQuasarPlugin` and contributes the
-  Entities page viewer column extension targets.
+  Entities page viewer column extension targets. Its scene API endpoint calls
+  Quasar's `IQuasarCompanionChannel`; Quasar core does not contain a viewer
+  scene endpoint or viewer scene DTOs.
+- `CometWorks.EntityViewer.Magnetar` implements the companion plugin handler
+  for `cometworks.entityviewer` scene requests and owns the server-side Space
+  Engineers scene-capture code.
 
 During local development, the adapter references a sibling Quasar checkout when
 `QuasarPluginAbstractionsProject` resolves. During QuasarHub installation,
 Quasar passes `QuasarPluginAbstractionsAssembly` so the plugin builds against
 the exact `Quasar.Plugin.Abstractions.dll` loaded by the running Quasar worker.
 
+The Magnetar companion project references the sibling Quasar checkout's
+`Magnetar.Protocol` project by default. It compiles against the protocol bridge
+but does not copy `Magnetar.Protocol.dll` into its own output; the running server
+must use the protocol assembly staged with Quasar.Agent so companion handler
+interface identity stays shared.
+
 `quasar-plugin.json` points Quasar at the adapter project and exposes
 `src/CometWorks.EntityViewer/wwwroot` as the plugin static asset directory. It
 also asks Quasar to inject scoped `quasar-plugin.css` from that static asset
 directory so the viewer dialog and replacement column can share host page
 styling without loading the iframe-global viewer runtime CSS into Quasar. The
-adapter opens a fullscreen MudBlazor dialog that serves the viewer from:
+manifest also declares the `cometworks.entityviewer` companion plugin id. The
+adapter opens a fullscreen MudBlazor dialog that serves the viewer from
 `/_quasar/plugins/cometworks.entityviewer/`.
 
 ## Preview Workflow

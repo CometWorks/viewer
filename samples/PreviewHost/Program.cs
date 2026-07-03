@@ -23,7 +23,7 @@ app.UseStaticFiles();
 UseViewerVendorAssets(app);
 app.UseAntiforgery();
 
-app.MapGet("/api/viewer/entities/{agentId}/{entityId:long}/scene", () =>
+app.MapGet("/_content/CometWorks.EntityViewer/api/entities/{agentId}/{entityId:long}/scene", () =>
     Results.NotFound("Preview host does not provide live Quasar scene data."));
 
 app.MapRazorComponents<App>()

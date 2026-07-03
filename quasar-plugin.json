@@ -10,5 +10,11 @@
     "quasar-plugin.css"
   ],
   "quasarVersion": ">=0.1.0",
-  "companionPlugins": []
+  "companionPlugins": [
+    {
+      "id": "cometworks.entityviewer",
+      "projectPath": "src/CometWorks.EntityViewer.Magnetar/CometWorks.EntityViewer.Magnetar.csproj",
+      "entryAssembly": "CometWorks.EntityViewer.Magnetar.dll"
+    }
+  ]
 }
