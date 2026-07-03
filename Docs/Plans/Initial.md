@@ -98,9 +98,12 @@ The agent must not include:
 
 - Replace POC network texture loading with local content-folder resolution.
 - Replace POC network model mesh loading with browser-side local model loading.
-- Use `showDirectoryPicker()` where available.
-- Provide a practical fallback for browsers without directory picker support where possible.
-- Store/reuse the selected folder handle when the browser permits it.
+- Use `showDirectoryPicker()` only on Chromium 122+ browsers with persistent
+  File System Access permission support.
+- Provide a practical folder-input backup for browsers without the required
+  persistent directory handle support.
+- Store/reuse the selected folder handle in IndexedDB and request permission on
+  later visits when the browser permits it.
 - Validate that the selected folder looks like a Space Engineers `Content` folder.
 - Resolve paths case-insensitively where practical, since users may run Quasar from Linux while selecting content from platforms with different case behavior.
 

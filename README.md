@@ -74,6 +74,11 @@ The static viewer vendors the browser modules it needs under
 import-map URLs. This keeps the viewer working when Quasar serves it from
 `/_quasar/plugins/cometworks.entityviewer/` instead of from the web root.
 
+Chrome, Edge, and other Chromium 122+ browsers can persist selected local
+Content and Mods folder handles through the File System Access API and
+IndexedDB. Other browsers use the backup folder-input viewer path and warn that
+folder selections must be repeated after reload.
+
 Future submodule updates should move the `Viewer` gitlink in Quasar. The Quasar
 release workflow watches that path, so a merge to `main` that updates the
 viewer submodule pointer triggers the release build.

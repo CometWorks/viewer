@@ -2,7 +2,7 @@ import { cacheElements, els, state } from "./state.js";
 import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
-import { getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder } from "./content-folder.js";
+import { getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, exportStatistics, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
@@ -19,6 +19,7 @@ async function start() {
     showLoading("Loading scene", "Initializing renderer...");
     state.voxelSupport = parseVoxelFlag();
     state.contextSupport = parseContextFlag();
+    warnIfUsingBackupFolderAccess();
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
     els.exportStats.addEventListener("click", exportStatistics);
@@ -101,11 +102,23 @@ function hideLoading() {
 
 function savedContentFolderStatus() {
     const name = getSavedContentFolderName();
+    const support = getFileAccessSupport();
+    if (!support.persistent) {
+        return name
+            ? `Backup folder picker active. Last Content folder: ${name}. Select it again after reload.`
+            : "Backup folder picker active. Select Content folder for this session.";
+    }
     return name ? `Last saved Content folder: ${name}. Select it again to grant browser access.` : "No Content folder selected.";
 }
 
 function savedModsFolderStatus() {
     const name = getSavedModsFolderName();
+    const support = getFileAccessSupport();
+    if (!support.persistent) {
+        return name
+            ? `Backup folder picker active. Last Mods folder: ${name}. Select it again after reload.`
+            : "Backup folder picker active. Select Mods folder for this session.";
+    }
     return name ? `Last saved Mods folder: ${name}. Select it again to grant browser access.` : "No Mods folder selected.";
 }
 

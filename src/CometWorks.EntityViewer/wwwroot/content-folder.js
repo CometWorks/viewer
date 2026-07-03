@@ -8,6 +8,7 @@ const CONTENT_HANDLE_KEY = "space-engineers-content";
 const MODS_HANDLE_KEY = "space-engineers-mods";
 const CONTENT_STORAGE_KEY = "quasar-viewer.folder.space-engineers-content";
 const MODS_STORAGE_KEY = "quasar-viewer.folder.space-engineers-mods";
+const MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR = 122;
 const LOOKUP_CONCURRENCY = 32;
 const METADATA_CONCURRENCY = 16;
 const KNOWN_FILE_EXTENSION = /\.(mwm|dds|png|jpe?g|webp|sbc|xml)$/i;
@@ -23,17 +24,19 @@ let sceneModContextLocked = false;
 let assetCacheGeneration = 0;
 let workshopContentHandleResolved = false;
 let workshopContentHandle = null;
+let fileAccessSupport = null;
+let fileAccessWarningLogged = false;
 const lookupQueue = createAsyncQueue(LOOKUP_CONCURRENCY);
 const metadataQueue = createAsyncQueue(METADATA_CONCURRENCY);
 
 export async function restoreContentFolder() {
     const saved = readFolderStorage(CONTENT_STORAGE_KEY);
     if (saved?.name) state.contentFolderName = saved.name;
-    return await restoreStoredContentFolder(false);
+    return await restoreStoredContentFolder(hasPersistentFileSystemAccess());
 }
 
 export async function pickContentFolder() {
-    if (!window.showDirectoryPicker) return await pickContentFolderFromFileList();
+    if (!hasPersistentFileSystemAccess()) return await pickContentFolderFromFileList();
     const saved = await restoreStoredContentFolder(true);
     if (saved) {
         log(`Reused saved Content folder: ${state.contentFolderName}`);
@@ -54,11 +57,11 @@ export async function pickContentFolder() {
 export async function restoreModsFolder() {
     const saved = readFolderStorage(MODS_STORAGE_KEY);
     if (saved?.name) state.modsFolderName = saved.name;
-    return await restoreStoredModsFolder(false);
+    return await restoreStoredModsFolder(hasPersistentFileSystemAccess());
 }
 
 export async function pickModsFolder() {
-    if (!window.showDirectoryPicker) return await pickModsFolderFromFileList();
+    if (!hasPersistentFileSystemAccess()) return await pickModsFolderFromFileList();
     const saved = await restoreStoredModsFolder(true);
     if (saved) {
         log(`Reused saved Mods folder: ${state.modsFolderName}`);
@@ -82,8 +85,26 @@ export function getSavedModsFolderName() {
     return state.modsFolderName || readFolderStorage(MODS_STORAGE_KEY)?.name || "";
 }
 
+export function getFileAccessSupport() {
+    if (!fileAccessSupport) fileAccessSupport = detectFileAccessSupport();
+    return fileAccessSupport;
+}
+
+export function hasPersistentFileSystemAccess() {
+    return getFileAccessSupport().persistent;
+}
+
+export function warnIfUsingBackupFolderAccess() {
+    const support = getFileAccessSupport();
+    if (support.persistent || fileAccessWarningLogged) return "";
+
+    fileAccessWarningLogged = true;
+    log(support.warning, true);
+    return support.warning;
+}
+
 async function restoreStoredContentFolder(requestPermission) {
-    if (!window.indexedDB || !window.showDirectoryPicker) return null;
+    if (!hasPersistentFileSystemAccess()) return null;
     const handle = await readHandle(CONTENT_HANDLE_KEY);
     if (!handle) return null;
     if (!(await ensurePermission(handle, requestPermission))) return null;
@@ -95,7 +116,7 @@ async function restoreStoredContentFolder(requestPermission) {
 }
 
 async function restoreStoredModsFolder(requestPermission) {
-    if (!window.indexedDB || !window.showDirectoryPicker) return null;
+    if (!hasPersistentFileSystemAccess()) return null;
     const handle = await readHandle(MODS_HANDLE_KEY);
     if (!handle) return null;
     if (!(await ensurePermission(handle, requestPermission))) return null;
@@ -1028,10 +1049,83 @@ function writeFolderStorage(key, name, source) {
     }
 }
 
+function detectFileAccessSupport() {
+    const hasDirectoryPicker = typeof window.showDirectoryPicker === "function";
+    const hasIndexedDB = !!window.indexedDB;
+    const secureContext = window.isSecureContext === true;
+    const handlePrototype = window.FileSystemHandle?.prototype;
+    const hasHandlePermissions =
+        typeof handlePrototype?.queryPermission === "function" &&
+        typeof handlePrototype?.requestPermission === "function";
+    const chromiumMajor = detectChromiumMajorVersion();
+    const chromiumBased = chromiumMajor > 0;
+    const persistent = chromiumBased &&
+        chromiumMajor >= MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR &&
+        secureContext &&
+        hasDirectoryPicker &&
+        hasIndexedDB &&
+        hasHandlePermissions;
+    return {
+        persistent,
+        chromiumBased,
+        chromiumMajor,
+        hasDirectoryPicker,
+        hasIndexedDB,
+        secureContext,
+        hasHandlePermissions,
+        warning: persistent ? "" : buildFileAccessWarning({
+            chromiumBased,
+            chromiumMajor,
+            hasDirectoryPicker,
+            hasIndexedDB,
+            secureContext,
+            hasHandlePermissions,
+        }),
+    };
+}
+
+function buildFileAccessWarning(support) {
+    const missing = [];
+    if (!support.chromiumBased) {
+        missing.push("Chrome, Edge, or another Chromium browser");
+    } else if (support.chromiumMajor < MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR) {
+        missing.push(`Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+`);
+    }
+    if (!support.secureContext) missing.push("secure browser context");
+    if (!support.hasDirectoryPicker) missing.push("File System Access directory picker");
+    if (!support.hasIndexedDB) missing.push("IndexedDB handle storage");
+    if (!support.hasHandlePermissions) missing.push("file handle permission prompts");
+
+    const reason = missing.length ? ` Missing: ${missing.join(", ")}.` : "";
+    return `Persistent local folder access needs Chrome or Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+ with File System Access permissions.${reason} Using backup folder picker; select Content and Mods folders again after reload.`;
+}
+
+function detectChromiumMajorVersion() {
+    const brands = navigator.userAgentData?.brands || [];
+    for (const brand of brands) {
+        if (/chromium|google chrome|microsoft edge|opera|brave/i.test(String(brand.brand || ""))) {
+            const version = Number.parseInt(brand.version, 10);
+            if (Number.isFinite(version) && version > 0) return version;
+        }
+    }
+
+    const ua = String(navigator.userAgent || "");
+    const match = /(?:Chrome|Chromium|Edg|OPR|CriOS)\/(\d+)/i.exec(ua);
+    const version = match ? Number.parseInt(match[1], 10) : 0;
+    return Number.isFinite(version) ? version : 0;
+}
+
 async function ensurePermission(handle, request) {
     const options = { mode: "read" };
-    if ((await handle.queryPermission(options)) === "granted") return true;
-    return request && (await handle.requestPermission(options)) === "granted";
+    if (!handle || typeof handle.queryPermission !== "function") return false;
+    try {
+        if ((await handle.queryPermission(options)) === "granted") return true;
+        return !!request &&
+            typeof handle.requestPermission === "function" &&
+            (await handle.requestPermission(options)) === "granted";
+    } catch {
+        return false;
+    }
 }
 
 async function readHandle(key) {
