@@ -12,14 +12,14 @@ Browser-side Space Engineers grid and asteroid viewer used by Quasar.
   checking plugin components without running Quasar.
 - `Docs/` contains viewer user/developer documentation.
 - `package.json` and `package-lock.json` pin browser runtime packages that
-  Quasar stages into `/vendor`.
+  the viewer repository uses for its static runtime.
 
 ## Quasar Integration
 
-Quasar vendors this repository as the `Viewer/` submodule. During
-`Quasar/Quasar.csproj` build, `Viewer/src/CometWorks.GridViewer/wwwroot` is
-copied to `Quasar/wwwroot/viewer` and npm packages are restored from
-`Viewer/package-lock.json`.
+Quasar installs this repository as a Quasar UI plugin through QuasarHub. The hub
+manifest pins a commit, Quasar clones that commit, builds the adapter project,
+and mounts `src/CometWorks.GridViewer/wwwroot` under
+`/_quasar/plugins/cometworks.gridviewer/`.
 
 The repository follows the Quasar UI plugin template split:
 
@@ -27,6 +27,11 @@ The repository follows the Quasar UI plugin template split:
   service registration, and static assets.
 - `CometWorks.GridViewer.Quasar` implements `IQuasarPlugin` and contributes the
   Entities page viewer column extension targets.
+
+During local development, the adapter references a sibling Quasar checkout when
+`QuasarPluginAbstractionsProject` resolves. During QuasarHub installation,
+Quasar passes `QuasarPluginAbstractionsAssembly` so the plugin builds against
+the exact `Quasar.Plugin.Abstractions.dll` loaded by the running Quasar worker.
 
 `quasar-plugin.json` points Quasar at the adapter project and exposes
 `src/CometWorks.GridViewer/wwwroot` as the plugin static asset directory. It

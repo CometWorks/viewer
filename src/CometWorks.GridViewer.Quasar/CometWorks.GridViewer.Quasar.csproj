@@ -11,14 +11,22 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CometWorks.GridViewer\CometWorks.GridViewer.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="MudBlazor" Version="9.4.0" />
   </ItemGroup>
 
-  <ItemGroup Condition="Exists('$(QuasarPluginAbstractionsProject)')">
+  <ItemGroup Condition="'$(QuasarPluginAbstractionsAssembly)' != '' and Exists('$(QuasarPluginAbstractionsAssembly)')">
+    <Reference Include="Quasar.Plugin.Abstractions">
+      <HintPath>$(QuasarPluginAbstractionsAssembly)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="('$(QuasarPluginAbstractionsAssembly)' == '' or !Exists('$(QuasarPluginAbstractionsAssembly)')) and Exists('$(QuasarPluginAbstractionsProject)')">
     <ProjectReference Include="$(QuasarPluginAbstractionsProject)" />
   </ItemGroup>
 
-  <ItemGroup Condition="!Exists('$(QuasarPluginAbstractionsProject)')">
+  <ItemGroup Condition="('$(QuasarPluginAbstractionsAssembly)' == '' or !Exists('$(QuasarPluginAbstractionsAssembly)')) and !Exists('$(QuasarPluginAbstractionsProject)')">
     <PackageReference Include="Quasar.Plugin.Abstractions" Version="0.1.0-preview.1" />
   </ItemGroup>
 
