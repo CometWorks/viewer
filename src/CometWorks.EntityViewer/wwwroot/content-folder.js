@@ -21,25 +21,25 @@ let directoryNodesByKey = new Map();
 let sceneModAliases = new Map();
 let sceneModContextLocked = false;
 let assetCacheGeneration = 0;
+let workshopContentHandleResolved = false;
+let workshopContentHandle = null;
 const lookupQueue = createAsyncQueue(LOOKUP_CONCURRENCY);
 const metadataQueue = createAsyncQueue(METADATA_CONCURRENCY);
 
 export async function restoreContentFolder() {
     const saved = readFolderStorage(CONTENT_STORAGE_KEY);
     if (saved?.name) state.contentFolderName = saved.name;
-    if (!window.indexedDB || !window.showDirectoryPicker) return null;
-    const handle = await readHandle(CONTENT_HANDLE_KEY);
-    if (!handle) return null;
-    if (await ensurePermission(handle, false)) {
-        activateContentFolder(handle, handle.name || "Content");
-        writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "file-system-access");
-        return handle;
-    }
-    return null;
+    return await restoreStoredContentFolder(false);
 }
 
 export async function pickContentFolder() {
     if (!window.showDirectoryPicker) return await pickContentFolderFromFileList();
+    const saved = await restoreStoredContentFolder(true);
+    if (saved) {
+        log(`Reused saved Content folder: ${state.contentFolderName}`);
+        return saved;
+    }
+
     const handle = await window.showDirectoryPicker({ id: "space-engineers-content", mode: "read" });
     if (!(await looksLikeContentFolder(handle))) {
         throw new Error("Selected folder does not look like a Space Engineers Content folder. Pick the folder containing Data, Models, and Textures.");
@@ -54,19 +54,17 @@ export async function pickContentFolder() {
 export async function restoreModsFolder() {
     const saved = readFolderStorage(MODS_STORAGE_KEY);
     if (saved?.name) state.modsFolderName = saved.name;
-    if (!window.indexedDB || !window.showDirectoryPicker) return null;
-    const handle = await readHandle(MODS_HANDLE_KEY);
-    if (!handle) return null;
-    if (await ensurePermission(handle, false)) {
-        await activateModsFolder(handle, handle.name || "Mods");
-        writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "file-system-access");
-        return handle;
-    }
-    return null;
+    return await restoreStoredModsFolder(false);
 }
 
 export async function pickModsFolder() {
     if (!window.showDirectoryPicker) return await pickModsFolderFromFileList();
+    const saved = await restoreStoredModsFolder(true);
+    if (saved) {
+        log(`Reused saved Mods folder: ${state.modsFolderName}`);
+        return saved;
+    }
+
     const handle = await window.showDirectoryPicker({ id: "space-engineers-mods", mode: "read" });
     await validateModsFolder(handle);
     await activateModsFolder(handle, handle.name || "Mods");
@@ -82,6 +80,33 @@ export function getSavedContentFolderName() {
 
 export function getSavedModsFolderName() {
     return state.modsFolderName || readFolderStorage(MODS_STORAGE_KEY)?.name || "";
+}
+
+async function restoreStoredContentFolder(requestPermission) {
+    if (!window.indexedDB || !window.showDirectoryPicker) return null;
+    const handle = await readHandle(CONTENT_HANDLE_KEY);
+    if (!handle) return null;
+    if (!(await ensurePermission(handle, requestPermission))) return null;
+    if (!(await looksLikeContentFolder(handle))) return null;
+
+    activateContentFolder(handle, handle.name || "Content");
+    writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "file-system-access");
+    return handle;
+}
+
+async function restoreStoredModsFolder(requestPermission) {
+    if (!window.indexedDB || !window.showDirectoryPicker) return null;
+    const handle = await readHandle(MODS_HANDLE_KEY);
+    if (!handle) return null;
+    if (!(await ensurePermission(handle, requestPermission))) return null;
+
+    const status = await looksLikeModsFolder(handle);
+    if (!status.valid) return null;
+    if (status.empty) log("Saved Mods folder is empty.", true);
+
+    await activateModsFolder(handle, handle.name || "Mods");
+    writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "file-system-access");
+    return handle;
 }
 
 async function pickContentFolderFromFileList() {
@@ -493,19 +518,51 @@ function addUniqueName(names, name) {
 
 async function findModRootHandle(...names) {
     if (!state.modsFolder) return null;
-    const selectedName = String(state.modsFolder.name || "").toLowerCase();
+    const roots = await getModSearchRoots();
     for (const name of names) {
         if (!name) continue;
         const lower = name.toLowerCase();
         const stem = archiveStem(name);
-        if (selectedName === lower || (stem && selectedName === stem)) return state.modsFolder;
-        const handle = await getTopLevelChild(state.modsFolder, name, "directory") ||
-            await getTopLevelChild(state.modsFolder, name, "file") ||
-            (stem ? await getTopLevelChild(state.modsFolder, stem, "directory") : null) ||
-            (!stem ? await getTopLevelChild(state.modsFolder, `${name}.sbm`, "file") : null);
-        if (handle) return handle;
+        for (const root of roots) {
+            const selectedName = String(root.name || "").toLowerCase();
+            if (selectedName === lower || (stem && selectedName === stem)) return root;
+            const handle = await getTopLevelChild(root, name, "directory") ||
+                await getTopLevelChild(root, name, "file") ||
+                (stem ? await getTopLevelChild(root, stem, "directory") : null) ||
+                (!stem ? await getTopLevelChild(root, `${name}.sbm`, "file") : null);
+            if (handle) return handle;
+        }
     }
     return null;
+}
+
+async function getModSearchRoots() {
+    const roots = [state.modsFolder];
+    const workshopRoot = await getSelectedWorkshopContentHandle();
+    if (workshopRoot && workshopRoot !== state.modsFolder) roots.push(workshopRoot);
+    return roots;
+}
+
+async function getSelectedWorkshopContentHandle() {
+    if (workshopContentHandleResolved) return workshopContentHandle;
+    workshopContentHandleResolved = true;
+    workshopContentHandle = null;
+
+    const root = state.modsFolder;
+    if (!root || root.kind !== "directory") return null;
+
+    const selectedName = String(root.name || "").toLowerCase();
+    if (selectedName === "244850") return null;
+
+    if (selectedName === "content") {
+        workshopContentHandle = await getTopLevelChild(root, "244850", "directory");
+        return workshopContentHandle;
+    }
+
+    const contentRoot = await getTopLevelChild(root, "content", "directory");
+    if (!contentRoot) return null;
+    workshopContentHandle = await getTopLevelChild(contentRoot, "244850", "directory");
+    return workshopContentHandle;
 }
 
 function archiveStem(name) {
@@ -834,6 +891,8 @@ export function clearAssetFolderCaches() {
     fileMetadataByCanonicalPath.clear();
     inFlightMetadataByCanonicalPath.clear();
     directoryNodesByKey = new Map();
+    workshopContentHandleResolved = false;
+    workshopContentHandle = null;
     disposeTextureCache();
     state.textureLoadPromises.clear();
     assetCacheGeneration++;
