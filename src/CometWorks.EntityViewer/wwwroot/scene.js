@@ -17,6 +17,7 @@ const FLY_MOUSE_SENSITIVITY = 0.0022;
 const FLY_BASE_SPEED = 18;
 const FLY_FAST_MULTIPLIER = 3;
 const FLY_PITCH_LIMIT = Math.PI / 2 - 0.01;
+const HOVER_REFRESH_AFTER_CAMERA_MOVE_MS = 60;
 const AMBIENT_WITH_LIGHTING = 0.16;
 const AMBIENT_WITHOUT_LIGHTING = 1.0;
 const SUN_LIGHT_INTENSITY_SCALE = 2.7;
@@ -107,6 +108,8 @@ export function initScene() {
     state.controls = new OrbitControls(state.camera, state.renderer.domElement);
     state.controls.enableDamping = true;
     state.controls.dampingFactor = 0.08;
+    state.controls.addEventListener("start", onOrbitInteractionStart);
+    state.controls.addEventListener("end", onOrbitInteractionEnd);
 
     state.ambientLight = new THREE.AmbientLight(0xffffff, AMBIENT_WITH_LIGHTING);
     state.scene.add(state.ambientLight);
@@ -174,6 +177,8 @@ export function disposeViewer() {
 
     if (state.scene) disposeObjectTree(state.scene);
     disposeTextureCache();
+    state.controls?.removeEventListener("start", onOrbitInteractionStart);
+    state.controls?.removeEventListener("end", onOrbitInteractionEnd);
     state.controls?.dispose();
     state.renderer?.dispose();
     state.renderer?.forceContextLoss?.();
@@ -192,6 +197,14 @@ export function disposeViewer() {
     state.fpsFrameCount = 0;
     state.fpsLastUpdateTime = 0;
     state.lastStatsRenderTime = 0;
+    if (state.hoverRefreshTimer) {
+        window.clearTimeout(state.hoverRefreshTimer);
+        state.hoverRefreshTimer = 0;
+    }
+    state.hoverPointerInside = false;
+    state.hoverRefreshPending = false;
+    state.orbitInteractionActive = false;
+    state.flyMovementActive = false;
 }
 
 function applySceneTheme() {
@@ -788,10 +801,51 @@ function transformedGridBounds() {
 }
 
 function onPointerMove(event) {
-    if (state.cameraMode === "fly" && document.pointerLockElement === state.renderer.domElement) return;
+    if (state.cameraMode === "fly" && document.pointerLockElement === state.renderer.domElement) {
+        state.hoverRefreshPending = false;
+        return;
+    }
+    rememberHoverPointer(event);
+    if (isHoverRefreshSuppressed()) {
+        if (state.hoverPointerInside) state.hoverRefreshPending = true;
+        return;
+    }
+    refreshHoverAtClientPosition(event.clientX, event.clientY);
+}
+
+function rememberHoverPointer(event) {
     const rect = state.renderer.domElement.getBoundingClientRect();
-    state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    state.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    state.hoverPointerClientX = event.clientX;
+    state.hoverPointerClientY = event.clientY;
+    state.hoverPointerInside = event.clientX >= rect.left
+        && event.clientX <= rect.right
+        && event.clientY >= rect.top
+        && event.clientY <= rect.bottom;
+}
+
+function isHoverRefreshSuppressed() {
+    return state.orbitInteractionActive
+        || state.flyMovementActive
+        || (state.cameraMode === "fly" && document.pointerLockElement === state.renderer.domElement);
+}
+
+function refreshPendingHoverAfterCameraMove() {
+    if (!state.hoverRefreshPending || !state.hoverPointerInside) return;
+    if (state.hoverRefreshTimer) window.clearTimeout(state.hoverRefreshTimer);
+    state.hoverRefreshTimer = window.setTimeout(() => {
+        state.hoverRefreshTimer = 0;
+        if (isHoverRefreshSuppressed() || !state.hoverRefreshPending || !state.hoverPointerInside) return;
+        state.hoverRefreshPending = false;
+        refreshHoverAtClientPosition(state.hoverPointerClientX, state.hoverPointerClientY);
+    }, HOVER_REFRESH_AFTER_CAMERA_MOVE_MS);
+}
+
+function refreshHoverAtClientPosition(clientX, clientY) {
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
+    state.hoverRefreshPending = false;
+    state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     state.raycaster.setFromCamera(state.pointer, state.camera);
     const targets = [];
     if (state.gridGroup) targets.push(state.gridGroup);
@@ -821,6 +875,16 @@ function onPointerMove(event) {
     }
     const voxelHit = hits.find(item => item.object.userData && item.object.userData.voxel);
     els.hoverReadout.textContent = voxelHit ? describeVoxel(voxelHit.object.userData.voxel) : "No block or voxel selected";
+}
+
+function onOrbitInteractionStart() {
+    state.orbitInteractionActive = true;
+    if (state.hoverPointerInside) state.hoverRefreshPending = true;
+}
+
+function onOrbitInteractionEnd() {
+    state.orbitInteractionActive = false;
+    refreshPendingHoverAfterCameraMove();
 }
 
 function damagedBlockFromIntersection(hit) {
@@ -1066,7 +1130,13 @@ function syncOrbitTargetFromCamera() {
 }
 
 function updateFlyMovement(delta) {
-    if (!delta || !state.flyKeys.size) return;
+    if (!delta || !state.flyKeys.size) {
+        if (state.flyMovementActive) {
+            state.flyMovementActive = false;
+            refreshPendingHoverAfterCameraMove();
+        }
+        return;
+    }
     const direction = new THREE.Vector3();
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
@@ -1077,8 +1147,15 @@ function updateFlyMovement(delta) {
     if (state.flyKeys.has("KeyD")) direction.add(right);
     if (state.flyKeys.has("KeyA")) direction.sub(right);
     if (direction.lengthSq() > 0) {
+        state.flyMovementActive = true;
+        if (state.hoverPointerInside) state.hoverRefreshPending = true;
         const fast = state.flyKeys.has("ShiftLeft") || state.flyKeys.has("ShiftRight");
         state.camera.position.addScaledVector(direction.normalize(), FLY_BASE_SPEED * (fast ? FLY_FAST_MULTIPLIER : 1) * delta);
+        return;
+    }
+    if (state.flyMovementActive) {
+        state.flyMovementActive = false;
+        refreshPendingHoverAfterCameraMove();
     }
 }
 
