@@ -213,11 +213,10 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 EntityViewerStreamingPaths paths,
                 CancellationToken cancellationToken) =>
             {
-                var mode = NormalizeBaseGameSourceMode(request.BaseGameSourceMode);
                 var settings = await settingsStore.UpdateAsync(current =>
                 {
-                    current.BaseGameSourceMode = mode;
-                    current.BaseGameContentPath = NormalizeOptionalPath(request.BaseGameContentPath);
+                    current.BaseGameSourceMode = "ManagedSteamCmd";
+                    current.BaseGameContentPath = string.Empty;
                     current.DedicatedServerModsPath = NormalizeOptionalPath(request.DedicatedServerModsPath);
                     return current;
                 }, cancellationToken);
@@ -365,18 +364,9 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         var consentAccepted = settings.HasCurrentConsent;
         var streamingEnabled = settings.StreamingEnabled && consentAccepted;
         var managedContent = EntityViewerContentRoots.SelectManaged(paths);
-        var externalProbe = EntityViewerContentRoots.Probe(settings.BaseGameContentPath);
-        var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
-                                        externalProbe.IsUsable;
-        var baseGameContentConfigured = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? externalContentConfigured
-            : managedContent.IsUsable;
-        var activeContentDirectory = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? settings.BaseGameContentPath
-            : managedContent.ContentDirectory;
-        var contentMessage = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? externalProbe.Message
-            : managedContent.Message;
+        var baseGameContentConfigured = managedContent.IsUsable;
+        var activeContentDirectory = managedContent.ContentDirectory;
+        var contentMessage = managedContent.Message;
 
         return new AssetStreamingStatusResponse
         {
@@ -387,9 +377,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion,
             CanManageStreaming = canManageStreaming,
             FileStreamingReady = baseGameContentConfigured,
-            BaseGameSourceMode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
-                ? "ManagedSteamCmd"
-                : settings.BaseGameSourceMode,
+            BaseGameSourceMode = "ManagedSteamCmd",
             BaseGameContentConfigured = baseGameContentConfigured,
             ManagedGameContentExists = managedContent.ClientProbe.IsUsable,
             ManagedDedicatedServerContentExists = managedContent.DedicatedServerProbe.IsUsable,
@@ -408,27 +396,15 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         EntityViewerStreamingSettings settings,
         EntityViewerStreamingPaths paths)
     {
-        var mode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
-            ? "ManagedSteamCmd"
-            : settings.BaseGameSourceMode;
         var managedContent = EntityViewerContentRoots.SelectManaged(paths);
-        var externalProbe = EntityViewerContentRoots.Probe(settings.BaseGameContentPath);
-        var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
-                                        externalProbe.IsUsable;
-        var baseGameContentConfigured = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? externalContentConfigured
-            : managedContent.IsUsable;
-        var activeContentDirectory = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? settings.BaseGameContentPath
-            : managedContent.ContentDirectory;
-        var contentMessage = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? externalProbe.Message
-            : managedContent.Message;
+        var baseGameContentConfigured = managedContent.IsUsable;
+        var activeContentDirectory = managedContent.ContentDirectory;
+        var contentMessage = managedContent.Message;
 
         return new AssetStreamingRootSettingsResponse
         {
-            BaseGameSourceMode = mode,
-            BaseGameContentPath = settings.BaseGameContentPath,
+            BaseGameSourceMode = "ManagedSteamCmd",
+            BaseGameContentPath = string.Empty,
             DedicatedServerModsPath = settings.DedicatedServerModsPath,
             ManagedGameClientDirectory = paths.ManagedGameClientDirectory,
             ManagedGameContentDirectory = paths.ManagedGameContentDirectory,
@@ -465,13 +441,6 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             return "Server asset streaming is disabled by the server owner.";
 
         return "Server asset streaming is disabled. Local asset folders remain active.";
-    }
-
-    private static string NormalizeBaseGameSourceMode(string mode)
-    {
-        return string.Equals(mode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
-            ? "ExternalInstall"
-            : "ManagedSteamCmd";
     }
 
     private static string NormalizeOptionalPath(string path)

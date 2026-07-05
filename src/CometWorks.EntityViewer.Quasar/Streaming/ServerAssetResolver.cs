@@ -36,12 +36,12 @@ public sealed class ServerAssetResolver(
                 return modAsset;
         }
 
-        return TryResolveContentAsset(settings, normalized.Path);
+        return TryResolveContentAsset(normalized.Path);
     }
 
-    private ResolvedServerAsset? TryResolveContentAsset(EntityViewerStreamingSettings settings, string logicalPath)
+    private ResolvedServerAsset? TryResolveContentAsset(string logicalPath)
     {
-        var contentRoot = ResolveContentRoot(settings);
+        var contentRoot = ResolveContentRoot();
         if (string.IsNullOrWhiteSpace(contentRoot) || !Directory.Exists(contentRoot))
             return null;
 
@@ -157,8 +157,8 @@ public sealed class ServerAssetResolver(
         }
     }
 
-    private string ResolveContentRoot(EntityViewerStreamingSettings settings)
-        => EntityViewerContentRoots.ResolveContentRoot(settings, paths);
+    private string ResolveContentRoot()
+        => EntityViewerContentRoots.ResolveContentRoot(paths);
 
     private string ResolveModsRoot(ViewerAssetSession session, EntityViewerStreamingSettings settings)
     {

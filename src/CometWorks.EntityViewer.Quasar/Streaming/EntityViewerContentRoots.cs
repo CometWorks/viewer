@@ -63,7 +63,7 @@ public static class EntityViewerContentRoots
             ActiveProbe = client,
             ClientProbe = client,
             DedicatedServerProbe = dedicated,
-            Message = $"Managed client Content not ready. {client.Message} Dedicated server Content: {dedicated.Message}",
+            Message = $"Managed client Content not ready. {client.Message}",
         };
     }
 
@@ -108,16 +108,7 @@ public static class EntityViewerContentRoots
         };
     }
 
-    public static string ResolveContentRoot(EntityViewerStreamingSettings settings, EntityViewerStreamingPaths paths)
-    {
-        if (settings.BaseGameSourceMode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(settings.BaseGameContentPath))
-        {
-            return Path.GetFullPath(settings.BaseGameContentPath);
-        }
-
-        return SelectManaged(paths).ContentDirectory;
-    }
+    public static string ResolveContentRoot(EntityViewerStreamingPaths paths) => SelectManaged(paths).ContentDirectory;
 
     public static bool LooksUsable(string path) => Probe(path).IsUsable;
 

@@ -49,6 +49,13 @@ export async function cancelInstaller(basePath = DEFAULT_BASE_PATH) {
     });
 }
 
+export function scrollToBottom(element) {
+    if (!element) return;
+    requestAnimationFrame(() => {
+        element.scrollTop = element.scrollHeight;
+    });
+}
+
 async function request(url, options = {}) {
     const init = {
         method: options.method || "GET",

@@ -52,6 +52,8 @@ public sealed class SteamCmdInstallerService(
         Process process;
         CancellationTokenSource runCancellation;
         string steamCmdPath;
+        Task stdoutPump;
+        Task stderrPump;
 
         lock (_sync)
         {
@@ -120,15 +122,12 @@ public sealed class SteamCmdInstallerService(
             EnableRaisingEvents = true,
         };
 
-        process.OutputDataReceived += (_, eventArgs) => AddProcessLog("stdout", eventArgs.Data);
-        process.ErrorDataReceived += (_, eventArgs) => AddProcessLog("stderr", eventArgs.Data);
-
         try
         {
             if (!process.Start())
                 throw new InvalidOperationException("SteamCMD did not start.");
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            stdoutPump = Task.Run(() => PumpProcessOutputAsync(process.StandardOutput, "stdout"), CancellationToken.None);
+            stderrPump = Task.Run(() => PumpProcessOutputAsync(process.StandardError, "stderr"), CancellationToken.None);
         }
         catch (Exception exception)
         {
@@ -185,7 +184,7 @@ public sealed class SteamCmdInstallerService(
             return current;
         }, cancellationToken).ConfigureAwait(false);
 
-        _ = Task.Run(() => ObserveProcessAsync(process, runCancellation, loginName, automatic), CancellationToken.None);
+        _ = Task.Run(() => ObserveProcessAsync(process, runCancellation, loginName, automatic, stdoutPump, stderrPump), CancellationToken.None);
 
         lock (_sync)
         {
@@ -243,7 +242,9 @@ public sealed class SteamCmdInstallerService(
         Process process,
         CancellationTokenSource runCancellation,
         string loginName,
-        bool automatic)
+        bool automatic,
+        Task stdoutPump,
+        Task stderrPump)
     {
         try
         {
@@ -272,6 +273,7 @@ public sealed class SteamCmdInstallerService(
         }
         catch (OperationCanceledException)
         {
+            TryKillProcessTree(process);
             const string message = "SteamCMD install/update canceled.";
             await ApplyCompletedSettingsAsync(loginName, "Canceled", message, null, CancellationToken.None).ConfigureAwait(false);
             lock (_sync)
@@ -300,6 +302,7 @@ public sealed class SteamCmdInstallerService(
         }
         finally
         {
+            await WaitForOutputPumpsAsync(stdoutPump, stderrPump).ConfigureAwait(false);
             process.Dispose();
             runCancellation.Dispose();
         }
@@ -353,6 +356,41 @@ public sealed class SteamCmdInstallerService(
         lock (_sync)
         {
             AddLogLocked(stream, message);
+        }
+    }
+
+    private async Task PumpProcessOutputAsync(StreamReader reader, string stream)
+    {
+        var buffer = new char[512];
+        try
+        {
+            while (true)
+            {
+                var read = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (read <= 0)
+                    return;
+
+                AddProcessLog(stream, new string(buffer, 0, read));
+            }
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task WaitForOutputPumpsAsync(Task stdoutPump, Task stderrPump)
+    {
+        try
+        {
+            await Task.WhenAll(stdoutPump, stderrPump).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            AddProcessLog("stderr", "Timed out while draining SteamCMD output.");
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "SteamCMD output pump failed.");
         }
     }
 

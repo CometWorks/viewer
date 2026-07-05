@@ -68,31 +68,13 @@
                             </MudAlert>
                         }
                         <MudGrid Spacing="2">
-                            <MudItem xs="12" md="6">
-                                <MudSelect T="string"
-                                           Label="Base game source"
-                                           Variant="Variant.Outlined"
-                                           Dense="true"
-                                           @bind-Value="_baseGameSourceMode">
-                                    <MudSelectItem T="string" Value="@("ManagedSteamCmd")">Managed SteamCMD install</MudSelectItem>
-                                    <MudSelectItem T="string" Value="@("ExternalInstall")">External Content folder</MudSelectItem>
-                                </MudSelect>
-                            </MudItem>
-                            <MudItem xs="12" md="6">
+                            <MudItem xs="12">
                                 <MudTextField T="string"
                                               Label="Dedicated Server Mods folder"
                                               Variant="Variant.Outlined"
                                               Immediate="true"
                                               HelperText="Optional. Blank uses Quasar/Magnetars/{server}/DedicatedServer/Mods."
                                               @bind-Value="_dedicatedServerModsPath" />
-                            </MudItem>
-                            <MudItem xs="12">
-                                <MudTextField T="string"
-                                              Label="External Content folder"
-                                              Variant="Variant.Outlined"
-                                              Immediate="true"
-                                              Disabled="@(!IsExternalInstall)"
-                                              @bind-Value="_baseGameContentPath" />
                             </MudItem>
                         </MudGrid>
                         @if (_roots is not null)
@@ -203,8 +185,10 @@
                                 </MudButton>
                             </MudItem>
                         </MudGrid>
-                        <MudPaper Outlined="true" Class="pa-2 entity-viewer-installer-log">
-                            <pre>@InstallerLogText</pre>
+                        <MudPaper Outlined="true" Class="pa-0">
+                            <div class="pa-2 entity-viewer-installer-log" @ref="_installerLogElement">
+                                <pre>@InstallerLogText</pre>
+                            </div>
                         </MudPaper>
                     </MudStack>
                 </MudPaper>
@@ -242,12 +226,12 @@
     private AssetStreamingStatusDto? _status;
     private AssetRootSettingsDto? _roots;
     private SteamCmdInstallerStatusDto? _installer;
+    private ElementReference _installerLogElement;
     private bool _loading = true;
     private bool _busy;
     private bool _changed;
+    private bool _scrollInstallerLog;
     private string _error = string.Empty;
-    private string _baseGameSourceMode = "ManagedSteamCmd";
-    private string _baseGameContentPath = string.Empty;
     private string _dedicatedServerModsPath = string.Empty;
     private string _loginName = string.Empty;
     private string _steamCmdInput = string.Empty;
@@ -261,8 +245,6 @@
 
     [Parameter]
     public string ApiBasePath { get; set; } = "/_quasar/plugins/cometworks.entityviewer/api/assets";
-
-    private bool IsExternalInstall => string.Equals(_baseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase);
 
     private bool InstallerRunning => _installer?.IsRunning == true;
 
@@ -368,7 +350,16 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
+        {
             await LoadAsync();
+            return;
+        }
+
+        if (_scrollInstallerLog)
+        {
+            _scrollInstallerLog = false;
+            await ScrollInstallerLogAsync();
+        }
     }
 
     private async Task LoadAsync()
@@ -385,7 +376,7 @@
             {
                 _roots = await module.InvokeAsync<AssetRootSettingsDto>("fetchRootSettings", ApiBasePath);
                 SyncRootFields();
-                _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", ApiBasePath);
+                SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", ApiBasePath));
                 SyncInstallerFields();
                 UpdateInstallerPolling();
             }
@@ -419,8 +410,6 @@
         {
             _roots = await module.InvokeAsync<AssetRootSettingsDto>("saveRootSettings", ApiBasePath, new AssetRootSettingsRequest
             {
-                BaseGameSourceMode = _baseGameSourceMode,
-                BaseGameContentPath = _baseGameContentPath,
                 DedicatedServerModsPath = _dedicatedServerModsPath,
             });
             _changed = true;
@@ -434,11 +423,11 @@
     {
         await RunBusyAsync(async module =>
         {
-            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("startInstaller", ApiBasePath, new SteamCmdInstallRequest
+            SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("startInstaller", ApiBasePath, new SteamCmdInstallRequest
             {
                 LoginName = _loginName,
                 Validate = _validate,
-            });
+            }));
             _changed = true;
             SyncInstallerFields();
             UpdateInstallerPolling();
@@ -452,7 +441,7 @@
 
         await RunBusyAsync(async module =>
         {
-            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("sendInstallerInput", ApiBasePath, _steamCmdInput);
+            SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("sendInstallerInput", ApiBasePath, _steamCmdInput));
             _steamCmdInput = string.Empty;
             SyncInstallerFields();
             UpdateInstallerPolling();
@@ -463,7 +452,7 @@
     {
         await RunBusyAsync(async module =>
         {
-            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("cancelInstaller", ApiBasePath);
+            SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("cancelInstaller", ApiBasePath));
             _changed = true;
             UpdateInstallerPolling();
         });
@@ -498,15 +487,23 @@
         return _module;
     }
 
+    private async Task ScrollInstallerLogAsync()
+    {
+        try
+        {
+            var module = await GetModuleAsync();
+            await module.InvokeVoidAsync("scrollToBottom", _installerLogElement);
+        }
+        catch
+        {
+        }
+    }
+
     private void SyncRootFields()
     {
         if (_roots is null)
             return;
 
-        _baseGameSourceMode = string.IsNullOrWhiteSpace(_roots.BaseGameSourceMode)
-            ? "ManagedSteamCmd"
-            : _roots.BaseGameSourceMode;
-        _baseGameContentPath = _roots.BaseGameContentPath ?? string.Empty;
         _dedicatedServerModsPath = _roots.DedicatedServerModsPath ?? string.Empty;
     }
 
@@ -523,6 +520,15 @@
         }
 
         _validate = _installer.Validate;
+    }
+
+    private void SetInstaller(SteamCmdInstallerStatusDto? installer)
+    {
+        var previousSequence = _installer?.LastSequence ?? -1;
+        _installer = installer;
+        var nextSequence = _installer?.LastSequence ?? -1;
+        if (nextSequence != previousSequence)
+            _scrollInstallerLog = true;
     }
 
     private void UpdateInstallerPolling()
@@ -548,7 +554,7 @@
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 var module = await GetModuleAsync();
-                _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", cancellationToken, ApiBasePath);
+                SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", cancellationToken, ApiBasePath));
                 if (_installer?.IsRunning != true)
                 {
                     StopPolling();
@@ -622,12 +628,6 @@
 
     private sealed class AssetRootSettingsDto
     {
-        [JsonPropertyName("baseGameSourceMode")]
-        public string BaseGameSourceMode { get; set; } = "ManagedSteamCmd";
-
-        [JsonPropertyName("baseGameContentPath")]
-        public string BaseGameContentPath { get; set; } = string.Empty;
-
         [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
 
@@ -658,12 +658,6 @@
 
     private sealed class AssetRootSettingsRequest
     {
-        [JsonPropertyName("baseGameSourceMode")]
-        public string BaseGameSourceMode { get; set; } = "ManagedSteamCmd";
-
-        [JsonPropertyName("baseGameContentPath")]
-        public string BaseGameContentPath { get; set; } = string.Empty;
-
         [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
     }
@@ -687,6 +681,9 @@
 
         [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
+
+        [JsonPropertyName("lastSequence")]
+        public int LastSequence { get; set; }
 
         [JsonPropertyName("installDirectory")]
         public string InstallDirectory { get; set; } = string.Empty;
