@@ -22,6 +22,15 @@
     font-family: var(--viewer-font-family);
 }
 
+html.quasar-theme-pending,
+html.quasar-theme-pending body {
+    background: transparent;
+}
+
+html.quasar-theme-pending body {
+    visibility: hidden;
+}
+
 * { box-sizing: border-box; }
 
 body {

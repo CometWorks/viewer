@@ -1,5 +1,6 @@
 (function () {
     function showStartupError(message) {
+        document.documentElement.classList.remove("quasar-theme-pending");
         const overlay = document.getElementById("loadingOverlay");
         const title = document.getElementById("loadingTitle");
         const text = document.getElementById("loadingText");

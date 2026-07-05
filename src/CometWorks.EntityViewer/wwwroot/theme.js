@@ -1,4 +1,5 @@
 const LINKED_CLASS = "quasar-theme-linked";
+const PENDING_CLASS = "quasar-theme-pending";
 const THEME_EVENT = "quasar-entity-viewer-theme-changed";
 const TOKEN_MAP = [
     ["--mud-palette-background", "--bg"],
@@ -18,10 +19,12 @@ const TOKEN_MAP = [
 
 let colorCanvas;
 let colorContext;
+let themeReady = false;
 
 export function startQuasarThemeSync() {
     const parentRoot = parentDocumentRoot();
     applyQuasarTheme(parentRoot);
+    revealTheme();
     if (!parentRoot) return;
 
     const observer = new MutationObserver(() => applyQuasarTheme(parentRoot));
@@ -50,7 +53,7 @@ function applyQuasarTheme(parentRoot) {
     const root = document.documentElement;
     if (!parentRoot) {
         root.classList.remove(LINKED_CLASS);
-        return;
+        return false;
     }
 
     const source = getComputedStyle(parentRoot);
@@ -66,13 +69,21 @@ function applyQuasarTheme(parentRoot) {
 
     if (!linked) {
         root.classList.remove(LINKED_CLASS);
-        return;
+        return false;
     }
 
     const background = getComputedStyle(root).getPropertyValue("--bg").trim();
     root.style.setProperty("--viewer-color-scheme", isDarkColor(background) ? "dark" : "light");
     root.classList.add(LINKED_CLASS);
     window.dispatchEvent(new CustomEvent(THEME_EVENT));
+    return true;
+}
+
+function revealTheme() {
+    if (themeReady) return;
+
+    themeReady = true;
+    document.documentElement.classList.remove(PENDING_CLASS);
 }
 
 function parentDocumentRoot() {
