@@ -1,6 +1,7 @@
 import * as zip from "zip.js";
 import { state } from "./state.js";
 import { log } from "./logging.js";
+import { getRemoteAssetSessionKey, resolveRemoteAssetFile } from "./asset-streaming.js";
 
 const DB_NAME = "quasar-viewer";
 const STORE_NAME = "handles";
@@ -370,6 +371,10 @@ export async function resolveAssetFile(logicalPath, options = {}) {
 }
 
 async function resolveAssetFileUncached(normalized, rootId, sourceKind, generation) {
+    const remoteRootId = rootId || normalized.modName || "";
+    const remote = await resolveRemoteAssetFile(normalized.path, { rootId: remoteRootId, sourceKind });
+    if (remote) return remote;
+
     if (normalized.modName) {
         const scoped = await resolveSceneModPath(normalized.modName, normalized.path, generation);
         if (scoped) return scoped;
@@ -431,7 +436,7 @@ function stripModArchivePathPrefix(path) {
 }
 
 function assetCacheKey(normalized, rootId, sourceKind) {
-    return `${assetCacheGeneration}|${rootId || "content"}|${normalized.modName || ""}|${sourceKind || ""}|${normalized.path.toLowerCase()}`;
+    return `${assetCacheGeneration}|remote:${getRemoteAssetSessionKey()}|${rootId || "content"}|${normalized.modName || ""}|${sourceKind || ""}|${normalized.path.toLowerCase()}`;
 }
 
 function candidatePaths(path) {

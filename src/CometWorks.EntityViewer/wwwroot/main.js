@@ -2,8 +2,8 @@ import { cacheElements, els, state } from "./state.js";
 import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
-import { getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
-import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
+import { clearAssetFolderCaches, getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
+import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, prepareRemoteAssetSession, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
@@ -217,6 +217,7 @@ async function reloadScene() {
         const fetchStart = performance.now();
         const scene = await fetchEntityScene();
         addTiming("sceneSnapshotFetch", performance.now() - fetchStart);
+        await prepareRemoteAssets(scene);
         await renderEntityScene(scene, { onProgress: updateLoadingProgress });
         const firstVoxel = scene.voxels && scene.voxels[0];
         log(`Loaded scene ${scene.grid && scene.grid.id || firstVoxel && (firstVoxel.displayName || firstVoxel.id) || "unknown"}.`);
@@ -226,6 +227,17 @@ async function reloadScene() {
         log(error.message, true);
     } finally {
         els.reloadScene.disabled = false;
+    }
+}
+
+async function prepareRemoteAssets(scene) {
+    try {
+        const result = await prepareRemoteAssetSession(scene);
+        if (result.changed) clearAssetFolderCaches();
+        if (result.active) log("Server asset streaming session ready.");
+    } catch (error) {
+        clearAssetFolderCaches();
+        log(`Server asset streaming unavailable: ${error.message}`, true);
     }
 }
 
