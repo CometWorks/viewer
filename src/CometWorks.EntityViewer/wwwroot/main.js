@@ -8,6 +8,11 @@ import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
 
+let serverAssetStreamingReady = false;
+let remoteAssetSessionChecked = false;
+let remoteAssetSessionFailed = false;
+let remoteAssetSessionActive = false;
+
 document.addEventListener("DOMContentLoaded", start);
 window.addEventListener("pagehide", () => {
     disposeViewer();
@@ -22,8 +27,6 @@ async function start() {
     showLoading("Loading scene", "Initializing renderer...");
     state.voxelSupport = parseVoxelFlag();
     state.contextSupport = parseContextFlag();
-    updateFileAccessWarning();
-    warnIfUsingBackupFolderAccess();
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
     els.downloadLog.addEventListener("click", downloadLog);
@@ -57,14 +60,24 @@ async function refreshAssetStreamingStatus() {
         const status = await fetchAssetStreamingStatus();
         applyAssetStreamingStatus(status);
     } catch (error) {
+        serverAssetStreamingReady = false;
+        remoteAssetSessionChecked = false;
+        remoteAssetSessionActive = false;
+        remoteAssetSessionFailed = true;
         updateAssetStreamingStatus("Server asset streaming status unavailable. Local folders remain active.", true);
+        updateLocalAssetFallbackVisibility();
         log(error.message, true);
     }
 }
 
 function applyAssetStreamingStatus(status) {
+    serverAssetStreamingReady = !!status?.streamingEnabled && !!status?.fileStreamingReady;
+    remoteAssetSessionChecked = false;
+    remoteAssetSessionActive = false;
+    remoteAssetSessionFailed = false;
     const message = String(status?.message || "").trim() || "Local folders remain active.";
     updateAssetStreamingStatus(message, false);
+    updateLocalAssetFallbackVisibility();
 }
 
 async function reloadScene() {
@@ -97,9 +110,21 @@ async function prepareRemoteAssets(scene) {
     try {
         const result = await prepareRemoteAssetSession(scene);
         if (result.changed) clearAssetFolderCaches();
-        if (result.active) log("Server asset streaming session ready.");
+        remoteAssetSessionChecked = true;
+        remoteAssetSessionActive = !!result.active;
+        remoteAssetSessionFailed = serverAssetStreamingReady && !result.active;
+        if (result.active) {
+            updateAssetStreamingStatus("Server asset streaming session ready. Local asset folders are hidden.", false);
+            log("Server asset streaming session ready.");
+        }
+        updateLocalAssetFallbackVisibility();
     } catch (error) {
+        remoteAssetSessionChecked = true;
+        remoteAssetSessionActive = false;
+        remoteAssetSessionFailed = true;
         clearAssetFolderCaches();
+        updateAssetStreamingStatus("Server asset streaming unavailable. Local folders remain active.", true);
+        updateLocalAssetFallbackVisibility();
         log(`Server asset streaming unavailable: ${error.message}`, true);
     }
 }
@@ -132,8 +157,13 @@ function hideLoading() {
     if (els.loadingOverlay) els.loadingOverlay.classList.add("is-hidden");
 }
 
-function updateFileAccessWarning() {
+function updateFileAccessWarning(forceHidden = false) {
     if (!els.fileAccessWarning) return;
+    if (forceHidden) {
+        els.fileAccessWarning.hidden = true;
+        return;
+    }
+
     const support = getFileAccessSupport();
     els.fileAccessWarning.hidden = support.persistent;
     if (!support.persistent && els.fileAccessWarningDetail) {
@@ -225,4 +255,13 @@ function updateAssetStreamingStatus(message, isError = false) {
     if (!els.assetStreamingStatus) return;
     els.assetStreamingStatus.textContent = message;
     els.assetStreamingStatus.classList.toggle("is-error", isError);
+}
+
+function updateLocalAssetFallbackVisibility() {
+    const hideFallback = serverAssetStreamingReady &&
+        !remoteAssetSessionFailed &&
+        (!remoteAssetSessionChecked || remoteAssetSessionActive);
+    if (els.localAssetFallback) els.localAssetFallback.hidden = hideFallback;
+    updateFileAccessWarning(hideFallback);
+    if (!hideFallback) warnIfUsingBackupFolderAccess();
 }

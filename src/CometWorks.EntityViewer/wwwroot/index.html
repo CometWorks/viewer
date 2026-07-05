@@ -35,17 +35,19 @@
                 <h2>Assets</h2>
                 <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
                 <p class="hint">Use the Server Asset Streaming button in the Quasar viewer dialog title bar to accept consent, install or update SteamCMD assets, and configure server asset roots.</p>
-                <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
-                    <strong>Persistent file access is not enabled.</strong>
-                    <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>
+                <div id="localAssetFallback" class="asset-folder-fallback">
+                    <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
+                        <strong>Persistent file access is not enabled.</strong>
+                        <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>
+                    </div>
+                    <p id="contentStatus" class="status-text">No Content folder selected.</p>
+                    <button id="pickContent" type="button" class="wide">Select Space Engineers Content Folder</button>
+                    <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
+                    <p id="modsStatus" class="status-text">No Mods folder selected.</p>
+                    <button id="pickMods" type="button" class="wide">Select Space Engineers Mods Folder</button>
+                    <input id="modsFolderPicker" type="file" webkitdirectory directory multiple hidden>
+                    <p class="hint">Pick the global Mods folder that contains mod directories and .sbm files. Quasar does not transmit .mwm files, texture files, or extracted geometry. Missing local files render as proxy boxes.</p>
                 </div>
-                <p id="contentStatus" class="status-text">No Content folder selected.</p>
-                <button id="pickContent" type="button" class="wide">Select Space Engineers Content Folder</button>
-                <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
-                <p id="modsStatus" class="status-text">No Mods folder selected.</p>
-                <button id="pickMods" type="button" class="wide">Select Space Engineers Mods Folder</button>
-                <input id="modsFolderPicker" type="file" webkitdirectory directory multiple hidden>
-                <p class="hint">Pick the global Mods folder that contains mod directories and .sbm files. Quasar does not transmit .mwm files, texture files, or extracted geometry. Missing local files render as proxy boxes.</p>
             </section>
 
             <section class="card">

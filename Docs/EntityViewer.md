@@ -62,6 +62,12 @@ Voxel data payloads are sampled by the running server from live voxel storage an
 
 The browser asks the user to select their local Space Engineers `Content` folder. The folder should contain `Data`, `Models`, and `Textures` directories.
 
+When Quasar server asset streaming is enabled, consent is accepted, asset roots
+are configured, and the viewer can create a streaming session for the current
+scene, the local `Content`/`Mods` folder controls are hidden. They remain a
+fallback path and reappear if the streaming status cannot be read or the
+streaming session cannot be created.
+
 The viewer's JavaScript runtime dependencies are served from Quasar's own `/vendor` static assets instead of a public CDN. The static assets are staged at build time from exact npm packages pinned in this repository's `package-lock.json` (vendored as `Viewer/package-lock.json` inside Quasar): `three` `0.180.0` and `@zip.js/zip.js` `2.7.72`. This keeps startup independent of external CDN availability, proxy behavior, and third-party MIME headers while avoiding hand-copied partial packages.
 
 On Chrome, Edge, and other Chromium 122+ browsers with the File System Access API, the viewer uses `showDirectoryPicker`, stores the selected folder handle in IndexedDB, and calls `requestPermission()` on the stored handle during later visits so Chrome can offer persistent folder access. The selected Space Engineers `Content` folder name is also stored in browser `localStorage` and read on startup, so the viewer can show which folder was last used. Browsers do not expose reusable absolute folder paths from `localStorage`; actual access depends on the saved directory handle and permission.
