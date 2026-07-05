@@ -1,9 +1,12 @@
 using System.Reflection;
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using CometWorks.EntityViewer.Quasar.Streaming;
 using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
 using Quasar.Plugin.Abstractions.Extensions;
@@ -26,6 +29,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
     public void ConfigureServices(IServiceCollection services, QuasarPluginContext context)
     {
         services.AddEntityViewerUi();
+        services.AddSingleton(new EntityViewerStreamingPaths(context));
+        services.AddSingleton<IEntityViewerStreamingSettingsStore, FileEntityViewerStreamingSettingsStore>();
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
@@ -66,6 +71,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             });
 
         sceneEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+
+        MapAssetStreamingEndpoints(endpoints);
     }
 
     public IEnumerable<Assembly> GetRazorAssemblies()
@@ -107,6 +114,136 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void MapAssetStreamingEndpoints(IEndpointRouteBuilder endpoints)
+    {
+        var statusEndpoint = endpoints.MapGet(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/status",
+            async (
+                HttpContext httpContext,
+                IEntityViewerStreamingSettingsStore settingsStore,
+                EntityViewerStreamingPaths paths,
+                IAuthorizationService authorizationService,
+                CancellationToken cancellationToken) =>
+            {
+                var settings = await settingsStore.GetAsync(cancellationToken);
+                var canManage = (await authorizationService.AuthorizeAsync(
+                    httpContext.User,
+                    resource: null,
+                    QuasarPolicyNames.CanManageSecurity)).Succeeded;
+                return Results.Json(BuildAssetStreamingStatus(settings, paths, canManage));
+            });
+
+        statusEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+
+        var consentEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/consent",
+            async (
+                AssetStreamingConsentRequest request,
+                HttpContext httpContext,
+                IEntityViewerStreamingSettingsStore settingsStore,
+                EntityViewerStreamingPaths paths,
+                CancellationToken cancellationToken) =>
+            {
+                if (request.StreamingEnabled && !request.ConsentAccepted)
+                    return Results.BadRequest(new { error = "Consent must be accepted before server asset streaming can be enabled." });
+
+                var userId = UserId(httpContext.User);
+                var settings = await settingsStore.UpdateAsync(current =>
+                {
+                    current.StreamingEnabled = request.StreamingEnabled && request.ConsentAccepted;
+                    if (request.ConsentAccepted)
+                    {
+                        current.ConsentAccepted = true;
+                        current.ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion;
+                        current.ConsentAcceptedAtUtc = DateTimeOffset.UtcNow;
+                        current.ConsentAcceptedByUserId = userId;
+                    }
+                    else
+                    {
+                        current.ConsentAccepted = false;
+                        current.ConsentVersion = string.Empty;
+                        current.ConsentAcceptedAtUtc = null;
+                        current.ConsentAcceptedByUserId = string.Empty;
+                        current.StreamingEnabled = false;
+                    }
+
+                    return current;
+                }, cancellationToken);
+
+                return Results.Json(BuildAssetStreamingStatus(settings, paths, canManageStreaming: true));
+            });
+
+        consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+    }
+
+    private static AssetStreamingStatusResponse BuildAssetStreamingStatus(
+        EntityViewerStreamingSettings settings,
+        EntityViewerStreamingPaths paths,
+        bool canManageStreaming)
+    {
+        var consentAccepted = settings.HasCurrentConsent;
+        var streamingEnabled = settings.StreamingEnabled && consentAccepted;
+        var managedContentExists = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+        var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
+                                        LooksLikeContentFolder(settings.BaseGameContentPath);
+        var baseGameContentConfigured = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? externalContentConfigured
+            : managedContentExists;
+
+        return new AssetStreamingStatusResponse
+        {
+            Mode = streamingEnabled ? "server-pending" : "local",
+            StreamingEnabled = streamingEnabled,
+            ConsentAccepted = consentAccepted,
+            ConsentRequired = !consentAccepted,
+            ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion,
+            CanManageStreaming = canManageStreaming,
+            FileStreamingReady = false,
+            BaseGameSourceMode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
+                ? "ManagedSteamCmd"
+                : settings.BaseGameSourceMode,
+            BaseGameContentConfigured = baseGameContentConfigured,
+            ManagedGameContentExists = managedContentExists,
+            LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
+                ? "NotStarted"
+                : settings.LastInstallStatus,
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming),
+            ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
+        };
+    }
+
+    private static string StatusMessage(bool streamingEnabled, bool consentAccepted, bool canManageStreaming)
+    {
+        if (streamingEnabled)
+            return "Server asset streaming setup is enabled. Local folders remain active until file streaming endpoints are ready.";
+
+        if (!consentAccepted && canManageStreaming)
+            return "Server asset streaming is disabled until the server owner accepts consent.";
+
+        if (!consentAccepted)
+            return "Server asset streaming is disabled by the server owner.";
+
+        return "Server asset streaming is disabled. Local asset folders remain active.";
+    }
+
+    private static bool LooksLikeContentFolder(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return false;
+
+        return Directory.Exists(Path.Combine(path, "Data")) &&
+               Directory.Exists(Path.Combine(path, "Models")) &&
+               Directory.Exists(Path.Combine(path, "Textures"));
+    }
+
+    private static string UserId(ClaimsPrincipal user)
+    {
+        return user.FindFirstValue(ClaimTypes.NameIdentifier) ??
+               user.FindFirstValue("sub") ??
+               user.Identity?.Name ??
+               "unknown";
     }
 
     private sealed class EntityViewerSceneRequest

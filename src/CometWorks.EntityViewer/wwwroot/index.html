@@ -22,7 +22,7 @@
             <header>
                 <p class="eyebrow">Quasar viewer</p>
                 <h1>Entity Viewer</h1>
-                <p class="lede">Metadata comes from the server agent. Models and textures must come from your local Space Engineers <code>Content</code> and <code>Mods</code> folders.</p>
+                <p class="lede">Metadata comes from the server agent. Models and textures use server streaming when enabled, otherwise local Space Engineers <code>Content</code> and <code>Mods</code> folders.</p>
             </header>
 
             <section class="card">
@@ -32,7 +32,14 @@
             </section>
 
             <section class="card">
-                <h2>Local Content</h2>
+                <h2>Assets</h2>
+                <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
+                <div id="assetStreamingConsent" class="asset-consent" hidden>
+                    <strong>Server Asset Streaming</strong>
+                    <p id="assetStreamingConsentText"></p>
+                    <button id="acceptAssetStreaming" type="button" class="wide">Accept and Enable</button>
+                    <button id="dismissAssetStreaming" type="button" class="wide secondary">Use Local Folders</button>
+                </div>
                 <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
                     <strong>Persistent file access is not enabled.</strong>
                     <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>

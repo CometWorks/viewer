@@ -88,6 +88,12 @@ button {
 }
 button:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
+button.secondary {
+    border-color: var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+}
+button.secondary:hover { background: color-mix(in srgb, var(--input-bg) 82%, var(--text)); }
 .wide { width: 100%; margin-top: 0.75rem; }
 .hint, .status-text { color: var(--hint); font-size: 0.78rem; line-height: 1.45; }
 .status-text.is-error { color: var(--danger); }
@@ -108,6 +114,24 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .file-access-warning[hidden] { display: none; }
 .file-access-warning strong { color: var(--warning); font-size: 0.95rem; }
+
+.asset-consent {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0.9rem 0 1rem;
+    padding: 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--warning) 70%, var(--border));
+    border-left: 0.45rem solid var(--warning);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--warning) 20%, var(--panel-2));
+    color: color-mix(in srgb, var(--warning) 12%, var(--text));
+    font-size: 0.84rem;
+    line-height: 1.42;
+}
+
+.asset-consent[hidden] { display: none; }
+.asset-consent strong { color: var(--warning); font-size: 0.95rem; }
+.asset-consent p { margin-bottom: 0; }
 
 .check-row { display: flex; align-items: center; gap: 0.55rem; }
 .check-row input { width: 1rem; min-height: 1rem; }

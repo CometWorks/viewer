@@ -1,0 +1,37 @@
+namespace CometWorks.EntityViewer.Quasar.Streaming;
+
+public sealed class AssetStreamingConsentRequest
+{
+    public bool ConsentAccepted { get; init; }
+
+    public bool StreamingEnabled { get; init; }
+}
+
+public sealed class AssetStreamingStatusResponse
+{
+    public string Mode { get; init; } = "local";
+
+    public bool StreamingEnabled { get; init; }
+
+    public bool ConsentAccepted { get; init; }
+
+    public bool ConsentRequired { get; init; }
+
+    public string ConsentVersion { get; init; } = EntityViewerStreamingSettings.CurrentConsentVersion;
+
+    public bool CanManageStreaming { get; init; }
+
+    public bool FileStreamingReady { get; init; }
+
+    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+
+    public bool BaseGameContentConfigured { get; init; }
+
+    public bool ManagedGameContentExists { get; init; }
+
+    public string LastInstallStatus { get; init; } = "NotStarted";
+
+    public string Message { get; init; } = string.Empty;
+
+    public DateTimeOffset? ConsentAcceptedAtUtc { get; init; }
+}

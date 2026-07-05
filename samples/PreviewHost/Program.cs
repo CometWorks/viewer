@@ -25,6 +25,21 @@ app.UseAntiforgery();
 
 app.MapGet("/_content/CometWorks.EntityViewer/api/entities/{agentId}/{entityId:long}/scene", () =>
     Results.NotFound("Preview host does not provide live Quasar scene data."));
+app.MapGet("/_content/CometWorks.EntityViewer/api/assets/status", () => Results.Json(new
+{
+    mode = "local",
+    streamingEnabled = false,
+    consentAccepted = false,
+    consentRequired = false,
+    consentVersion = "server-asset-streaming-v1",
+    canManageStreaming = false,
+    fileStreamingReady = false,
+    baseGameSourceMode = "ManagedSteamCmd",
+    baseGameContentConfigured = false,
+    managedGameContentExists = false,
+    lastInstallStatus = "NotStarted",
+    message = "Preview host uses local asset folders.",
+}));
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()

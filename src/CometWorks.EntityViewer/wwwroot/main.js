@@ -3,6 +3,7 @@ import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
+import { acceptAssetStreamingConsent, assetStreamingConsentText, fetchAssetStreamingStatus } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
@@ -23,8 +24,11 @@ async function start() {
     warnIfUsingBackupFolderAccess();
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
+    wireAssetStreamingControls();
     els.downloadLog.addEventListener("click", downloadLog);
     animate();
+
+    await refreshAssetStreamingStatus();
 
     try {
         showLoading("Loading scene", "Restoring saved Content folder...");
@@ -45,6 +49,50 @@ async function start() {
     }
 
     await reloadScene();
+}
+
+function wireAssetStreamingControls() {
+    if (els.assetStreamingConsentText) els.assetStreamingConsentText.textContent = assetStreamingConsentText;
+    if (els.dismissAssetStreaming) {
+        els.dismissAssetStreaming.addEventListener("click", () => {
+            if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = true;
+            updateAssetStreamingStatus("Server asset streaming skipped. Local folders remain active.");
+        });
+    }
+    if (els.acceptAssetStreaming) {
+        els.acceptAssetStreaming.addEventListener("click", async () => {
+            els.acceptAssetStreaming.disabled = true;
+            updateAssetStreamingStatus("Enabling server asset streaming...");
+            try {
+                const status = await acceptAssetStreamingConsent();
+                applyAssetStreamingStatus(status);
+                log("Server asset streaming consent accepted.");
+            } catch (error) {
+                updateAssetStreamingStatus(error.message, true);
+                log(error.message, true);
+            } finally {
+                els.acceptAssetStreaming.disabled = false;
+            }
+        });
+    }
+}
+
+async function refreshAssetStreamingStatus() {
+    try {
+        const status = await fetchAssetStreamingStatus();
+        applyAssetStreamingStatus(status);
+    } catch (error) {
+        updateAssetStreamingStatus("Server asset streaming status unavailable. Local folders remain active.", true);
+        log(error.message, true);
+    }
+}
+
+function applyAssetStreamingStatus(status) {
+    const message = String(status?.message || "").trim() || "Local folders remain active.";
+    updateAssetStreamingStatus(message, false);
+
+    const showConsent = !!status?.consentRequired && !!status?.canManageStreaming;
+    if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = !showConsent;
 }
 
 async function reloadScene() {
@@ -187,4 +235,10 @@ function updateContentStatus(message, isError = false) {
 function updateModsStatus(message, isError = false) {
     els.modsStatus.textContent = message;
     els.modsStatus.classList.toggle("is-error", isError);
+}
+
+function updateAssetStreamingStatus(message, isError = false) {
+    if (!els.assetStreamingStatus) return;
+    els.assetStreamingStatus.textContent = message;
+    els.assetStreamingStatus.classList.toggle("is-error", isError);
 }
