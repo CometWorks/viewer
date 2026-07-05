@@ -4,7 +4,7 @@ import { configureContextControl, configureVoxelControl, wireControls } from "./
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
 import { renderEntityScene } from "./entity-renderer.js";
-import { downloadLog, exportDiagnostics, log } from "./logging.js";
+import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
 
 document.addEventListener("DOMContentLoaded", start);
@@ -19,10 +19,10 @@ async function start() {
     showLoading("Loading scene", "Initializing renderer...");
     state.voxelSupport = parseVoxelFlag();
     state.contextSupport = parseContextFlag();
+    updateFileAccessWarning();
     warnIfUsingBackupFolderAccess();
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
-    els.exportStats.addEventListener("click", exportDiagnostics);
     els.downloadLog.addEventListener("click", downloadLog);
     animate();
 
@@ -98,6 +98,15 @@ function showLoading(title, text, options = {}) {
 
 function hideLoading() {
     if (els.loadingOverlay) els.loadingOverlay.classList.add("is-hidden");
+}
+
+function updateFileAccessWarning() {
+    if (!els.fileAccessWarning) return;
+    const support = getFileAccessSupport();
+    els.fileAccessWarning.hidden = support.persistent;
+    if (!support.persistent && els.fileAccessWarningDetail) {
+        els.fileAccessWarningDetail.textContent = support.warning;
+    }
 }
 
 function savedContentFolderStatus() {

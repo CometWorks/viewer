@@ -289,11 +289,17 @@ public class ViewerBlockInstance
 
     public float BuildLevel { get; set; }
 
+    public float BuildIntegrity { get; set; }
+
     public float Integrity { get; set; }
+
+    public float CurrentDamage { get; set; }
 
     public float AccumulatedDamage { get; set; }
 
     public float MaxIntegrity { get; set; }
+
+    public float MassKg { get; set; }
 
     public long OwnerIdentityId { get; set; }
 

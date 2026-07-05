@@ -60,15 +60,14 @@ export const state = {
     textureLoadPromises: new Map(),
     timings: {},
     stats: {},
-    lastStatsRenderTime: 0,
 };
 
 export const els = {};
 
 export function cacheElements() {
     for (const id of [
-        "viewport", "loadingOverlay", "loadingTitle", "loadingText", "loadingProgress", "sceneSummary", "reloadScene", "contentStatus", "pickContent", "folderPicker", "modsStatus", "pickMods", "modsFolderPicker", "showGridHelper", "showVoxels", "showContext", "showLighting", "showSun", "showClipping", "showLogistics", "showDamaged", "showFps",
-        "cameraMode", "resetCamera", "stats", "exportStats", "log", "downloadLog", "hoverReadout", "cameraHint", "fpsOverlay"
+        "viewport", "loadingOverlay", "loadingTitle", "loadingText", "loadingProgress", "sceneSummary", "reloadScene", "fileAccessWarning", "fileAccessWarningDetail", "contentStatus", "pickContent", "folderPicker", "modsStatus", "pickMods", "modsFolderPicker", "showGridHelper", "showVoxels", "showContext", "showLighting", "showSun", "showClipping", "showLogistics", "showDamaged", "showFps",
+        "cameraMode", "resetCamera", "log", "downloadLog", "hoverReadout", "cameraHint", "fpsOverlay"
     ]) {
         els[id] = document.getElementById(id);
     }

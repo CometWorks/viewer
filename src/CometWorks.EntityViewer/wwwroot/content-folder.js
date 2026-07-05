@@ -1087,7 +1087,7 @@ function detectFileAccessSupport() {
 function buildFileAccessWarning(support) {
     const missing = [];
     if (!support.chromiumBased) {
-        missing.push("Chrome, Edge, or another Chromium browser");
+        missing.push("Chrome, Brave, Edge, or another Chromium browser");
     } else if (support.chromiumMajor < MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR) {
         missing.push(`Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+`);
     }
@@ -1097,7 +1097,7 @@ function buildFileAccessWarning(support) {
     if (!support.hasHandlePermissions) missing.push("file handle permission prompts");
 
     const reason = missing.length ? ` Missing: ${missing.join(", ")}.` : "";
-    return `Persistent local folder access needs Chrome or Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+ with File System Access permissions.${reason} Using backup folder picker; select Content and Mods folders again after reload.`;
+    return `Persistent local folder access needs Chrome, Brave, Edge, or another Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+ browser with File System Access permissions. Brave may require enabling the File System Access API.${reason} Using backup folder picker; select Content and Mods folders again after every browser reload.`;
 }
 
 function detectChromiumMajorVersion() {

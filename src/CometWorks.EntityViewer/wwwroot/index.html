@@ -33,6 +33,10 @@
 
             <section class="card">
                 <h2>Local Content</h2>
+                <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
+                    <strong>Persistent file access is not enabled.</strong>
+                    <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>
+                </div>
                 <p id="contentStatus" class="status-text">No Content folder selected.</p>
                 <button id="pickContent" type="button" class="wide">Select Space Engineers Content Folder</button>
                 <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
@@ -89,12 +93,6 @@
                     </select>
                 </label>
                 <button id="resetCamera" type="button" class="wide">Reset Camera</button>
-            </section>
-
-            <section class="card stats-card">
-                <h2>Diagnostics</h2>
-                <button id="exportStats" type="button" class="wide">Export Diagnostics</button>
-                <dl id="stats"></dl>
             </section>
 
             <section class="card log-card">

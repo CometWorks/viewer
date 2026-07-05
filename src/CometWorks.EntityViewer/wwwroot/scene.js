@@ -51,41 +51,6 @@ const MATERIAL_TEXTURE_PROPERTIES = [
     "thicknessMap",
     "transmissionMap",
 ];
-const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
-const PANEL_STAT_KEYS = [
-    "Blocks",
-    "Model meshes",
-    "Proxy meshes",
-    "Models listed",
-    "Models found locally",
-    "Models parsed",
-    "Models missing",
-    "Textures listed",
-    "Textures found locally",
-    "Textures loaded",
-    "Textures missing",
-    "Textures failed",
-    "Voxel bodies",
-    "Voxel data chunks",
-    "Voxel mesh triangles",
-    "Context mode",
-    "Context grids",
-    "Context clipped grids",
-    "Context blocks",
-    "Context voxels",
-    "Scene mods",
-    "LCD surfaces",
-    "Logistics systems",
-    "Open conveyor paths",
-    "Damaged blocks",
-    "Damaged voxel chunks",
-    "Grid light sources",
-    "Active grid lights",
-    "Viewer grid lights",
-    "Draw calls",
-    "Triangles",
-    "GPU textures",
-];
 let hoverPointerDragActive = false;
 
 export function initScene() {
@@ -158,7 +123,6 @@ export function animate(time) {
     else state.controls.update();
     state.renderer.render(state.scene, state.camera);
     updateFpsOverlay(now);
-    updateRenderStats(now);
 }
 
 export function disposeViewer() {
@@ -200,7 +164,6 @@ export function disposeViewer() {
     state.clippingBox = null;
     state.fpsFrameCount = 0;
     state.fpsLastUpdateTime = 0;
-    state.lastStatsRenderTime = 0;
     hoverPointerDragActive = false;
 }
 
@@ -1108,61 +1071,4 @@ function updateFlyMovement(delta) {
 
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
-}
-
-function updateRenderStats(now = performance.now()) {
-    const info = state.renderer.info;
-    state.stats["Draw calls"] = info.render.calls;
-    state.stats.Triangles = info.render.triangles;
-    state.stats.Lines = info.render.lines;
-    state.stats.Points = info.render.points;
-    state.stats.Geometries = info.memory.geometries;
-    state.stats["GPU textures"] = info.memory.textures;
-    state.stats.Programs = info.programs ? info.programs.length : 0;
-    const modelLodStats = collectLiveModelLodStats();
-    if (modelLodStats) Object.assign(state.stats, modelLodStats);
-    if (now - state.lastStatsRenderTime < DIAGNOSTICS_REFRESH_INTERVAL_MS) return;
-    state.lastStatsRenderTime = now;
-    renderStats();
-}
-
-function traverseVisible(object, parentVisible, visitor) {
-    const visible = parentVisible && object.visible !== false;
-    if (visible) visitor(object);
-    for (const child of object.children) traverseVisible(child, visible, visitor);
-}
-
-function collectLiveModelLodStats() {
-    if (!state.gridGroup) return null;
-    const stats = { "LOD0 instances": 0, "LOD1 instances": 0, "LOD2 instances": 0, "LOD3+ instances": 0 };
-    traverseVisible(state.gridGroup, state.gridGroup.visible !== false, object => {
-        if (!object.userData || !object.userData.isModelBatch) return;
-        const count = Number(object.count) || 0;
-        const level = Number(object.userData.lodLevel) || 0;
-        if (level <= 0) stats["LOD0 instances"] += count;
-        else if (level === 1) stats["LOD1 instances"] += count;
-        else if (level === 2) stats["LOD2 instances"] += count;
-        else stats["LOD3+ instances"] += count;
-    });
-    return stats;
-}
-
-function renderStats() {
-    if (!els.stats) return;
-    els.stats.textContent = "";
-    let rendered = 0;
-    for (const key of PANEL_STAT_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(state.stats, key)) continue;
-        appendStatRow(key, state.stats[key]);
-        rendered++;
-    }
-    if (!rendered) appendStatRow("Status", "Waiting for scene");
-}
-
-function appendStatRow(key, value) {
-    const dt = document.createElement("dt");
-    const dd = document.createElement("dd");
-    dt.textContent = key;
-    dd.textContent = typeof value === "number" ? value.toLocaleString() : String(value ?? "");
-    els.stats.append(dt, dd);
 }

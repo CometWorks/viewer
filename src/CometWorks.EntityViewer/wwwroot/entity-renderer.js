@@ -132,7 +132,6 @@ export async function renderEntityScene(scene, options = {}) {
     const reportProgress = createProgressReporter(options.onProgress);
     state.lastScene = scene;
     state.stats = {};
-    state.lastStatsRenderTime = 0;
     reportProgress("Preparing scene", "Registering scene mod roots...");
     await setSceneModRoots(sceneModList(scene));
 
@@ -238,7 +237,6 @@ export async function renderEntityScene(scene, options = {}) {
     if (renderToken !== modelRenderToken) return;
 
     reportProgress("Rendering scene", "Updating statistics...");
-    updateSummaryModelStats(resolutionStats);
     updateTextureStats();
     state.stats["Voxel bodies"] = (scene.voxels || []).length;
     state.stats["Voxel proxies"] = state.sceneRenderCounts.voxelProxies;
@@ -255,7 +253,7 @@ export async function renderEntityScene(scene, options = {}) {
     state.stats["Scene mods"] = state.modRoots.size;
     state.stats["LCD surfaces"] = countLcdSurfaces(scene);
     updateGridLightStats(collectSceneLightSources(scene));
-    renderSummary(scene, resolutionStats, textureStats);
+    renderSummary(scene);
     addTiming("finalSceneSwap", performance.now() - finalSwapStart);
     updateTimingStats();
     reportProgress("Scene ready", "Finalizing viewport...", 1, 1);
@@ -4818,16 +4816,6 @@ function updateGridLightStats(lightSources) {
     state.stats["Capped grid lights"] = Math.max(0, sources.length - state.gridLights.length);
 }
 
-function updateSummaryModelStats(resolutionStats) {
-    const entries = els.sceneSummary && Array.from(els.sceneSummary.children) || [];
-    for (let i = 0; i < entries.length - 1; i += 2) {
-        const label = entries[i].textContent;
-        if (label === "Found") entries[i + 1].textContent = resolutionStats.found.toLocaleString();
-        else if (label === "Parsed") entries[i + 1].textContent = resolutionStats.parsed.toLocaleString();
-        else if (label === "Missing") entries[i + 1].textContent = resolutionStats.missing.toLocaleString();
-    }
-}
-
 function updateTimingStats() {
     for (const [key, metric] of Object.entries(state.timings || {})) {
         const label = timingLabel(key);
@@ -4854,35 +4842,116 @@ function textureAssetKey(logicalPath, rootId = "") {
     return value ? `${rootId || ""}|${value.toLowerCase()}` : "";
 }
 
-function renderSummary(scene, resolutionStats, textureStats) {
+function renderSummary(scene) {
+    if (!els.sceneSummary) return;
     els.sceneSummary.innerHTML = "";
-    addSummary("Grid", scene.grid && scene.grid.displayName);
-    addSummary("Entity", scene.grid && scene.grid.id);
-    addSummary("Blocks", (scene.blockInstances || []).length.toLocaleString());
-    addSummary("Context", scene.context && scene.context.enabled ? "on" : "off");
+    const primary = primaryGrid(scene) || scene.grid || {};
+    const blocks = scene.blockInstances || [];
+    const grids = sceneGrids(scene);
+    const blockSummary = summarizeBlocks(blocks);
+    const voxelCount = (scene.voxels || []).length;
+
+    addSummary("Grid", primary.displayName || standaloneVoxelBody(scene)?.displayName || "Scene");
+    if (primary.gridSpace && primary.gridSpace !== "voxel") addSummary("Grid type", describeGridType(primary));
+    addSummary("Viewable grids", formatGridCount(scene, grids));
+    addSummary("Total blocks", blocks.length.toLocaleString());
+    if (blocks.length) {
+        if (blockSummary.hasMass) addSummary("Mass", formatMassKg(blockSummary.massKg));
+        addSummary("Damage", formatDamageSummary(blockSummary));
+        addSummary("Health", formatPercent(blockSummary.healthRatio));
+        if (blockSummary.incompleteBlocks > 0) addSummary("Incomplete blocks", blockSummary.incompleteBlocks.toLocaleString());
+    }
+
     if (scene.context && scene.context.enabled) {
-        addSummary("Context grids", num(scene.context.gridCount, sceneGrids(scene).length).toLocaleString());
-        addSummary("Clipped grids", num(scene.context.clippedGridCount, 0).toLocaleString());
+        const contextBlocks = state.contextGridIds.size
+            ? blocks.filter(block => state.contextGridIds.has(String(block.gridId || ""))).length
+            : 0;
+        addSummary("Context blocks", contextBlocks.toLocaleString());
     }
-    addSummary("Models", (scene.modelAssets || []).length.toLocaleString());
-    addSummary("Found", resolutionStats.found.toLocaleString());
-    addSummary("Parsed", resolutionStats.parsed.toLocaleString());
-    addSummary("Missing", resolutionStats.missing.toLocaleString());
-    addSummary("Textures", textureStats.listed.toLocaleString());
-    addSummary("LCDs", countLcdSurfaces(scene).toLocaleString());
-    addSummary("Voxels", (scene.voxels || []).length.toLocaleString());
-    addSummary("Voxel chunks", (scene.voxelDeformations || []).length.toLocaleString());
-    if (scene.environment && scene.environment.sunDirection) {
-        const direction = scene.environment.sunDirection;
-        addSummary("Sun", `${formatNumber(direction.x)}, ${formatNumber(direction.y)}, ${formatNumber(direction.z)}`);
-    }
+    if (voxelCount > 0) addSummary("Voxel bodies", voxelCount.toLocaleString());
+
     if (scene.warnings && scene.warnings.length) {
         for (const warning of scene.warnings) log(warning, true);
     }
 }
 
-function formatNumber(value) {
-    return Number(value || 0).toFixed(2);
+function summarizeBlocks(blocks) {
+    const summary = {
+        massKg: 0,
+        hasMass: false,
+        damagedBlocks: 0,
+        incompleteBlocks: 0,
+        totalDamage: 0,
+        totalIntegrity: 0,
+        totalBuildIntegrity: 0,
+        healthRatio: 1,
+        damageRatio: 0,
+    };
+
+    for (const block of blocks || []) {
+        if (!block) continue;
+        const mass = Math.max(0, num(block.massKg, 0));
+        if (mass > 0) {
+            summary.massKg += mass;
+            summary.hasMass = true;
+        }
+
+        const maxIntegrity = Math.max(0, num(block.maxIntegrity, 0));
+        const buildLevel = clamp(num(block.buildLevel, 1), 0, 1);
+        const buildIntegrity = Math.max(0, num(block.buildIntegrity, maxIntegrity * buildLevel));
+        const integrity = Math.max(0, Math.min(buildIntegrity || maxIntegrity, num(block.integrity, buildIntegrity || maxIntegrity)));
+        const currentDamage = Math.max(0, num(block.currentDamage, buildIntegrity - integrity));
+        const accumulatedDamage = Math.max(0, num(block.accumulatedDamage, 0));
+        const damage = currentDamage + accumulatedDamage;
+
+        summary.totalBuildIntegrity += buildIntegrity;
+        summary.totalIntegrity += integrity;
+        summary.totalDamage += damage;
+        if (damage > 0.01) summary.damagedBlocks++;
+        if (maxIntegrity > 0 && buildIntegrity < maxIntegrity * 0.999) summary.incompleteBlocks++;
+    }
+
+    if (summary.totalBuildIntegrity > 0) {
+        summary.healthRatio = clamp(summary.totalIntegrity / summary.totalBuildIntegrity, 0, 1);
+        summary.damageRatio = clamp(summary.totalDamage / summary.totalBuildIntegrity, 0, 1);
+    }
+    return summary;
+}
+
+function describeGridType(grid) {
+    const size = String(grid.gridSpace || "").toLowerCase();
+    const sizeLabel = size === "large" ? "Large" : size === "small" ? "Small" : size || "Grid";
+    return `${sizeLabel} ${grid.isStatic ? "static" : "mobile"}`;
+}
+
+function formatGridCount(scene, grids) {
+    const count = grids.length || (scene.grid ? 1 : 0);
+    const clipped = scene.context && scene.context.enabled ? Math.max(0, num(scene.context.clippedGridCount, 0)) : 0;
+    return clipped > 0 ? `${count.toLocaleString()} (${clipped.toLocaleString()} clipped)` : count.toLocaleString();
+}
+
+function formatDamageSummary(summary) {
+    if (!summary.damagedBlocks) return "none";
+    return `${formatPercent(summary.damageRatio)} (${summary.damagedBlocks.toLocaleString()} blocks)`;
+}
+
+function formatMassKg(value) {
+    const kg = Math.max(0, Number(value) || 0);
+    if (kg >= 1000000) return `${formatCompactNumber(kg / 1000000)} kt`;
+    if (kg >= 10000) return `${formatCompactNumber(kg / 1000)} t`;
+    return `${Math.round(kg).toLocaleString()} kg`;
+}
+
+function formatCompactNumber(value) {
+    if (value >= 100) return Math.round(value).toLocaleString();
+    if (value >= 10) return value.toFixed(1);
+    return value.toFixed(2);
+}
+
+function formatPercent(value) {
+    const percent = clamp(Number(value) || 0, 0, 1) * 100;
+    if (percent > 0 && percent < 0.1) return "<0.1%";
+    return `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
 }
 
 function addSummary(label, value) {

@@ -2041,9 +2041,12 @@ namespace CometWorks.EntityViewer.Magnetar
                 ColourMaskHsv = ToDto(block.ColorMaskHSV),
                 SkinSubtypeId = block.SkinSubtypeId.String ?? string.Empty,
                 BuildLevel = block.BuildLevelRatio,
+                BuildIntegrity = block.BuildIntegrity,
                 Integrity = block.Integrity,
+                CurrentDamage = block.CurrentDamage,
                 AccumulatedDamage = block.AccumulatedDamage,
                 MaxIntegrity = block.MaxIntegrity,
+                MassKg = SafeBlockMass(block),
                 CurrentModelLocalMatrix = ToDto(localMatrix),
             };
 
@@ -2072,6 +2075,19 @@ namespace CometWorks.EntityViewer.Magnetar
             AddLcdMaterialsToHideWhenOffline(block, dto);
             AddLcdSurfaces(block, dto, catalog, warnings);
             return dto;
+        }
+
+        private static float SafeBlockMass(MySlimBlock block)
+        {
+            try
+            {
+                var mass = block?.GetMass() ?? 0f;
+                return mass.IsValid() ? Math.Max(0f, mass) : 0f;
+            }
+            catch
+            {
+                return 0f;
+            }
         }
 
         private static void RefreshEmissiveParts(MySlimBlock block, List<string> warnings)
