@@ -59,6 +59,30 @@ public sealed class SteamCmdInstallerService(
                 return BuildStatusLocked();
         }
 
+        if (!IsSteamAccountLoginName(loginName))
+        {
+            const string message = "Space Engineers client asset install requires a Steam account name. Anonymous SteamCMD cannot download paid app 244850; use an account that owns Space Engineers and any DLC assets this server needs.";
+            await ApplyCompletedSettingsAsync(
+                string.Empty,
+                "Failed",
+                message,
+                exitCode: null,
+                cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = "Failed";
+                _message = message;
+                _steamCmdPath = string.Empty;
+                _loginName = string.Empty;
+                _validate = validate;
+                _exitCode = null;
+                _startedAtUtc = null;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                AddLogLocked("error", message);
+                return BuildStatusLocked();
+            }
+        }
+
         steamCmdPath = ResolveSteamCmdPath();
         if (string.IsNullOrWhiteSpace(steamCmdPath))
             steamCmdPath = await TryInstallManagedSteamCmdAsync(loginName, validate, cancellationToken).ConfigureAwait(false);
@@ -87,7 +111,7 @@ public sealed class SteamCmdInstallerService(
         }
 
         Directory.CreateDirectory(paths.ManagedGameClientDirectory);
-        var arguments = BuildClientUpdateArguments(paths.ManagedGameClientDirectory, loginName, validate);
+        var arguments = BuildSteamCmdUpdateArguments(paths.ManagedGameClientDirectory, loginName, validate);
         var startInfo = CreateSteamCmdStartInfo(steamCmdPath, arguments);
         runCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
         process = new Process
@@ -110,7 +134,7 @@ public sealed class SteamCmdInstallerService(
         {
             process.Dispose();
             runCancellation.Dispose();
-            logger.LogWarning(exception, "Failed starting SteamCMD for Entity Viewer client install.");
+            logger.LogWarning(exception, "Failed starting SteamCMD for Entity Viewer client asset install.");
             await ApplyCompletedSettingsAsync(
                 loginName,
                 "Failed",
@@ -225,12 +249,13 @@ public sealed class SteamCmdInstallerService(
         {
             await process.WaitForExitAsync(runCancellation.Token).ConfigureAwait(false);
             var exitCode = process.ExitCode;
-            var contentReady = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+            var contentProbe = EntityViewerContentRoots.Probe(paths.ManagedGameContentDirectory);
+            var contentReady = contentProbe.IsUsable;
             var state = exitCode == 0 && contentReady ? "Succeeded" : "Failed";
             var message = state == "Succeeded"
-                ? "Space Engineers client install/update complete."
+                ? "Space Engineers client asset install/update complete."
                 : exitCode == 0
-                    ? "SteamCMD completed but Space Engineers Content folder was not found."
+                    ? BuildSuccessfulExitMissingContentMessage(loginName, contentProbe)
                     : $"SteamCMD exited with code {exitCode}.";
 
             await ApplyCompletedSettingsAsync(loginName, state, message, exitCode, CancellationToken.None).ConfigureAwait(false);
@@ -308,6 +333,8 @@ public sealed class SteamCmdInstallerService(
             SteamCmdPath = _steamCmdPath,
             InstallDirectory = paths.ManagedGameClientDirectory,
             ContentDirectory = paths.ManagedGameContentDirectory,
+            ContentReady = EntityViewerContentRoots.Probe(paths.ManagedGameContentDirectory).IsUsable,
+            ContentDiagnostics = EntityViewerContentRoots.Probe(paths.ManagedGameContentDirectory).Message,
             LoginName = _loginName,
             Validate = _validate,
             ExitCode = _exitCode,
@@ -542,7 +569,7 @@ public sealed class SteamCmdInstallerService(
         return string.Empty;
     }
 
-    private static string BuildClientUpdateArguments(string installDirectory, string loginName, bool validate)
+    private static string BuildSteamCmdUpdateArguments(string installDirectory, string loginName, bool validate)
     {
         var forcePlatform = OperatingSystem.IsWindows()
             ? string.Empty
@@ -599,19 +626,51 @@ public sealed class SteamCmdInstallerService(
     }
 
     private static string NormalizeLoginName(string loginName)
+        => (loginName ?? string.Empty).Trim();
+
+    private static bool IsSteamAccountLoginName(string loginName) =>
+        !string.IsNullOrWhiteSpace(loginName) &&
+        !loginName.Equals("anonymous", StringComparison.OrdinalIgnoreCase);
+
+    private string BuildSuccessfulExitMissingContentMessage(string loginName, EntityViewerContentRootProbe contentProbe)
     {
-        var value = (loginName ?? string.Empty).Trim();
-        return string.IsNullOrWhiteSpace(value) ? "anonymous" : value;
+        var manifestDiagnostics = InspectSteamAppManifest(paths.ManagedGameClientDirectory);
+        return $"SteamCMD exited successfully, but no usable Space Engineers client Content folder was installed. {manifestDiagnostics} {contentProbe.Message}";
     }
 
-    private static bool LooksLikeContentFolder(string path)
+    private static string InspectSteamAppManifest(string installDirectory)
     {
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-            return false;
+        var manifestPath = Path.Combine(installDirectory, "steamapps", $"appmanifest_{SpaceEngineersClientAppId}.acf");
+        if (!File.Exists(manifestPath))
+            return $"Steam app manifest was not found at {manifestPath}.";
 
-        return Directory.Exists(Path.Combine(path, "Data")) &&
-               Directory.Exists(Path.Combine(path, "Models")) &&
-               Directory.Exists(Path.Combine(path, "Textures"));
+        try
+        {
+            var text = File.ReadAllText(manifestPath);
+            var sizeOnDisk = ReadAcfValue(text, "SizeOnDisk");
+            var hasInstalledDepot = System.Text.RegularExpressions.Regex.IsMatch(
+                text,
+                "\"InstalledDepots\"\\s*\\{\\s*\"\\d+\"",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+
+            if (sizeOnDisk == "0" && !hasInstalledDepot)
+                return $"Steam app manifest reports SizeOnDisk=0 and no InstalledDepots, so app {SpaceEngineersClientAppId} was not actually downloaded.";
+
+            return $"Steam app manifest exists at {manifestPath}, but client Content is still missing.";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return $"Steam app manifest could not be inspected: {exception.Message}";
+        }
+    }
+
+    private static string ReadAcfValue(string text, string key)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            text,
+            $"\"{System.Text.RegularExpressions.Regex.Escape(key)}\"\\s*\"([^\"]*)\"",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : string.Empty;
     }
 
     private static string QuoteArgument(string value)

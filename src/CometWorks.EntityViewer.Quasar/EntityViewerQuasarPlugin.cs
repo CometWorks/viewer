@@ -364,12 +364,19 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
     {
         var consentAccepted = settings.HasCurrentConsent;
         var streamingEnabled = settings.StreamingEnabled && consentAccepted;
-        var managedContentExists = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+        var managedContent = EntityViewerContentRoots.SelectManaged(paths);
+        var externalProbe = EntityViewerContentRoots.Probe(settings.BaseGameContentPath);
         var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
-                                        LooksLikeContentFolder(settings.BaseGameContentPath);
+                                        externalProbe.IsUsable;
         var baseGameContentConfigured = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
             ? externalContentConfigured
-            : managedContentExists;
+            : managedContent.IsUsable;
+        var activeContentDirectory = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? settings.BaseGameContentPath
+            : managedContent.ContentDirectory;
+        var contentMessage = string.Equals(settings.BaseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? externalProbe.Message
+            : managedContent.Message;
 
         return new AssetStreamingStatusResponse
         {
@@ -384,11 +391,15 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 ? "ManagedSteamCmd"
                 : settings.BaseGameSourceMode,
             BaseGameContentConfigured = baseGameContentConfigured,
-            ManagedGameContentExists = managedContentExists,
+            ManagedGameContentExists = managedContent.ClientProbe.IsUsable,
+            ManagedDedicatedServerContentExists = managedContent.DedicatedServerProbe.IsUsable,
+            ActiveBaseGameContentDirectory = activeContentDirectory,
+            ManagedContentSource = managedContent.Source,
+            BaseGameContentMessage = contentMessage,
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
                 : settings.LastInstallStatus,
-            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured),
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured, contentMessage),
             ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
         };
     }
@@ -400,12 +411,19 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         var mode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
             ? "ManagedSteamCmd"
             : settings.BaseGameSourceMode;
-        var managedContentExists = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+        var managedContent = EntityViewerContentRoots.SelectManaged(paths);
+        var externalProbe = EntityViewerContentRoots.Probe(settings.BaseGameContentPath);
         var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
-                                        LooksLikeContentFolder(settings.BaseGameContentPath);
+                                        externalProbe.IsUsable;
         var baseGameContentConfigured = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
             ? externalContentConfigured
-            : managedContentExists;
+            : managedContent.IsUsable;
+        var activeContentDirectory = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? settings.BaseGameContentPath
+            : managedContent.ContentDirectory;
+        var contentMessage = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? externalProbe.Message
+            : managedContent.Message;
 
         return new AssetStreamingRootSettingsResponse
         {
@@ -414,8 +432,13 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             DedicatedServerModsPath = settings.DedicatedServerModsPath,
             ManagedGameClientDirectory = paths.ManagedGameClientDirectory,
             ManagedGameContentDirectory = paths.ManagedGameContentDirectory,
+            ManagedDedicatedServerContentDirectory = paths.ManagedDedicatedServerContentDirectory,
+            ActiveBaseGameContentDirectory = activeContentDirectory,
+            ManagedContentSource = managedContent.Source,
             BaseGameContentConfigured = baseGameContentConfigured,
-            ManagedGameContentExists = managedContentExists,
+            ManagedGameContentExists = managedContent.ClientProbe.IsUsable,
+            ManagedDedicatedServerContentExists = managedContent.DedicatedServerProbe.IsUsable,
+            BaseGameContentMessage = contentMessage,
             DedicatedServerModsPathExists = !string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) &&
                                              Directory.Exists(settings.DedicatedServerModsPath),
         };
@@ -425,13 +448,14 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         bool streamingEnabled,
         bool consentAccepted,
         bool canManageStreaming,
-        bool baseGameContentConfigured)
+        bool baseGameContentConfigured,
+        string contentMessage)
     {
         if (streamingEnabled)
         {
             return baseGameContentConfigured
                 ? "Server asset streaming is enabled."
-                : "Server asset streaming is enabled, but the Space Engineers Content folder is not ready.";
+                : $"Server asset streaming is enabled, but the Space Engineers Content folder is not ready. {contentMessage}";
         }
 
         if (!consentAccepted && canManageStreaming)
@@ -441,16 +465,6 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             return "Server asset streaming is disabled by the server owner.";
 
         return "Server asset streaming is disabled. Local asset folders remain active.";
-    }
-
-    private static bool LooksLikeContentFolder(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-            return false;
-
-        return Directory.Exists(Path.Combine(path, "Data")) &&
-               Directory.Exists(Path.Combine(path, "Models")) &&
-               Directory.Exists(Path.Combine(path, "Textures"));
     }
 
     private static string NormalizeBaseGameSourceMode(string mode)

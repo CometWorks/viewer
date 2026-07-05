@@ -16,6 +16,8 @@ public sealed class EntityViewerStreamingPaths
         PluginToolsDirectory = Path.Combine(ManagedToolsDirectory, "CometWorks.EntityViewer");
         ManagedGameClientDirectory = Path.Combine(ManagedToolsDirectory, "SpaceEngineersClient");
         ManagedGameContentDirectory = Path.Combine(ManagedGameClientDirectory, "Content");
+        ManagedDedicatedServerDirectory = Path.Combine(ManagedToolsDirectory, "SpaceEngineersDedicatedServer");
+        ManagedDedicatedServerContentDirectory = Path.Combine(ManagedDedicatedServerDirectory, "Content");
         SettingsPath = Path.Combine(PluginToolsDirectory, "asset-streaming-settings.json");
     }
 
@@ -30,6 +32,10 @@ public sealed class EntityViewerStreamingPaths
     public string ManagedGameClientDirectory { get; }
 
     public string ManagedGameContentDirectory { get; }
+
+    public string ManagedDedicatedServerDirectory { get; }
+
+    public string ManagedDedicatedServerContentDirectory { get; }
 
     public string SettingsPath { get; }
 

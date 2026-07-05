@@ -36,8 +36,11 @@ public sealed class SteamCmdHourlyUpdateService(
         if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
             return;
 
-        if (string.IsNullOrWhiteSpace(settings.SteamCmdLoginName))
+        if (string.IsNullOrWhiteSpace(settings.SteamCmdLoginName) ||
+            settings.SteamCmdLoginName.Equals("anonymous", StringComparison.OrdinalIgnoreCase))
+        {
             return;
+        }
 
         if (installerService.GetStatus().IsRunning)
             return;

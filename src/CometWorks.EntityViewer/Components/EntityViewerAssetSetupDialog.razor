@@ -83,6 +83,7 @@
                                               Label="Dedicated Server Mods folder"
                                               Variant="Variant.Outlined"
                                               Immediate="true"
+                                              HelperText="Optional. Blank uses Quasar/Magnetars/{server}/DedicatedServer/Mods."
                                               @bind-Value="_dedicatedServerModsPath" />
                             </MudItem>
                             <MudItem xs="12">
@@ -97,7 +98,13 @@
                         @if (_roots is not null)
                         {
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Managed content: @DisplayPath(_roots.ManagedGameContentDirectory)
+                                Active content: @DisplayPath(_roots.ActiveBaseGameContentDirectory)
+                            </MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Managed client content: @DisplayPath(_roots.ManagedGameContentDirectory)
+                            </MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Managed DS content: @DisplayPath(_roots.ManagedDedicatedServerContentDirectory)
                             </MudText>
                         }
                         <MudButton Variant="Variant.Filled"
@@ -122,17 +129,33 @@
                         @if (_installer is not null)
                         {
                             <MudText Typo="Typo.body2">@InstallerMessage</MudText>
+                            @if (!string.IsNullOrWhiteSpace(_installer.ContentDiagnostics))
+                            {
+                                <MudAlert Severity="@InstallerContentSeverity" Variant="Variant.Text" Dense="true">
+                                    @_installer.ContentDiagnostics
+                                </MudAlert>
+                            }
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 Install dir: @DisplayPath(_installer.InstallDirectory)
                             </MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Expected client Content: @DisplayPath(_installer.ContentDirectory)
+                            </MudText>
+                        }
+                        @if (MissingSteamAccount)
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Dense="true">
+                                Steam account name is required for paid client app 244850 and owned DLC depots.
+                            </MudAlert>
                         }
                         <MudGrid Spacing="2">
                             <MudItem xs="12" md="8">
                                 <MudTextField T="string"
-                                              Label="Steam account"
+                                              Label="Steam account (required)"
                                               Variant="Variant.Outlined"
                                               Immediate="true"
                                               Placeholder="Account name"
+                                              HelperText="SteamCMD will prompt below for password and Steam Guard if needed."
                                               Disabled="@InstallerRunning"
                                               @bind-Value="_loginName" />
                             </MudItem>
@@ -148,7 +171,7 @@
                                     <MudButton Variant="Variant.Filled"
                                                Color="Color.Primary"
                                                StartIcon="@Icons.Material.Filled.Download"
-                                               Disabled="@(_busy || InstallerRunning)"
+                                               Disabled="@(_busy || InstallerRunning || MissingSteamAccount)"
                                                OnClick="StartInstallerAsync">
                                         Install or Update
                                     </MudButton>
@@ -243,6 +266,8 @@
 
     private bool InstallerRunning => _installer?.IsRunning == true;
 
+    private bool MissingSteamAccount => !InstallerRunning && string.IsNullOrWhiteSpace(_loginName);
+
     private string StatusMessage => string.IsNullOrWhiteSpace(_status?.Message)
         ? "Server asset streaming status unavailable."
         : _status.Message;
@@ -273,7 +298,10 @@
 
     private string ConsentChipText => _status?.ConsentAccepted == true ? "Consent accepted" : "Consent needed";
 
-    private Severity RootSeverity => _roots?.BaseGameContentConfigured == true && _roots.DedicatedServerModsPathExists
+    private bool ConfiguredModsPathMissing => !string.IsNullOrWhiteSpace(_dedicatedServerModsPath) &&
+                                              _roots?.DedicatedServerModsPathExists != true;
+
+    private Severity RootSeverity => _roots?.BaseGameContentConfigured == true && !ConfiguredModsPathMissing
         ? Severity.Success
         : Severity.Warning;
 
@@ -287,10 +315,15 @@
             var content = _roots.BaseGameContentConfigured
                 ? "Base Content ready"
                 : "Base Content not ready";
-            var mods = _roots.DedicatedServerModsPathExists
+            var mods = string.IsNullOrWhiteSpace(_dedicatedServerModsPath)
+                ? "Mods path auto per server"
+                : _roots.DedicatedServerModsPathExists
                 ? "Mods path ready"
                 : "Mods path not set or missing";
-            return $"{content}. {mods}.";
+            var details = string.IsNullOrWhiteSpace(_roots.BaseGameContentMessage)
+                ? string.Empty
+                : $" {_roots.BaseGameContentMessage}";
+            return $"{content}. {mods}.{details}";
         }
     }
 
@@ -313,6 +346,10 @@
     private string InstallerStateText => string.IsNullOrWhiteSpace(_installer?.State)
         ? "Idle"
         : _installer.State;
+
+    private Severity InstallerContentSeverity => _installer?.ContentReady == true
+        ? Severity.Success
+        : Severity.Warning;
 
     private string InstallerMessage => string.IsNullOrWhiteSpace(_installer?.Message)
         ? "Installer idle."
@@ -478,8 +515,13 @@
         if (_installer is null)
             return;
 
-        if (string.IsNullOrWhiteSpace(_loginName) && !string.IsNullOrWhiteSpace(_installer.LoginName))
+        if (string.IsNullOrWhiteSpace(_loginName) &&
+            !string.IsNullOrWhiteSpace(_installer.LoginName) &&
+            !_installer.LoginName.Equals("anonymous", StringComparison.OrdinalIgnoreCase))
+        {
             _loginName = _installer.LoginName;
+        }
+
         _validate = _installer.Validate;
     }
 
@@ -570,6 +612,12 @@
 
         [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
+
+        [JsonPropertyName("activeBaseGameContentDirectory")]
+        public string ActiveBaseGameContentDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("baseGameContentMessage")]
+        public string BaseGameContentMessage { get; set; } = string.Empty;
     }
 
     private sealed class AssetRootSettingsDto
@@ -586,8 +634,23 @@
         [JsonPropertyName("managedGameContentDirectory")]
         public string ManagedGameContentDirectory { get; set; } = string.Empty;
 
+        [JsonPropertyName("managedDedicatedServerContentDirectory")]
+        public string ManagedDedicatedServerContentDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("activeBaseGameContentDirectory")]
+        public string ActiveBaseGameContentDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("managedContentSource")]
+        public string ManagedContentSource { get; set; } = "ManagedSteamCmd";
+
         [JsonPropertyName("baseGameContentConfigured")]
         public bool BaseGameContentConfigured { get; set; }
+
+        [JsonPropertyName("managedDedicatedServerContentExists")]
+        public bool ManagedDedicatedServerContentExists { get; set; }
+
+        [JsonPropertyName("baseGameContentMessage")]
+        public string BaseGameContentMessage { get; set; } = string.Empty;
 
         [JsonPropertyName("dedicatedServerModsPathExists")]
         public bool DedicatedServerModsPathExists { get; set; }
@@ -627,6 +690,15 @@
 
         [JsonPropertyName("installDirectory")]
         public string InstallDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("contentDirectory")]
+        public string ContentDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("contentReady")]
+        public bool ContentReady { get; set; }
+
+        [JsonPropertyName("contentDiagnostics")]
+        public string ContentDiagnostics { get; set; } = string.Empty;
 
         [JsonPropertyName("loginName")]
         public string LoginName { get; set; } = string.Empty;

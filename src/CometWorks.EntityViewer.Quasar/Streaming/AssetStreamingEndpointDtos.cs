@@ -29,6 +29,14 @@ public sealed class AssetStreamingStatusResponse
 
     public bool ManagedGameContentExists { get; init; }
 
+    public bool ManagedDedicatedServerContentExists { get; init; }
+
+    public string ActiveBaseGameContentDirectory { get; init; } = string.Empty;
+
+    public string ManagedContentSource { get; init; } = "ManagedSteamCmd";
+
+    public string BaseGameContentMessage { get; init; } = string.Empty;
+
     public string LastInstallStatus { get; init; } = "NotStarted";
 
     public string Message { get; init; } = string.Empty;
@@ -57,9 +65,19 @@ public sealed class AssetStreamingRootSettingsResponse
 
     public string ManagedGameContentDirectory { get; init; } = string.Empty;
 
+    public string ManagedDedicatedServerContentDirectory { get; init; } = string.Empty;
+
+    public string ActiveBaseGameContentDirectory { get; init; } = string.Empty;
+
+    public string ManagedContentSource { get; init; } = "ManagedSteamCmd";
+
     public bool BaseGameContentConfigured { get; init; }
 
     public bool ManagedGameContentExists { get; init; }
+
+    public bool ManagedDedicatedServerContentExists { get; init; }
+
+    public string BaseGameContentMessage { get; init; } = string.Empty;
 
     public bool DedicatedServerModsPathExists { get; init; }
 }

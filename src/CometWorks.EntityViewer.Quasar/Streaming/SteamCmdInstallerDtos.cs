@@ -26,6 +26,10 @@ public sealed class SteamCmdInstallerStatusResponse
 
     public string ContentDirectory { get; init; } = string.Empty;
 
+    public bool ContentReady { get; init; }
+
+    public string ContentDiagnostics { get; init; } = string.Empty;
+
     public string LoginName { get; init; } = string.Empty;
 
     public bool Validate { get; init; } = true;

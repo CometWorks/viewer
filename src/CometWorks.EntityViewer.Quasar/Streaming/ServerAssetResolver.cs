@@ -73,17 +73,15 @@ public sealed class ServerAssetResolver(
         string modName,
         string logicalPath)
     {
-        if (string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) ||
-            !Directory.Exists(settings.DedicatedServerModsPath))
-        {
+        var modsRoot = ResolveModsRoot(session, settings);
+        if (string.IsNullOrWhiteSpace(modsRoot))
             return null;
-        }
 
         var mod = FindSessionMod(session, rootId, modName);
         if (mod is null)
             return null;
 
-        var modRoot = TryFindModRoot(settings.DedicatedServerModsPath, mod);
+        var modRoot = TryFindModRoot(modsRoot, mod);
         if (modRoot is null)
             return null;
 
@@ -160,14 +158,26 @@ public sealed class ServerAssetResolver(
     }
 
     private string ResolveContentRoot(EntityViewerStreamingSettings settings)
+        => EntityViewerContentRoots.ResolveContentRoot(settings, paths);
+
+    private string ResolveModsRoot(ViewerAssetSession session, EntityViewerStreamingSettings settings)
     {
-        if (settings.BaseGameSourceMode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(settings.BaseGameContentPath))
+        if (!string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) &&
+            Directory.Exists(settings.DedicatedServerModsPath))
         {
-            return Path.GetFullPath(settings.BaseGameContentPath);
+            return Path.GetFullPath(settings.DedicatedServerModsPath);
         }
 
-        return paths.ManagedGameContentDirectory;
+        var magnetarsRoot = Path.Combine(paths.QuasarDirectory, "Magnetars");
+        var agentDirectoryName = SafePathSegment(session.AgentId);
+        if (string.IsNullOrWhiteSpace(agentDirectoryName))
+            return string.Empty;
+
+        var candidate = Path.Combine(magnetarsRoot, agentDirectoryName, "DedicatedServer", "Mods");
+        var fullCandidate = Path.GetFullPath(candidate);
+        return Directory.Exists(fullCandidate) && IsPathUnder(fullCandidate, magnetarsRoot)
+            ? fullCandidate
+            : string.Empty;
     }
 
     private static AssetSessionModDto? FindSessionMod(ViewerAssetSession session, string rootId, string modName)
@@ -417,6 +427,15 @@ public sealed class ServerAssetResolver(
         if (slash >= 0)
             alias = alias[..slash];
         return alias.ToLowerInvariant();
+    }
+
+    private static string SafePathSegment(string value)
+    {
+        var normalized = (value ?? string.Empty).Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(normalized))
+            return string.Empty;
+
+        return normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? string.Empty;
     }
 
     private static string ArchiveStem(string path)
