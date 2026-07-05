@@ -60,6 +60,26 @@
                     <button id="cancelSteamCmdInstall" type="button" class="wide secondary">Cancel Install</button>
                     <pre id="assetInstallerLog" class="installer-log" aria-live="polite"></pre>
                 </div>
+                <div id="assetRootSettingsPanel" class="asset-installer" hidden>
+                    <strong>Asset Roots</strong>
+                    <p id="assetRootSettingsStatus" class="status-text">Asset roots not loaded.</p>
+                    <label>
+                        Base game source
+                        <select id="baseGameSourceMode">
+                            <option value="ManagedSteamCmd">Managed SteamCMD install</option>
+                            <option value="ExternalInstall">External Content folder</option>
+                        </select>
+                    </label>
+                    <label>
+                        External Content folder
+                        <input id="baseGameContentPath" type="text" autocomplete="off" placeholder="/path/to/SpaceEngineers/Content">
+                    </label>
+                    <label>
+                        Dedicated Server Mods folder
+                        <input id="dedicatedServerModsPath" type="text" autocomplete="off" placeholder="/path/to/DedicatedServer/Mods">
+                    </label>
+                    <button id="saveAssetRootSettings" type="button" class="wide">Save Asset Roots</button>
+                </div>
                 <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
                     <strong>Persistent file access is not enabled.</strong>
                     <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>

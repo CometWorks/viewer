@@ -2,6 +2,7 @@ import { getViewerParams } from "./quasar-api.js";
 
 const STATUS_PATH = "api/assets/status";
 const CONSENT_PATH = "api/assets/settings/consent";
+const ROOT_SETTINGS_PATH = "api/assets/settings/roots";
 const INSTALLER_STATUS_PATH = "api/assets/installer/status";
 const INSTALLER_START_PATH = "api/assets/installer/start";
 const INSTALLER_INPUT_PATH = "api/assets/installer/input";
@@ -36,6 +37,29 @@ export async function acceptAssetStreamingConsent() {
     if (!response.ok) throw await createStatusError(response, "Asset streaming consent request failed");
     currentStatus = await response.json();
     return currentStatus;
+}
+
+export async function fetchAssetRootSettings() {
+    const response = await fetch(pluginApiUrl(ROOT_SETTINGS_PATH), {
+        headers: { "Accept": "application/json" },
+        credentials: "same-origin",
+    });
+    if (!response.ok) throw await createStatusError(response, "Asset root settings request failed");
+    return await response.json();
+}
+
+export async function saveAssetRootSettings(settings) {
+    const response = await fetch(pluginApiUrl(ROOT_SETTINGS_PATH), {
+        method: "POST",
+        headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(settings || {}),
+    });
+    if (!response.ok) throw await createStatusError(response, "Asset root settings save failed");
+    return await response.json();
 }
 
 export async function prepareRemoteAssetSession(scene) {

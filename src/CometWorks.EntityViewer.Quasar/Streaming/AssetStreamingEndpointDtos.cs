@@ -35,3 +35,31 @@ public sealed class AssetStreamingStatusResponse
 
     public DateTimeOffset? ConsentAcceptedAtUtc { get; init; }
 }
+
+public sealed class AssetStreamingRootSettingsRequest
+{
+    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+
+    public string BaseGameContentPath { get; init; } = string.Empty;
+
+    public string DedicatedServerModsPath { get; init; } = string.Empty;
+}
+
+public sealed class AssetStreamingRootSettingsResponse
+{
+    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+
+    public string BaseGameContentPath { get; init; } = string.Empty;
+
+    public string DedicatedServerModsPath { get; init; } = string.Empty;
+
+    public string ManagedGameClientDirectory { get; init; } = string.Empty;
+
+    public string ManagedGameContentDirectory { get; init; } = string.Empty;
+
+    public bool BaseGameContentConfigured { get; init; }
+
+    public bool ManagedGameContentExists { get; init; }
+
+    public bool DedicatedServerModsPathExists { get; init; }
+}

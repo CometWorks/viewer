@@ -181,6 +181,40 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
         consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
+        var rootSettingsGetEndpoint = endpoints.MapGet(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/roots",
+            async (
+                IEntityViewerStreamingSettingsStore settingsStore,
+                EntityViewerStreamingPaths paths,
+                CancellationToken cancellationToken) =>
+            {
+                var settings = await settingsStore.GetAsync(cancellationToken);
+                return Results.Json(BuildRootSettingsResponse(settings, paths));
+            });
+
+        rootSettingsGetEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var rootSettingsSaveEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/roots",
+            async (
+                AssetStreamingRootSettingsRequest request,
+                IEntityViewerStreamingSettingsStore settingsStore,
+                EntityViewerStreamingPaths paths,
+                CancellationToken cancellationToken) =>
+            {
+                var mode = NormalizeBaseGameSourceMode(request.BaseGameSourceMode);
+                var settings = await settingsStore.UpdateAsync(current =>
+                {
+                    current.BaseGameSourceMode = mode;
+                    current.BaseGameContentPath = NormalizeOptionalPath(request.BaseGameContentPath);
+                    current.DedicatedServerModsPath = NormalizeOptionalPath(request.DedicatedServerModsPath);
+                    return current;
+                }, cancellationToken);
+                return Results.Json(BuildRootSettingsResponse(settings, paths));
+            });
+
+        rootSettingsSaveEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
         var installerStatusEndpoint = endpoints.MapGet(
             "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/status",
             (SteamCmdInstallerService installerService) => Results.Json(installerService.GetStatus()));
@@ -348,6 +382,34 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         };
     }
 
+    private static AssetStreamingRootSettingsResponse BuildRootSettingsResponse(
+        EntityViewerStreamingSettings settings,
+        EntityViewerStreamingPaths paths)
+    {
+        var mode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
+            ? "ManagedSteamCmd"
+            : settings.BaseGameSourceMode;
+        var managedContentExists = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+        var externalContentConfigured = !string.IsNullOrWhiteSpace(settings.BaseGameContentPath) &&
+                                        LooksLikeContentFolder(settings.BaseGameContentPath);
+        var baseGameContentConfigured = mode.Equals("ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? externalContentConfigured
+            : managedContentExists;
+
+        return new AssetStreamingRootSettingsResponse
+        {
+            BaseGameSourceMode = mode,
+            BaseGameContentPath = settings.BaseGameContentPath,
+            DedicatedServerModsPath = settings.DedicatedServerModsPath,
+            ManagedGameClientDirectory = paths.ManagedGameClientDirectory,
+            ManagedGameContentDirectory = paths.ManagedGameContentDirectory,
+            BaseGameContentConfigured = baseGameContentConfigured,
+            ManagedGameContentExists = managedContentExists,
+            DedicatedServerModsPathExists = !string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) &&
+                                             Directory.Exists(settings.DedicatedServerModsPath),
+        };
+    }
+
     private static string StatusMessage(
         bool streamingEnabled,
         bool consentAccepted,
@@ -378,6 +440,21 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         return Directory.Exists(Path.Combine(path, "Data")) &&
                Directory.Exists(Path.Combine(path, "Models")) &&
                Directory.Exists(Path.Combine(path, "Textures"));
+    }
+
+    private static string NormalizeBaseGameSourceMode(string mode)
+    {
+        return string.Equals(mode, "ExternalInstall", StringComparison.OrdinalIgnoreCase)
+            ? "ExternalInstall"
+            : "ManagedSteamCmd";
+    }
+
+    private static string NormalizeOptionalPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        return Path.GetFullPath(path.Trim());
     }
 
     private static string UserId(ClaimsPrincipal user)

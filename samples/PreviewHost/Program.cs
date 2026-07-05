@@ -62,6 +62,19 @@ app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/input", () =
     Results.BadRequest(new { error = "Preview host does not run SteamCMD." }));
 app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/cancel", () =>
     Results.Json(new { state = "Idle", isRunning = false, message = "Preview host does not run SteamCMD." }));
+app.MapGet("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () => Results.Json(new
+{
+    baseGameSourceMode = "ManagedSteamCmd",
+    baseGameContentPath = "",
+    dedicatedServerModsPath = "",
+    managedGameClientDirectory = "",
+    managedGameContentDirectory = "",
+    baseGameContentConfigured = false,
+    managedGameContentExists = false,
+    dedicatedServerModsPathExists = false,
+}));
+app.MapPost("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () =>
+    Results.BadRequest(new { error = "Preview host does not persist asset root settings." }));
 app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions", () =>
     Results.Problem("Preview host does not stream server assets.", statusCode: StatusCodes.Status409Conflict));
 app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions/{sessionId}/resolve", () =>

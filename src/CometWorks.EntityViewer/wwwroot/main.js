@@ -3,7 +3,7 @@ import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { clearAssetFolderCaches, getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
-import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, prepareRemoteAssetSession, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
+import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetRootSettings, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, prepareRemoteAssetSession, saveAssetRootSettings, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
@@ -81,6 +81,7 @@ function wireAssetStreamingControls() {
         });
     }
     wireInstallerControls();
+    wireAssetRootSettingsControls();
 }
 
 function wireInstallerControls() {
@@ -133,6 +134,28 @@ function wireInstallerControls() {
     }
 }
 
+function wireAssetRootSettingsControls() {
+    if (!els.saveAssetRootSettings) return;
+    els.saveAssetRootSettings.addEventListener("click", async () => {
+        els.saveAssetRootSettings.disabled = true;
+        updateAssetRootSettingsStatus("Saving asset roots...");
+        try {
+            const settings = await saveAssetRootSettings({
+                baseGameSourceMode: els.baseGameSourceMode?.value || "ManagedSteamCmd",
+                baseGameContentPath: els.baseGameContentPath?.value || "",
+                dedicatedServerModsPath: els.dedicatedServerModsPath?.value || "",
+            });
+            applyAssetRootSettings(settings);
+            await refreshAssetStreamingStatus();
+        } catch (error) {
+            updateAssetRootSettingsStatus(error.message, true);
+            log(error.message, true);
+        } finally {
+            els.saveAssetRootSettings.disabled = false;
+        }
+    });
+}
+
 async function refreshAssetStreamingStatus() {
     try {
         const status = await fetchAssetStreamingStatus();
@@ -150,7 +173,33 @@ function applyAssetStreamingStatus(status) {
     const showConsent = !!status?.consentRequired && !!status?.canManageStreaming;
     if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = !showConsent;
     if (els.assetInstallerPanel) els.assetInstallerPanel.hidden = !status?.canManageStreaming;
+    if (els.assetRootSettingsPanel) els.assetRootSettingsPanel.hidden = !status?.canManageStreaming;
     if (status?.canManageStreaming) refreshInstallerStatus();
+    if (status?.canManageStreaming) refreshAssetRootSettings();
+}
+
+async function refreshAssetRootSettings() {
+    if (!els.assetRootSettingsPanel || els.assetRootSettingsPanel.hidden) return;
+    try {
+        applyAssetRootSettings(await fetchAssetRootSettings());
+    } catch (error) {
+        updateAssetRootSettingsStatus(error.message, true);
+    }
+}
+
+function applyAssetRootSettings(settings) {
+    if (!settings) return;
+    if (els.baseGameSourceMode) els.baseGameSourceMode.value = settings.baseGameSourceMode || "ManagedSteamCmd";
+    if (els.baseGameContentPath) els.baseGameContentPath.value = settings.baseGameContentPath || "";
+    if (els.dedicatedServerModsPath) els.dedicatedServerModsPath.value = settings.dedicatedServerModsPath || "";
+
+    const parts = [];
+    parts.push(settings.baseGameContentConfigured ? "Base Content ready" : "Base Content not ready");
+    if (settings.baseGameSourceMode === "ManagedSteamCmd" && settings.managedGameContentDirectory) {
+        parts.push(`managed: ${settings.managedGameContentDirectory}`);
+    }
+    parts.push(settings.dedicatedServerModsPathExists ? "Mods path ready" : "Mods path not set or missing");
+    updateAssetRootSettingsStatus(parts.join(". "));
 }
 
 async function refreshInstallerStatus() {
@@ -368,4 +417,10 @@ function updateInstallerStatus(message, isError = false) {
     if (!els.assetInstallerStatus) return;
     els.assetInstallerStatus.textContent = message;
     els.assetInstallerStatus.classList.toggle("is-error", isError);
+}
+
+function updateAssetRootSettingsStatus(message, isError = false) {
+    if (!els.assetRootSettingsStatus) return;
+    els.assetRootSettingsStatus.textContent = message;
+    els.assetRootSettingsStatus.classList.toggle("is-error", isError);
 }
