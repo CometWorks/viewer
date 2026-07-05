@@ -74,7 +74,15 @@ h2 { margin-bottom: 0.75rem; font-size: 0.95rem; letter-spacing: 0.06em; text-tr
 }
 
 label { display: grid; gap: 0.4rem; margin-top: 0.75rem; color: var(--muted); font-size: 0.86rem; }
-select { width: 100%; min-height: 2.35rem; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.45rem 0.65rem; background: var(--input-bg); color: var(--text); }
+input[type="text"], input[type="password"], select {
+    width: 100%;
+    min-height: 2.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.45rem 0.65rem;
+    background: var(--input-bg);
+    color: var(--text);
+}
 
 button {
     min-height: 2.35rem;
@@ -132,6 +140,32 @@ button.secondary:hover { background: color-mix(in srgb, var(--input-bg) 82%, var
 .asset-consent[hidden] { display: none; }
 .asset-consent strong { color: var(--warning); font-size: 0.95rem; }
 .asset-consent p { margin-bottom: 0; }
+
+.asset-installer {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0.9rem 0 1rem;
+    padding: 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--panel) 78%, var(--panel-2));
+}
+
+.asset-installer[hidden] { display: none; }
+.asset-installer strong { color: var(--accent); font-size: 0.95rem; }
+.installer-log {
+    overflow: auto;
+    max-height: 13rem;
+    margin: 0.75rem 0 0;
+    padding: 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    white-space: pre-wrap;
+}
 
 .check-row { display: flex; align-items: center; gap: 0.55rem; }
 .check-row input { width: 1rem; min-height: 1rem; }

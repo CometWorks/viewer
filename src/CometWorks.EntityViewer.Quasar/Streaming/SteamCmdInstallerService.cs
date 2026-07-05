@@ -1,0 +1,470 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace CometWorks.EntityViewer.Quasar.Streaming;
+
+public sealed class SteamCmdInstallerService(
+    EntityViewerStreamingPaths paths,
+    IEntityViewerStreamingSettingsStore settingsStore,
+    IHostApplicationLifetime lifetime,
+    ILogger<SteamCmdInstallerService> logger)
+{
+    private const int SpaceEngineersClientAppId = 244850;
+    private const int MaxLogEntries = 500;
+
+    private readonly object _sync = new();
+    private readonly List<SteamCmdInstallerLogEntry> _log = [];
+
+    private Process? _process;
+    private CancellationTokenSource? _runCancellation;
+    private string _state = "Idle";
+    private string _message = "Installer idle.";
+    private string _steamCmdPath = string.Empty;
+    private string _loginName = string.Empty;
+    private bool _validate = true;
+    private int? _exitCode;
+    private DateTimeOffset? _startedAtUtc;
+    private DateTimeOffset? _completedAtUtc;
+    private int _sequence;
+
+    public SteamCmdInstallerStatusResponse GetStatus()
+    {
+        lock (_sync)
+        {
+            return BuildStatusLocked();
+        }
+    }
+
+    public async Task<SteamCmdInstallerStatusResponse> StartAsync(
+        SteamCmdInstallRequest request,
+        bool automatic,
+        CancellationToken cancellationToken)
+    {
+        var loginName = NormalizeLoginName(request.LoginName);
+        var validate = request.Validate;
+        Process process;
+        CancellationTokenSource runCancellation;
+        string steamCmdPath;
+
+        lock (_sync)
+        {
+            if (_process is { HasExited: false })
+                return BuildStatusLocked();
+        }
+
+        steamCmdPath = ResolveSteamCmdPath();
+        if (string.IsNullOrWhiteSpace(steamCmdPath))
+        {
+            await ApplyCompletedSettingsAsync(
+                loginName,
+                "SteamCmdMissing",
+                "SteamCMD executable was not found.",
+                exitCode: null,
+                cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = "SteamCmdMissing";
+                _message = "SteamCMD executable was not found.";
+                _steamCmdPath = string.Empty;
+                _loginName = loginName;
+                _validate = validate;
+                _exitCode = null;
+                _startedAtUtc = null;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                AddLogLocked("error", _message);
+                return BuildStatusLocked();
+            }
+        }
+
+        Directory.CreateDirectory(paths.ManagedGameClientDirectory);
+        var arguments = BuildClientUpdateArguments(paths.ManagedGameClientDirectory, loginName, validate);
+        var startInfo = CreateSteamCmdStartInfo(steamCmdPath, arguments);
+        runCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
+        process = new Process
+        {
+            StartInfo = startInfo,
+            EnableRaisingEvents = true,
+        };
+
+        process.OutputDataReceived += (_, eventArgs) => AddProcessLog("stdout", eventArgs.Data);
+        process.ErrorDataReceived += (_, eventArgs) => AddProcessLog("stderr", eventArgs.Data);
+
+        try
+        {
+            if (!process.Start())
+                throw new InvalidOperationException("SteamCMD did not start.");
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
+        catch (Exception exception)
+        {
+            process.Dispose();
+            runCancellation.Dispose();
+            logger.LogWarning(exception, "Failed starting SteamCMD for Entity Viewer client install.");
+            await ApplyCompletedSettingsAsync(
+                loginName,
+                "Failed",
+                exception.Message,
+                exitCode: null,
+                cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = "Failed";
+                _message = exception.Message;
+                _steamCmdPath = steamCmdPath;
+                _loginName = loginName;
+                _validate = validate;
+                _exitCode = null;
+                _startedAtUtc = DateTimeOffset.UtcNow;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                AddLogLocked("error", exception.Message);
+                return BuildStatusLocked();
+            }
+        }
+
+        lock (_sync)
+        {
+            _process = process;
+            _runCancellation = runCancellation;
+            _state = automatic ? "AutoUpdating" : "Running";
+            _message = automatic
+                ? "SteamCMD hourly update running."
+                : "SteamCMD installer running. Enter Steam Guard or password prompts below if SteamCMD asks for them.";
+            _steamCmdPath = steamCmdPath;
+            _loginName = loginName;
+            _validate = validate;
+            _exitCode = null;
+            _startedAtUtc = DateTimeOffset.UtcNow;
+            _completedAtUtc = null;
+            AddLogLocked("info", _message);
+            AddLogLocked("info", $"Install directory: {paths.ManagedGameClientDirectory}");
+        }
+
+        await settingsStore.UpdateAsync(current =>
+        {
+            current.SteamCmdLoginName = loginName;
+            current.LastInstallStatus = automatic ? "AutoUpdating" : "Running";
+            current.LastInstallStartedAtUtc = DateTimeOffset.UtcNow;
+            current.LastInstallCompletedAtUtc = null;
+            current.LastInstallExitCode = null;
+            current.LastInstallMessage = automatic ? "Hourly update running." : "SteamCMD installer running.";
+            return current;
+        }, cancellationToken).ConfigureAwait(false);
+
+        _ = Task.Run(() => ObserveProcessAsync(process, runCancellation, loginName, automatic), CancellationToken.None);
+
+        lock (_sync)
+        {
+            return BuildStatusLocked();
+        }
+    }
+
+    public Task<SteamCmdInstallerStatusResponse> SendInputAsync(SteamCmdInputRequest request)
+    {
+        var input = request.Input ?? string.Empty;
+        lock (_sync)
+        {
+            if (_process is null || _process.HasExited)
+            {
+                _state = _state == "Idle" ? "Idle" : _state;
+                _message = "SteamCMD is not running.";
+                AddLogLocked("error", _message);
+                return Task.FromResult(BuildStatusLocked());
+            }
+
+            try
+            {
+                _process.StandardInput.WriteLine(input);
+                _process.StandardInput.Flush();
+                AddLogLocked("stdin", "Input sent to SteamCMD.");
+                return Task.FromResult(BuildStatusLocked());
+            }
+            catch (Exception exception)
+            {
+                _message = exception.Message;
+                AddLogLocked("error", exception.Message);
+                return Task.FromResult(BuildStatusLocked());
+            }
+        }
+    }
+
+    public Task<SteamCmdInstallerStatusResponse> CancelAsync()
+    {
+        lock (_sync)
+        {
+            if (_process is null || _process.HasExited)
+            {
+                _message = "SteamCMD is not running.";
+                return Task.FromResult(BuildStatusLocked());
+            }
+
+            AddLogLocked("info", "Cancel requested. Stopping SteamCMD.");
+            _runCancellation?.Cancel();
+            TryKillProcessTree(_process);
+            return Task.FromResult(BuildStatusLocked());
+        }
+    }
+
+    private async Task ObserveProcessAsync(
+        Process process,
+        CancellationTokenSource runCancellation,
+        string loginName,
+        bool automatic)
+    {
+        try
+        {
+            await process.WaitForExitAsync(runCancellation.Token).ConfigureAwait(false);
+            var exitCode = process.ExitCode;
+            var contentReady = LooksLikeContentFolder(paths.ManagedGameContentDirectory);
+            var state = exitCode == 0 && contentReady ? "Succeeded" : "Failed";
+            var message = state == "Succeeded"
+                ? "Space Engineers client install/update complete."
+                : exitCode == 0
+                    ? "SteamCMD completed but Space Engineers Content folder was not found."
+                    : $"SteamCMD exited with code {exitCode}.";
+
+            await ApplyCompletedSettingsAsync(loginName, state, message, exitCode, CancellationToken.None).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = state;
+                _message = message;
+                _exitCode = exitCode;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                _process = null;
+                _runCancellation = null;
+                AddLogLocked(state == "Succeeded" ? "info" : "error", message);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            const string message = "SteamCMD install/update canceled.";
+            await ApplyCompletedSettingsAsync(loginName, "Canceled", message, null, CancellationToken.None).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = "Canceled";
+                _message = message;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                _process = null;
+                _runCancellation = null;
+                AddLogLocked("info", message);
+            }
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "SteamCMD process observation failed.");
+            await ApplyCompletedSettingsAsync(loginName, "Failed", exception.Message, null, CancellationToken.None).ConfigureAwait(false);
+            lock (_sync)
+            {
+                _state = "Failed";
+                _message = exception.Message;
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                _process = null;
+                _runCancellation = null;
+                AddLogLocked("error", exception.Message);
+            }
+        }
+        finally
+        {
+            process.Dispose();
+            runCancellation.Dispose();
+        }
+    }
+
+    private async Task ApplyCompletedSettingsAsync(
+        string loginName,
+        string status,
+        string message,
+        int? exitCode,
+        CancellationToken cancellationToken)
+    {
+        await settingsStore.UpdateAsync(current =>
+        {
+            current.SteamCmdLoginName = loginName;
+            current.LastInstallStatus = status;
+            current.LastInstallCompletedAtUtc = DateTimeOffset.UtcNow;
+            current.LastInstallExitCode = exitCode;
+            current.LastInstallMessage = message;
+            return current;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private SteamCmdInstallerStatusResponse BuildStatusLocked()
+    {
+        return new SteamCmdInstallerStatusResponse
+        {
+            State = _state,
+            IsRunning = _process is { HasExited: false },
+            Message = _message,
+            SteamCmdPath = _steamCmdPath,
+            InstallDirectory = paths.ManagedGameClientDirectory,
+            ContentDirectory = paths.ManagedGameContentDirectory,
+            LoginName = _loginName,
+            Validate = _validate,
+            ExitCode = _exitCode,
+            StartedAtUtc = _startedAtUtc,
+            CompletedAtUtc = _completedAtUtc,
+            LastSequence = _sequence,
+            Log = _log.ToList(),
+        };
+    }
+
+    private void AddProcessLog(string stream, string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        lock (_sync)
+        {
+            AddLogLocked(stream, message);
+        }
+    }
+
+    private void AddLogLocked(string stream, string message)
+    {
+        _sequence++;
+        _log.Add(new SteamCmdInstallerLogEntry
+        {
+            Sequence = _sequence,
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Stream = stream,
+            Message = message,
+        });
+
+        if (_log.Count > MaxLogEntries)
+            _log.RemoveRange(0, _log.Count - MaxLogEntries);
+    }
+
+    private string ResolveSteamCmdPath()
+    {
+        var configured = Environment.GetEnvironmentVariable("QUASAR_STEAMCMD_PATH") ??
+                         Environment.GetEnvironmentVariable("STEAMCMD_PATH");
+        if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured))
+            return configured;
+
+        var managedSteamCmdDirectory = Path.Combine(paths.ManagedToolsDirectory, "SteamCMD");
+        var managed = FindSteamCmdExecutable(managedSteamCmdDirectory);
+        if (!string.IsNullOrWhiteSpace(managed))
+            return managed;
+
+        return FindExecutableOnPath(OperatingSystem.IsWindows() ? "steamcmd.exe" : "steamcmd");
+    }
+
+    private static string FindSteamCmdExecutable(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return string.Empty;
+
+        var preferred = OperatingSystem.IsWindows()
+            ? new[] { "steamcmd.exe", "steamcmd.bat" }
+            : new[] { "steamcmd.sh", "steamcmd" };
+
+        foreach (var fileName in preferred)
+        {
+            var match = Directory.EnumerateFiles(directory, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(match))
+                return match;
+        }
+
+        return string.Empty;
+    }
+
+    private static string FindExecutableOnPath(string fileName)
+    {
+        var pathValue = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathValue))
+            return string.Empty;
+
+        foreach (var directory in pathValue.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                continue;
+
+            var candidate = Path.Combine(directory, fileName);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildClientUpdateArguments(string installDirectory, string loginName, bool validate)
+    {
+        var forcePlatform = OperatingSystem.IsWindows()
+            ? string.Empty
+            : "+@sSteamCmdForcePlatformType windows ";
+        var validateArg = validate ? " validate" : string.Empty;
+
+        return $"+force_install_dir {QuoteArgument(installDirectory)} {forcePlatform}+login {QuoteArgument(loginName)} +app_update {SpaceEngineersClientAppId}{validateArg} +quit";
+    }
+
+    private static ProcessStartInfo CreateSteamCmdStartInfo(string steamCmdPath, string arguments)
+    {
+        var workingDirectory = Path.GetDirectoryName(steamCmdPath) ?? AppContext.BaseDirectory;
+        var fileName = steamCmdPath;
+        var processArguments = arguments;
+        var extension = Path.GetExtension(steamCmdPath);
+
+        if (OperatingSystem.IsWindows() &&
+            (string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase)))
+        {
+            fileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+            processArguments = $"/d /s /c \"\"{steamCmdPath}\" {arguments}\"";
+        }
+        else if (!OperatingSystem.IsWindows() &&
+                 string.Equals(extension, ".sh", StringComparison.OrdinalIgnoreCase))
+        {
+            fileName = File.Exists("/bin/bash") ? "/bin/bash" : "/bin/sh";
+            processArguments = $"{QuoteArgument(steamCmdPath)} {arguments}";
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = processArguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string NormalizeLoginName(string loginName)
+    {
+        var value = (loginName ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(value) ? "anonymous" : value;
+    }
+
+    private static bool LooksLikeContentFolder(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return false;
+
+        return Directory.Exists(Path.Combine(path, "Data")) &&
+               Directory.Exists(Path.Combine(path, "Models")) &&
+               Directory.Exists(Path.Combine(path, "Textures"));
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return "\"\"";
+
+        return "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+    }
+}

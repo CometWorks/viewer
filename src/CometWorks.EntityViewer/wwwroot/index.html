@@ -40,6 +40,26 @@
                     <button id="acceptAssetStreaming" type="button" class="wide">Accept and Enable</button>
                     <button id="dismissAssetStreaming" type="button" class="wide secondary">Use Local Folders</button>
                 </div>
+                <div id="assetInstallerPanel" class="asset-installer" hidden>
+                    <strong>SteamCMD Installer</strong>
+                    <p id="assetInstallerStatus" class="status-text">Installer idle.</p>
+                    <label>
+                        Steam account
+                        <input id="steamCmdLoginName" type="text" autocomplete="username" placeholder="Account name or anonymous">
+                    </label>
+                    <label class="check-row">
+                        <input id="steamCmdValidate" type="checkbox" checked>
+                        Validate files
+                    </label>
+                    <button id="startSteamCmdInstall" type="button" class="wide">Start Install or Update</button>
+                    <label>
+                        SteamCMD input
+                        <input id="steamCmdInput" type="password" autocomplete="one-time-code" placeholder="Password or Steam Guard code">
+                    </label>
+                    <button id="sendSteamCmdInput" type="button" class="wide secondary">Send Input</button>
+                    <button id="cancelSteamCmdInstall" type="button" class="wide secondary">Cancel Install</button>
+                    <pre id="assetInstallerLog" class="installer-log" aria-live="polite"></pre>
+                </div>
                 <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
                     <strong>Persistent file access is not enabled.</strong>
                     <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>

@@ -31,6 +31,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         services.AddEntityViewerUi();
         services.AddSingleton(new EntityViewerStreamingPaths(context));
         services.AddSingleton<IEntityViewerStreamingSettingsStore, FileEntityViewerStreamingSettingsStore>();
+        services.AddSingleton<SteamCmdInstallerService>();
+        services.AddHostedService<SteamCmdHourlyUpdateService>();
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
@@ -176,6 +178,47 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             });
 
         consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var installerStatusEndpoint = endpoints.MapGet(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/status",
+            (SteamCmdInstallerService installerService) => Results.Json(installerService.GetStatus()));
+
+        installerStatusEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var installerStartEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/start",
+            async (
+                SteamCmdInstallRequest request,
+                SteamCmdInstallerService installerService,
+                CancellationToken cancellationToken) =>
+            {
+                var status = await installerService.StartAsync(request, automatic: false, cancellationToken);
+                return Results.Json(status);
+            });
+
+        installerStartEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var installerInputEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/input",
+            async (
+                SteamCmdInputRequest request,
+                SteamCmdInstallerService installerService) =>
+            {
+                var status = await installerService.SendInputAsync(request);
+                return Results.Json(status);
+            });
+
+        installerInputEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var installerCancelEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/cancel",
+            async (SteamCmdInstallerService installerService) =>
+            {
+                var status = await installerService.CancelAsync();
+                return Results.Json(status);
+            });
+
+        installerCancelEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
     }
 
     private static AssetStreamingStatusResponse BuildAssetStreamingStatus(

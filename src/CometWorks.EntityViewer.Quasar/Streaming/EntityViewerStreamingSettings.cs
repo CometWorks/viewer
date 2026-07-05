@@ -20,7 +20,17 @@ public sealed class EntityViewerStreamingSettings
 
     public string DedicatedServerModsPath { get; set; } = string.Empty;
 
+    public string SteamCmdLoginName { get; set; } = string.Empty;
+
     public string LastInstallStatus { get; set; } = "NotStarted";
+
+    public DateTimeOffset? LastInstallStartedAtUtc { get; set; }
+
+    public DateTimeOffset? LastInstallCompletedAtUtc { get; set; }
+
+    public int? LastInstallExitCode { get; set; }
+
+    public string LastInstallMessage { get; set; } = string.Empty;
 
     public bool HasCurrentConsent =>
         ConsentAccepted &&

@@ -3,16 +3,21 @@ import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
-import { acceptAssetStreamingConsent, assetStreamingConsentText, fetchAssetStreamingStatus } from "./asset-streaming.js";
+import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
 
 document.addEventListener("DOMContentLoaded", start);
-window.addEventListener("pagehide", disposeViewer, { once: true });
+window.addEventListener("pagehide", () => {
+    stopInstallerPolling();
+    disposeViewer();
+}, { once: true });
 window.addEventListener("pageshow", event => {
     if (event.persisted && state.viewerDisposed) window.location.reload();
 });
+
+let installerPollHandle = 0;
 
 async function start() {
     startQuasarThemeSync();
@@ -75,6 +80,57 @@ function wireAssetStreamingControls() {
             }
         });
     }
+    wireInstallerControls();
+}
+
+function wireInstallerControls() {
+    if (els.startSteamCmdInstall) {
+        els.startSteamCmdInstall.addEventListener("click", async () => {
+            els.startSteamCmdInstall.disabled = true;
+            updateInstallerStatus("Starting SteamCMD...");
+            try {
+                const status = await startSteamCmdInstaller(els.steamCmdLoginName?.value || "", !!els.steamCmdValidate?.checked);
+                applyInstallerStatus(status);
+                startInstallerPolling();
+            } catch (error) {
+                updateInstallerStatus(error.message, true);
+                log(error.message, true);
+            } finally {
+                els.startSteamCmdInstall.disabled = false;
+            }
+        });
+    }
+    if (els.sendSteamCmdInput) {
+        els.sendSteamCmdInput.addEventListener("click", async () => {
+            const input = els.steamCmdInput?.value || "";
+            if (!input) return;
+            els.sendSteamCmdInput.disabled = true;
+            try {
+                const status = await sendSteamCmdInstallerInput(input);
+                if (els.steamCmdInput) els.steamCmdInput.value = "";
+                applyInstallerStatus(status);
+            } catch (error) {
+                updateInstallerStatus(error.message, true);
+                log(error.message, true);
+            } finally {
+                els.sendSteamCmdInput.disabled = false;
+            }
+        });
+    }
+    if (els.cancelSteamCmdInstall) {
+        els.cancelSteamCmdInstall.addEventListener("click", async () => {
+            els.cancelSteamCmdInstall.disabled = true;
+            try {
+                const status = await cancelSteamCmdInstaller();
+                applyInstallerStatus(status);
+            } catch (error) {
+                updateInstallerStatus(error.message, true);
+                log(error.message, true);
+            } finally {
+                els.cancelSteamCmdInstall.disabled = false;
+            }
+        });
+    }
 }
 
 async function refreshAssetStreamingStatus() {
@@ -93,6 +149,59 @@ function applyAssetStreamingStatus(status) {
 
     const showConsent = !!status?.consentRequired && !!status?.canManageStreaming;
     if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = !showConsent;
+    if (els.assetInstallerPanel) els.assetInstallerPanel.hidden = !status?.canManageStreaming;
+    if (status?.canManageStreaming) refreshInstallerStatus();
+}
+
+async function refreshInstallerStatus() {
+    if (!els.assetInstallerPanel || els.assetInstallerPanel.hidden) return;
+    try {
+        const status = await fetchSteamCmdInstallerStatus();
+        applyInstallerStatus(status);
+        if (status?.isRunning) startInstallerPolling();
+    } catch (error) {
+        updateInstallerStatus(error.message, true);
+    }
+}
+
+function startInstallerPolling() {
+    if (installerPollHandle) return;
+    installerPollHandle = window.setInterval(async () => {
+        try {
+            const status = await fetchSteamCmdInstallerStatus();
+            applyInstallerStatus(status);
+            if (!status?.isRunning) stopInstallerPolling();
+        } catch (error) {
+            updateInstallerStatus(error.message, true);
+            stopInstallerPolling();
+        }
+    }, 2000);
+}
+
+function stopInstallerPolling() {
+    if (!installerPollHandle) return;
+    window.clearInterval(installerPollHandle);
+    installerPollHandle = 0;
+}
+
+function applyInstallerStatus(status) {
+    if (!status) return;
+    const state = String(status.state || "Idle");
+    const message = String(status.message || "").trim();
+    updateInstallerStatus(message ? `${state}: ${message}` : state, state === "Failed" || state === "SteamCmdMissing");
+    if (els.steamCmdLoginName && !els.steamCmdLoginName.value && status.loginName) {
+        els.steamCmdLoginName.value = status.loginName;
+    }
+    if (els.startSteamCmdInstall) els.startSteamCmdInstall.disabled = !!status.isRunning;
+    if (els.sendSteamCmdInput) els.sendSteamCmdInput.disabled = !status.isRunning;
+    if (els.cancelSteamCmdInstall) els.cancelSteamCmdInstall.disabled = !status.isRunning;
+    if (els.assetInstallerLog) {
+        els.assetInstallerLog.textContent = (status.log || []).map(entry => {
+            const timestamp = entry.timestampUtc ? new Date(entry.timestampUtc).toLocaleTimeString() : "";
+            return `${timestamp} ${entry.stream || "info"} ${entry.message || ""}`.trim();
+        }).join("\n");
+        els.assetInstallerLog.scrollTop = els.assetInstallerLog.scrollHeight;
+    }
 }
 
 async function reloadScene() {
@@ -241,4 +350,10 @@ function updateAssetStreamingStatus(message, isError = false) {
     if (!els.assetStreamingStatus) return;
     els.assetStreamingStatus.textContent = message;
     els.assetStreamingStatus.classList.toggle("is-error", isError);
+}
+
+function updateInstallerStatus(message, isError = false) {
+    if (!els.assetInstallerStatus) return;
+    els.assetInstallerStatus.textContent = message;
+    els.assetInstallerStatus.classList.toggle("is-error", isError);
 }

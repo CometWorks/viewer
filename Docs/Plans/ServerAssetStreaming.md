@@ -168,8 +168,13 @@ Suggested endpoints:
   - Admin only. Accept/revoke consent and enable/disable streaming.
 - `POST /installer/start`
   - Admin only. Starts managed SteamCMD install/update.
-- `GET /installer/events`
-  - Admin only. Server-sent events or polling for install log/progress.
+- `GET /installer/status`
+  - Admin only. Returns installer state and a bounded SteamCMD log tail.
+- `POST /installer/input`
+  - Admin only. Sends one line to SteamCMD stdin for password or Steam Guard
+    prompts. The value is not stored.
+- `POST /installer/cancel`
+  - Admin only. Stops the running SteamCMD process tree.
 - `POST /sessions`
   - Existing Quasar `CanView` authorization required. Creates a short-lived
     asset session for `{ agentId, entityId, sceneCaptureId, mods[] }`.
