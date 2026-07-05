@@ -32,6 +32,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         services.AddSingleton(new EntityViewerStreamingPaths(context));
         services.AddSingleton<IEntityViewerStreamingSettingsStore, FileEntityViewerStreamingSettingsStore>();
         services.AddSingleton<SteamCmdInstallerService>();
+        services.AddSingleton<ViewerAssetSessionStore>();
+        services.AddSingleton<ServerAssetResolver>();
         services.AddHostedService<SteamCmdHourlyUpdateService>();
     }
 
@@ -219,6 +221,95 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             });
 
         installerCancelEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+
+        var sessionEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/sessions",
+            async (
+                AssetSessionRequest request,
+                HttpContext httpContext,
+                IEntityViewerStreamingSettingsStore settingsStore,
+                ViewerAssetSessionStore sessionStore,
+                CancellationToken cancellationToken) =>
+            {
+                var settings = await settingsStore.GetAsync(cancellationToken);
+                if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
+                    return Results.Problem("Server asset streaming is not enabled.", statusCode: StatusCodes.Status409Conflict);
+
+                var session = sessionStore.CreateSession(UserId(httpContext.User), request);
+                return Results.Json(new AssetSessionResponse
+                {
+                    SessionId = session.Id,
+                    ExpiresAtUtc = session.ExpiresAtUtc,
+                });
+            });
+
+        sessionEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+
+        var resolveEndpoint = endpoints.MapPost(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/sessions/{sessionId}/resolve",
+            async (
+                string sessionId,
+                AssetResolveRequest request,
+                HttpContext httpContext,
+                ViewerAssetSessionStore sessionStore,
+                ServerAssetResolver resolver,
+                CancellationToken cancellationToken) =>
+            {
+                var userId = UserId(httpContext.User);
+                var session = sessionStore.TryGetSession(sessionId, userId);
+                if (session is null)
+                    return Results.NotFound(new AssetResolveResponse { Found = false, Message = "Asset session not found or expired." });
+
+                var asset = await resolver.ResolveAsync(session, request, cancellationToken);
+                if (asset is null)
+                    return Results.Json(new AssetResolveResponse { Found = false, LogicalPath = request.LogicalPath, Message = "Asset not found." });
+
+                var token = sessionStore.CreateAssetToken(userId, session.Id, asset);
+                return Results.Json(new AssetResolveResponse
+                {
+                    Found = true,
+                    AssetToken = token.Id,
+                    ExpiresAtUtc = token.ExpiresAtUtc,
+                    LogicalPath = asset.LogicalPath,
+                    RootId = asset.RootId,
+                    RootKind = asset.RootKind,
+                    Size = asset.Size,
+                    LastModifiedUtc = asset.LastModifiedUtc,
+                    ContentType = asset.ContentType,
+                });
+            });
+
+        resolveEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+
+        var fileEndpoint = endpoints.MapGet(
+            "/_quasar/plugins/cometworks.entityviewer/api/assets/files/{assetToken}",
+            (string assetToken, HttpContext httpContext, ViewerAssetSessionStore sessionStore) =>
+            {
+                var token = sessionStore.TryGetAssetToken(assetToken, UserId(httpContext.User));
+                if (token is null)
+                    return Results.NotFound();
+
+                try
+                {
+                    var asset = token.Asset;
+                    var stream = asset.OpenRead();
+                    return Results.File(
+                        stream,
+                        contentType: asset.ContentType,
+                        lastModified: asset.LastModifiedUtc,
+                        enableRangeProcessing: !asset.IsArchiveEntry);
+                }
+                catch (FileNotFoundException)
+                {
+                    return Results.NotFound();
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    return Results.NotFound();
+                }
+            });
+
+        fileEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
     }
 
     private static AssetStreamingStatusResponse BuildAssetStreamingStatus(
@@ -243,7 +334,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             ConsentRequired = !consentAccepted,
             ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion,
             CanManageStreaming = canManageStreaming,
-            FileStreamingReady = false,
+            FileStreamingReady = baseGameContentConfigured,
             BaseGameSourceMode = string.IsNullOrWhiteSpace(settings.BaseGameSourceMode)
                 ? "ManagedSteamCmd"
                 : settings.BaseGameSourceMode,
@@ -252,15 +343,23 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
                 : settings.LastInstallStatus,
-            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming),
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured),
             ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
         };
     }
 
-    private static string StatusMessage(bool streamingEnabled, bool consentAccepted, bool canManageStreaming)
+    private static string StatusMessage(
+        bool streamingEnabled,
+        bool consentAccepted,
+        bool canManageStreaming,
+        bool baseGameContentConfigured)
     {
         if (streamingEnabled)
-            return "Server asset streaming setup is enabled. Local folders remain active until file streaming endpoints are ready.";
+        {
+            return baseGameContentConfigured
+                ? "Server asset streaming is enabled."
+                : "Server asset streaming is enabled, but the Space Engineers Content folder is not ready.";
+        }
 
         if (!consentAccepted && canManageStreaming)
             return "Server asset streaming is disabled until the server owner accepts consent.";

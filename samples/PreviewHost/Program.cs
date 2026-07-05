@@ -62,6 +62,12 @@ app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/input", () =
     Results.BadRequest(new { error = "Preview host does not run SteamCMD." }));
 app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/cancel", () =>
     Results.Json(new { state = "Idle", isRunning = false, message = "Preview host does not run SteamCMD." }));
+app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions", () =>
+    Results.Problem("Preview host does not stream server assets.", statusCode: StatusCodes.Status409Conflict));
+app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions/{sessionId}/resolve", () =>
+    Results.Json(new { found = false, message = "Preview host does not stream server assets." }));
+app.MapGet("/_content/CometWorks.EntityViewer/api/assets/files/{assetToken}", () =>
+    Results.NotFound());
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
