@@ -208,5 +208,6 @@ async function createStatusError(response, fallback) {
         detail = body.detail || body.title || body.error || detail;
     } catch {
     }
-    return new Error(`${fallback} (${response.status}): ${detail}`);
+    const url = response.url ? ` ${response.url}` : "";
+    return new Error(`${fallback} (${response.status}): ${detail}${url}`);
 }

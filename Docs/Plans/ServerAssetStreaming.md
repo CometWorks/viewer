@@ -85,6 +85,10 @@ must immediately reject new asset sessions and streaming requests.
 - Streams stdout/stderr lines from the server-side SteamCMD process.
 - Shows progress states: missing SteamCMD, waiting for login, installing,
   validating, complete, failed, update check running.
+- If SteamCMD is not found in `QUASAR_STEAMCMD_PATH`, `STEAMCMD_PATH`,
+  `<QuasarInstallDir>/ManagedRuntime/Tools/SteamCMD`, or `PATH`, the installer
+  downloads the official SteamCMD package into
+  `<QuasarInstallDir>/ManagedRuntime/Tools/SteamCMD` before launching it.
 - Allows cancel while process is active.
 - Never stores Steam password in Quasar config.
 

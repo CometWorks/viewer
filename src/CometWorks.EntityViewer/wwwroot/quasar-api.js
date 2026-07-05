@@ -33,7 +33,8 @@ export async function fetchEntityScene() {
             detail = body.detail || body.title || detail;
         } catch {
         }
-        throw new Error(`Scene request failed (${response.status}): ${detail}`);
+        const url = response.url ? ` ${response.url}` : "";
+        throw new Error(`Scene request failed (${response.status}): ${detail}${url}`);
     }
     return await response.json();
 }

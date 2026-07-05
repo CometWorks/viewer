@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Net.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -12,6 +15,9 @@ public sealed class SteamCmdInstallerService(
 {
     private const int SpaceEngineersClientAppId = 244850;
     private const int MaxLogEntries = 500;
+    private const string WindowsSteamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
+    private const string LinuxSteamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz";
+    private static readonly HttpClient SteamCmdDownloadClient = new();
 
     private readonly object _sync = new();
     private readonly List<SteamCmdInstallerLogEntry> _log = [];
@@ -55,17 +61,20 @@ public sealed class SteamCmdInstallerService(
 
         steamCmdPath = ResolveSteamCmdPath();
         if (string.IsNullOrWhiteSpace(steamCmdPath))
+            steamCmdPath = await TryInstallManagedSteamCmdAsync(loginName, validate, cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(steamCmdPath))
         {
             await ApplyCompletedSettingsAsync(
                 loginName,
                 "SteamCmdMissing",
-                "SteamCMD executable was not found.",
+                "SteamCMD executable was not found and could not be installed automatically.",
                 exitCode: null,
                 cancellationToken).ConfigureAwait(false);
             lock (_sync)
             {
                 _state = "SteamCmdMissing";
-                _message = "SteamCMD executable was not found.";
+                _message = "SteamCMD executable was not found and could not be installed automatically.";
                 _steamCmdPath = string.Empty;
                 _loginName = loginName;
                 _validate = validate;
@@ -333,6 +342,151 @@ public sealed class SteamCmdInstallerService(
 
         if (_log.Count > MaxLogEntries)
             _log.RemoveRange(0, _log.Count - MaxLogEntries);
+    }
+
+    private async Task<string> TryInstallManagedSteamCmdAsync(
+        string loginName,
+        bool validate,
+        CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            _state = "PreparingSteamCmd";
+            _message = "SteamCMD was not found. Downloading managed SteamCMD...";
+            _steamCmdPath = string.Empty;
+            _loginName = loginName;
+            _validate = validate;
+            _exitCode = null;
+            _startedAtUtc = DateTimeOffset.UtcNow;
+            _completedAtUtc = null;
+            AddLogLocked("info", _message);
+        }
+
+        try
+        {
+            var managedSteamCmdDirectory = Path.Combine(paths.ManagedToolsDirectory, "SteamCMD");
+            Directory.CreateDirectory(paths.ManagedToolsDirectory);
+
+            var tempDirectory = Path.Combine(paths.ManagedToolsDirectory, $"SteamCMD-download-{Guid.NewGuid():N}");
+            var extractDirectory = Path.Combine(tempDirectory, "extract");
+            Directory.CreateDirectory(extractDirectory);
+
+            try
+            {
+                var archiveName = OperatingSystem.IsWindows() ? "steamcmd.zip" : "steamcmd_linux.tar.gz";
+                var archivePath = Path.Combine(tempDirectory, archiveName);
+                var url = OperatingSystem.IsWindows() ? WindowsSteamCmdUrl : LinuxSteamCmdUrl;
+
+                AddProcessLog("info", $"Downloading SteamCMD from {url}.");
+                await DownloadFileAsync(url, archivePath, cancellationToken).ConfigureAwait(false);
+                ExtractSteamCmdArchive(archivePath, extractDirectory);
+
+                var extractedExecutable = FindSteamCmdExecutable(extractDirectory);
+                if (string.IsNullOrWhiteSpace(extractedExecutable))
+                    throw new FileNotFoundException("Downloaded SteamCMD package did not contain a SteamCMD executable.");
+
+                Directory.CreateDirectory(managedSteamCmdDirectory);
+                CopyDirectory(extractDirectory, managedSteamCmdDirectory);
+
+                var managedExecutable = FindSteamCmdExecutable(managedSteamCmdDirectory);
+                if (string.IsNullOrWhiteSpace(managedExecutable))
+                    throw new FileNotFoundException("Managed SteamCMD executable was not found after extraction.");
+
+                EnsureExecutablePermission(managedExecutable);
+                AddProcessLog("info", $"Managed SteamCMD ready: {managedExecutable}");
+                return managedExecutable;
+            }
+            finally
+            {
+                TryDeleteDirectory(tempDirectory);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or HttpRequestException or InvalidDataException)
+        {
+            logger.LogWarning(exception, "Managed SteamCMD bootstrap failed.");
+            lock (_sync)
+            {
+                _state = "SteamCmdMissing";
+                _message = $"Managed SteamCMD download failed: {exception.Message}";
+                _completedAtUtc = DateTimeOffset.UtcNow;
+                AddLogLocked("error", _message);
+            }
+            return string.Empty;
+        }
+    }
+
+    private static async Task DownloadFileAsync(string url, string path, CancellationToken cancellationToken)
+    {
+        using var response = await SteamCmdDownloadClient.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var destination = File.Create(path);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void ExtractSteamCmdArchive(string archivePath, string extractDirectory)
+    {
+        if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            ZipFile.ExtractToDirectory(archivePath, extractDirectory, overwriteFiles: true);
+            return;
+        }
+
+        using var file = File.OpenRead(archivePath);
+        using var gzip = new GZipStream(file, CompressionMode.Decompress);
+        TarFile.ExtractToDirectory(gzip, extractDirectory, overwriteFiles: true);
+    }
+
+    private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
+    {
+        foreach (var sourcePath in Directory.EnumerateFileSystemEntries(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
+            var destinationPath = Path.Combine(destinationDirectory, relativePath);
+
+            if (Directory.Exists(sourcePath))
+            {
+                Directory.CreateDirectory(destinationPath);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+        }
+    }
+
+    private static void EnsureExecutablePermission(string steamCmdPath)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            File.SetUnixFileMode(
+                steamCmdPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+        catch
+        {
+        }
     }
 
     private string ResolveSteamCmdPath()

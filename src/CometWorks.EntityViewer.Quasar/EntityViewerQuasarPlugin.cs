@@ -21,6 +21,9 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 {
     private const string CompanionPluginId = "cometworks.entityviewer";
     private const string GetEntitySceneOperation = "get-entity-scene";
+    private const string PluginRoutePrefix = "/_quasar/plugins/cometworks.entityviewer";
+    private const string StaticWebAssetsRoutePrefix = "/_content/CometWorks.EntityViewer";
+    private static readonly string[] ViewerRoutePrefixes = [PluginRoutePrefix, StaticWebAssetsRoutePrefix];
 
     public string Id => "cometworks.entityviewer";
 
@@ -39,8 +42,20 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
     {
-        var sceneEndpoint = endpoints.MapGet(
-            "/_quasar/plugins/cometworks.entityviewer/api/entities/{serverId}/{entityId:long}/scene",
+        foreach (var routePrefix in ViewerRoutePrefixes)
+        {
+            var sceneEndpoint = MapSceneEndpoint(endpoints, routePrefix);
+            sceneEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+        }
+
+        foreach (var routePrefix in ViewerRoutePrefixes)
+            MapAssetStreamingEndpoints(endpoints, routePrefix);
+    }
+
+    private static RouteHandlerBuilder MapSceneEndpoint(IEndpointRouteBuilder endpoints, string routePrefix)
+    {
+        return endpoints.MapGet(
+            $"{routePrefix}/api/entities/{{serverId}}/{{entityId:long}}/scene",
             async (
                 string serverId,
                 long entityId,
@@ -73,10 +88,6 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                     return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest);
                 }
             });
-
-        sceneEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
-
-        MapAssetStreamingEndpoints(endpoints);
     }
 
     public IEnumerable<Assembly> GetRazorAssemblies()
@@ -120,10 +131,10 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void MapAssetStreamingEndpoints(IEndpointRouteBuilder endpoints)
+    private static void MapAssetStreamingEndpoints(IEndpointRouteBuilder endpoints, string routePrefix)
     {
         var statusEndpoint = endpoints.MapGet(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/status",
+            $"{routePrefix}/api/assets/status",
             async (
                 HttpContext httpContext,
                 IEntityViewerStreamingSettingsStore settingsStore,
@@ -142,7 +153,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         statusEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
 
         var consentEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/consent",
+            $"{routePrefix}/api/assets/settings/consent",
             async (
                 AssetStreamingConsentRequest request,
                 HttpContext httpContext,
@@ -182,7 +193,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var rootSettingsGetEndpoint = endpoints.MapGet(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/roots",
+            $"{routePrefix}/api/assets/settings/roots",
             async (
                 IEntityViewerStreamingSettingsStore settingsStore,
                 EntityViewerStreamingPaths paths,
@@ -195,7 +206,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         rootSettingsGetEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var rootSettingsSaveEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/settings/roots",
+            $"{routePrefix}/api/assets/settings/roots",
             async (
                 AssetStreamingRootSettingsRequest request,
                 IEntityViewerStreamingSettingsStore settingsStore,
@@ -216,13 +227,13 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         rootSettingsSaveEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var installerStatusEndpoint = endpoints.MapGet(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/status",
+            $"{routePrefix}/api/assets/installer/status",
             (SteamCmdInstallerService installerService) => Results.Json(installerService.GetStatus()));
 
         installerStatusEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var installerStartEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/start",
+            $"{routePrefix}/api/assets/installer/start",
             async (
                 SteamCmdInstallRequest request,
                 SteamCmdInstallerService installerService,
@@ -235,7 +246,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         installerStartEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var installerInputEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/input",
+            $"{routePrefix}/api/assets/installer/input",
             async (
                 SteamCmdInputRequest request,
                 SteamCmdInstallerService installerService) =>
@@ -247,7 +258,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         installerInputEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var installerCancelEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/installer/cancel",
+            $"{routePrefix}/api/assets/installer/cancel",
             async (SteamCmdInstallerService installerService) =>
             {
                 var status = await installerService.CancelAsync();
@@ -257,7 +268,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         installerCancelEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
         var sessionEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/sessions",
+            $"{routePrefix}/api/assets/sessions",
             async (
                 AssetSessionRequest request,
                 HttpContext httpContext,
@@ -280,7 +291,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         sessionEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
 
         var resolveEndpoint = endpoints.MapPost(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/sessions/{sessionId}/resolve",
+            $"{routePrefix}/api/assets/sessions/{{sessionId}}/resolve",
             async (
                 string sessionId,
                 AssetResolveRequest request,
@@ -316,7 +327,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         resolveEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
 
         var fileEndpoint = endpoints.MapGet(
-            "/_quasar/plugins/cometworks.entityviewer/api/assets/files/{assetToken}",
+            $"{routePrefix}/api/assets/files/{{assetToken}}",
             (string assetToken, HttpContext httpContext, ViewerAssetSessionStore sessionStore) =>
             {
                 var token = sessionStore.TryGetAssetToken(assetToken, UserId(httpContext.User));
