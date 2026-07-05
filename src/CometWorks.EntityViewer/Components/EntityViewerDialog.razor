@@ -1,3 +1,10 @@
+@using System.Text.Json.Serialization
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
 <MudDialog>
     <TitleContent>
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="entity-viewer-title-row">
@@ -13,6 +20,14 @@
                     <MudText Typo="Typo.caption" Class="entity-viewer-subtitle">@Subtitle</MudText>
                 }
             </MudStack>
+            <MudSpacer />
+            <MudTooltip Text="Server asset streaming">
+                <MudIconButton Icon="@Icons.Material.Filled.CloudSync"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               Disabled="@_assetSetupBusy"
+                               OnClick="OpenAssetSetupAsync" />
+            </MudTooltip>
         </MudStack>
     </TitleContent>
     <DialogContent>
@@ -24,6 +39,7 @@
         {
             <div class="entity-viewer-frame-shell">
                 <iframe class="entity-viewer-frame"
+                        @key="_viewerRevision"
                         src="@ViewerUrl"
                         title="@Title"
                         allow="fullscreen"></iframe>
@@ -46,8 +62,108 @@
     [Parameter]
     public string Subtitle { get; set; } = string.Empty;
 
+    [Parameter]
+    public string AssetSetupModuleUrl { get; set; } = "/_quasar/plugins/cometworks.entityviewer/viewer-asset-setup.js";
+
+    [Parameter]
+    public string AssetSetupApiBasePath { get; set; } = "/_quasar/plugins/cometworks.entityviewer/api/assets";
+
+    [Parameter]
+    public bool AutoOpenAssetSetup { get; set; } = true;
+
+    private IJSObjectReference? _assetSetupModule;
+    private bool _assetSetupBusy;
+    private bool _assetSetupPromptChecked;
+    private int _viewerRevision;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !AutoOpenAssetSetup || _assetSetupPromptChecked)
+            return;
+
+        _assetSetupPromptChecked = true;
+        try
+        {
+            var module = await GetAssetSetupModuleAsync();
+            var status = await module.InvokeAsync<AssetSetupPromptStatus>("fetchAssetStatus", AssetSetupApiBasePath);
+            if (status.CanManageStreaming &&
+                (status.ConsentRequired || (status.StreamingEnabled && !status.FileStreamingReady)))
+            {
+                await OpenAssetSetupAsync();
+            }
+        }
+        catch
+        {
+            // Direct viewer usage can miss the Quasar asset setup API. Keep the renderer usable.
+        }
+    }
+
+    private async Task OpenAssetSetupAsync()
+    {
+        if (_assetSetupBusy)
+            return;
+
+        _assetSetupBusy = true;
+        try
+        {
+            var parameters = new DialogParameters
+            {
+                [nameof(EntityViewerAssetSetupDialog.AssetSetupModuleUrl)] = AssetSetupModuleUrl,
+                [nameof(EntityViewerAssetSetupDialog.ApiBasePath)] = AssetSetupApiBasePath,
+            };
+            var options = new DialogOptions
+            {
+                CloseOnEscapeKey = true,
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+            };
+
+            var dialog = await DialogService.ShowAsync<EntityViewerAssetSetupDialog>(
+                "Server Asset Streaming",
+                parameters,
+                options);
+            var result = await dialog.Result;
+            if (result is { Canceled: false, Data: bool changed } && changed)
+            {
+                _viewerRevision++;
+                Snackbar.Add("Reloading viewer asset session.", Severity.Info);
+            }
+        }
+        finally
+        {
+            _assetSetupBusy = false;
+        }
+    }
+
+    private async ValueTask<IJSObjectReference> GetAssetSetupModuleAsync()
+    {
+        _assetSetupModule ??= await JS.InvokeAsync<IJSObjectReference>("import", AssetSetupModuleUrl);
+        return _assetSetupModule;
+    }
+
     private void Close()
     {
         MudDialog.Close();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_assetSetupModule is not null)
+            await _assetSetupModule.DisposeAsync();
+    }
+
+    private sealed class AssetSetupPromptStatus
+    {
+        [JsonPropertyName("streamingEnabled")]
+        public bool StreamingEnabled { get; set; }
+
+        [JsonPropertyName("consentRequired")]
+        public bool ConsentRequired { get; set; }
+
+        [JsonPropertyName("canManageStreaming")]
+        public bool CanManageStreaming { get; set; }
+
+        [JsonPropertyName("fileStreamingReady")]
+        public bool FileStreamingReady { get; set; }
     }
 }

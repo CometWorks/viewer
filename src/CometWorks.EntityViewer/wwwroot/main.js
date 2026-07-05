@@ -3,21 +3,18 @@ import { initScene, animate, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { clearAssetFolderCaches, getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
-import { acceptAssetStreamingConsent, assetStreamingConsentText, cancelSteamCmdInstaller, fetchAssetRootSettings, fetchAssetStreamingStatus, fetchSteamCmdInstallerStatus, prepareRemoteAssetSession, saveAssetRootSettings, sendSteamCmdInstallerInput, startSteamCmdInstaller } from "./asset-streaming.js";
+import { fetchAssetStreamingStatus, prepareRemoteAssetSession } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
 import { startQuasarThemeSync } from "./theme.js";
 
 document.addEventListener("DOMContentLoaded", start);
 window.addEventListener("pagehide", () => {
-    stopInstallerPolling();
     disposeViewer();
 }, { once: true });
 window.addEventListener("pageshow", event => {
     if (event.persisted && state.viewerDisposed) window.location.reload();
 });
-
-let installerPollHandle = 0;
 
 async function start() {
     startQuasarThemeSync();
@@ -29,7 +26,6 @@ async function start() {
     warnIfUsingBackupFolderAccess();
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
-    wireAssetStreamingControls();
     els.downloadLog.addEventListener("click", downloadLog);
     animate();
 
@@ -56,106 +52,6 @@ async function start() {
     await reloadScene();
 }
 
-function wireAssetStreamingControls() {
-    if (els.assetStreamingConsentText) els.assetStreamingConsentText.textContent = assetStreamingConsentText;
-    if (els.dismissAssetStreaming) {
-        els.dismissAssetStreaming.addEventListener("click", () => {
-            if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = true;
-            updateAssetStreamingStatus("Server asset streaming skipped. Local folders remain active.");
-        });
-    }
-    if (els.acceptAssetStreaming) {
-        els.acceptAssetStreaming.addEventListener("click", async () => {
-            els.acceptAssetStreaming.disabled = true;
-            updateAssetStreamingStatus("Enabling server asset streaming...");
-            try {
-                const status = await acceptAssetStreamingConsent();
-                applyAssetStreamingStatus(status);
-                log("Server asset streaming consent accepted.");
-            } catch (error) {
-                updateAssetStreamingStatus(error.message, true);
-                log(error.message, true);
-            } finally {
-                els.acceptAssetStreaming.disabled = false;
-            }
-        });
-    }
-    wireInstallerControls();
-    wireAssetRootSettingsControls();
-}
-
-function wireInstallerControls() {
-    if (els.startSteamCmdInstall) {
-        els.startSteamCmdInstall.addEventListener("click", async () => {
-            els.startSteamCmdInstall.disabled = true;
-            updateInstallerStatus("Starting SteamCMD...");
-            try {
-                const status = await startSteamCmdInstaller(els.steamCmdLoginName?.value || "", !!els.steamCmdValidate?.checked);
-                applyInstallerStatus(status);
-                startInstallerPolling();
-            } catch (error) {
-                updateInstallerStatus(error.message, true);
-                log(error.message, true);
-            } finally {
-                els.startSteamCmdInstall.disabled = false;
-            }
-        });
-    }
-    if (els.sendSteamCmdInput) {
-        els.sendSteamCmdInput.addEventListener("click", async () => {
-            const input = els.steamCmdInput?.value || "";
-            if (!input) return;
-            els.sendSteamCmdInput.disabled = true;
-            try {
-                const status = await sendSteamCmdInstallerInput(input);
-                if (els.steamCmdInput) els.steamCmdInput.value = "";
-                applyInstallerStatus(status);
-            } catch (error) {
-                updateInstallerStatus(error.message, true);
-                log(error.message, true);
-            } finally {
-                els.sendSteamCmdInput.disabled = false;
-            }
-        });
-    }
-    if (els.cancelSteamCmdInstall) {
-        els.cancelSteamCmdInstall.addEventListener("click", async () => {
-            els.cancelSteamCmdInstall.disabled = true;
-            try {
-                const status = await cancelSteamCmdInstaller();
-                applyInstallerStatus(status);
-            } catch (error) {
-                updateInstallerStatus(error.message, true);
-                log(error.message, true);
-            } finally {
-                els.cancelSteamCmdInstall.disabled = false;
-            }
-        });
-    }
-}
-
-function wireAssetRootSettingsControls() {
-    if (!els.saveAssetRootSettings) return;
-    els.saveAssetRootSettings.addEventListener("click", async () => {
-        els.saveAssetRootSettings.disabled = true;
-        updateAssetRootSettingsStatus("Saving asset roots...");
-        try {
-            const settings = await saveAssetRootSettings({
-                baseGameSourceMode: els.baseGameSourceMode?.value || "ManagedSteamCmd",
-                baseGameContentPath: els.baseGameContentPath?.value || "",
-                dedicatedServerModsPath: els.dedicatedServerModsPath?.value || "",
-            });
-            applyAssetRootSettings(settings);
-            await refreshAssetStreamingStatus();
-        } catch (error) {
-            updateAssetRootSettingsStatus(error.message, true);
-            log(error.message, true);
-        } finally {
-            els.saveAssetRootSettings.disabled = false;
-        }
-    });
-}
-
 async function refreshAssetStreamingStatus() {
     try {
         const status = await fetchAssetStreamingStatus();
@@ -169,88 +65,6 @@ async function refreshAssetStreamingStatus() {
 function applyAssetStreamingStatus(status) {
     const message = String(status?.message || "").trim() || "Local folders remain active.";
     updateAssetStreamingStatus(message, false);
-
-    const showConsent = !!status?.consentRequired && !!status?.canManageStreaming;
-    if (els.assetStreamingConsent) els.assetStreamingConsent.hidden = !showConsent;
-    if (els.assetInstallerPanel) els.assetInstallerPanel.hidden = !status?.canManageStreaming;
-    if (els.assetRootSettingsPanel) els.assetRootSettingsPanel.hidden = !status?.canManageStreaming;
-    if (status?.canManageStreaming) refreshInstallerStatus();
-    if (status?.canManageStreaming) refreshAssetRootSettings();
-}
-
-async function refreshAssetRootSettings() {
-    if (!els.assetRootSettingsPanel || els.assetRootSettingsPanel.hidden) return;
-    try {
-        applyAssetRootSettings(await fetchAssetRootSettings());
-    } catch (error) {
-        updateAssetRootSettingsStatus(error.message, true);
-    }
-}
-
-function applyAssetRootSettings(settings) {
-    if (!settings) return;
-    if (els.baseGameSourceMode) els.baseGameSourceMode.value = settings.baseGameSourceMode || "ManagedSteamCmd";
-    if (els.baseGameContentPath) els.baseGameContentPath.value = settings.baseGameContentPath || "";
-    if (els.dedicatedServerModsPath) els.dedicatedServerModsPath.value = settings.dedicatedServerModsPath || "";
-
-    const parts = [];
-    parts.push(settings.baseGameContentConfigured ? "Base Content ready" : "Base Content not ready");
-    if (settings.baseGameSourceMode === "ManagedSteamCmd" && settings.managedGameContentDirectory) {
-        parts.push(`managed: ${settings.managedGameContentDirectory}`);
-    }
-    parts.push(settings.dedicatedServerModsPathExists ? "Mods path ready" : "Mods path not set or missing");
-    updateAssetRootSettingsStatus(parts.join(". "));
-}
-
-async function refreshInstallerStatus() {
-    if (!els.assetInstallerPanel || els.assetInstallerPanel.hidden) return;
-    try {
-        const status = await fetchSteamCmdInstallerStatus();
-        applyInstallerStatus(status);
-        if (status?.isRunning) startInstallerPolling();
-    } catch (error) {
-        updateInstallerStatus(error.message, true);
-    }
-}
-
-function startInstallerPolling() {
-    if (installerPollHandle) return;
-    installerPollHandle = window.setInterval(async () => {
-        try {
-            const status = await fetchSteamCmdInstallerStatus();
-            applyInstallerStatus(status);
-            if (!status?.isRunning) stopInstallerPolling();
-        } catch (error) {
-            updateInstallerStatus(error.message, true);
-            stopInstallerPolling();
-        }
-    }, 2000);
-}
-
-function stopInstallerPolling() {
-    if (!installerPollHandle) return;
-    window.clearInterval(installerPollHandle);
-    installerPollHandle = 0;
-}
-
-function applyInstallerStatus(status) {
-    if (!status) return;
-    const state = String(status.state || "Idle");
-    const message = String(status.message || "").trim();
-    updateInstallerStatus(message ? `${state}: ${message}` : state, state === "Failed" || state === "SteamCmdMissing");
-    if (els.steamCmdLoginName && !els.steamCmdLoginName.value && status.loginName) {
-        els.steamCmdLoginName.value = status.loginName;
-    }
-    if (els.startSteamCmdInstall) els.startSteamCmdInstall.disabled = !!status.isRunning;
-    if (els.sendSteamCmdInput) els.sendSteamCmdInput.disabled = !status.isRunning;
-    if (els.cancelSteamCmdInstall) els.cancelSteamCmdInstall.disabled = !status.isRunning;
-    if (els.assetInstallerLog) {
-        els.assetInstallerLog.textContent = (status.log || []).map(entry => {
-            const timestamp = entry.timestampUtc ? new Date(entry.timestampUtc).toLocaleTimeString() : "";
-            return `${timestamp} ${entry.stream || "info"} ${entry.message || ""}`.trim();
-        }).join("\n");
-        els.assetInstallerLog.scrollTop = els.assetInstallerLog.scrollHeight;
-    }
 }
 
 async function reloadScene() {
@@ -411,16 +225,4 @@ function updateAssetStreamingStatus(message, isError = false) {
     if (!els.assetStreamingStatus) return;
     els.assetStreamingStatus.textContent = message;
     els.assetStreamingStatus.classList.toggle("is-error", isError);
-}
-
-function updateInstallerStatus(message, isError = false) {
-    if (!els.assetInstallerStatus) return;
-    els.assetInstallerStatus.textContent = message;
-    els.assetInstallerStatus.classList.toggle("is-error", isError);
-}
-
-function updateAssetRootSettingsStatus(message, isError = false) {
-    if (!els.assetRootSettingsStatus) return;
-    els.assetRootSettingsStatus.textContent = message;
-    els.assetRootSettingsStatus.classList.toggle("is-error", isError);
 }

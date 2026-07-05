@@ -15,6 +15,8 @@
 @code
 {
     private const string PluginViewerPath = "/_quasar/plugins/cometworks.entityviewer/index.html";
+    private const string PluginAssetSetupModulePath = "/_quasar/plugins/cometworks.entityviewer/viewer-asset-setup.js";
+    private const string PluginAssetSetupApiBasePath = "/_quasar/plugins/cometworks.entityviewer/api/assets";
 
     [Parameter]
     public string? AgentId { get; set; }
@@ -42,6 +44,15 @@
 
     [Parameter]
     public string? ViewerUrl { get; set; }
+
+    [Parameter]
+    public string AssetSetupModuleUrl { get; set; } = PluginAssetSetupModulePath;
+
+    [Parameter]
+    public string AssetSetupApiBasePath { get; set; } = PluginAssetSetupApiBasePath;
+
+    [Parameter]
+    public bool AutoOpenAssetSetup { get; set; } = true;
 
     [Parameter]
     public EventCallback OpenEntityViewer { get; set; }
@@ -72,6 +83,9 @@
                 [nameof(EntityViewerDialog.ViewerUrl)] = viewerUrl,
                 [nameof(EntityViewerDialog.Title)] = title,
                 [nameof(EntityViewerDialog.Subtitle)] = subtitle,
+                [nameof(EntityViewerDialog.AssetSetupModuleUrl)] = AssetSetupModuleUrl,
+                [nameof(EntityViewerDialog.AssetSetupApiBasePath)] = AssetSetupApiBasePath,
+                [nameof(EntityViewerDialog.AutoOpenAssetSetup)] = AutoOpenAssetSetup,
             };
             var options = new DialogOptions
             {

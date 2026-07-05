@@ -34,52 +34,7 @@
             <section class="card">
                 <h2>Assets</h2>
                 <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
-                <div id="assetStreamingConsent" class="asset-consent" hidden>
-                    <strong>Server Asset Streaming</strong>
-                    <p id="assetStreamingConsentText"></p>
-                    <button id="acceptAssetStreaming" type="button" class="wide">Accept and Enable</button>
-                    <button id="dismissAssetStreaming" type="button" class="wide secondary">Use Local Folders</button>
-                </div>
-                <div id="assetInstallerPanel" class="asset-installer" hidden>
-                    <strong>SteamCMD Installer</strong>
-                    <p id="assetInstallerStatus" class="status-text">Installer idle.</p>
-                    <label>
-                        Steam account
-                        <input id="steamCmdLoginName" type="text" autocomplete="username" placeholder="Account name or anonymous">
-                    </label>
-                    <label class="check-row">
-                        <input id="steamCmdValidate" type="checkbox" checked>
-                        Validate files
-                    </label>
-                    <button id="startSteamCmdInstall" type="button" class="wide">Start Install or Update</button>
-                    <label>
-                        SteamCMD input
-                        <input id="steamCmdInput" type="password" autocomplete="one-time-code" placeholder="Password or Steam Guard code">
-                    </label>
-                    <button id="sendSteamCmdInput" type="button" class="wide secondary">Send Input</button>
-                    <button id="cancelSteamCmdInstall" type="button" class="wide secondary">Cancel Install</button>
-                    <pre id="assetInstallerLog" class="installer-log" aria-live="polite"></pre>
-                </div>
-                <div id="assetRootSettingsPanel" class="asset-installer" hidden>
-                    <strong>Asset Roots</strong>
-                    <p id="assetRootSettingsStatus" class="status-text">Asset roots not loaded.</p>
-                    <label>
-                        Base game source
-                        <select id="baseGameSourceMode">
-                            <option value="ManagedSteamCmd">Managed SteamCMD install</option>
-                            <option value="ExternalInstall">External Content folder</option>
-                        </select>
-                    </label>
-                    <label>
-                        External Content folder
-                        <input id="baseGameContentPath" type="text" autocomplete="off" placeholder="/path/to/SpaceEngineers/Content">
-                    </label>
-                    <label>
-                        Dedicated Server Mods folder
-                        <input id="dedicatedServerModsPath" type="text" autocomplete="off" placeholder="/path/to/DedicatedServer/Mods">
-                    </label>
-                    <button id="saveAssetRootSettings" type="button" class="wide">Save Asset Roots</button>
-                </div>
+                <p class="hint">Use the Server Asset Streaming button in the Quasar viewer dialog title bar to accept consent, install or update SteamCMD assets, and configure server asset roots.</p>
                 <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
                     <strong>Persistent file access is not enabled.</strong>
                     <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>

@@ -37,7 +37,10 @@
                                 EntitySubType="@context.SubType"
                                 EntityDisplayName="@context.Name"
                                 CanViewEntity="@context.CanView"
-                                ViewerUrl="@ViewerAssetUrl" />
+                                ViewerUrl="@ViewerAssetUrl"
+                                AssetSetupModuleUrl="@AssetSetupModuleUrl"
+                                AssetSetupApiBasePath="@AssetSetupApiBasePath"
+                                AutoOpenAssetSetup="false" />
                         </RowTemplate>
                     </MudTable>
                 </MudStack>
@@ -64,6 +67,8 @@
 @code
 {
     private const string ViewerAssetUrl = "_content/CometWorks.EntityViewer/index.html";
+    private const string AssetSetupModuleUrl = "_content/CometWorks.EntityViewer/viewer-asset-setup.js";
+    private const string AssetSetupApiBasePath = "_content/CometWorks.EntityViewer/api/assets";
 
     private readonly PreviewEntity[] _entities =
     [

@@ -1,0 +1,652 @@
+@using System.Text.Json.Serialization
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<MudDialog Class="entity-viewer-asset-setup-dialog">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudIcon Icon="@Icons.Material.Filled.CloudSync" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Server Asset Streaming</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            @if (_loading)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+                    @_error
+                </MudAlert>
+            }
+
+            @if (_status is not null)
+            {
+                <MudAlert Severity="@StatusSeverity" Variant="Variant.Outlined">
+                    <MudStack Spacing="1">
+                        <MudText Typo="Typo.body2">@StatusMessage</MudText>
+                        <MudStack Row="true" Spacing="1" Class="entity-viewer-chip-row">
+                            <MudChip T="string" Size="Size.Small" Color="@StreamingChipColor" Variant="Variant.Outlined">@StreamingChipText</MudChip>
+                            <MudChip T="string" Size="Size.Small" Color="@ContentChipColor" Variant="Variant.Outlined">@ContentChipText</MudChip>
+                            <MudChip T="string" Size="Size.Small" Color="@ConsentChipColor" Variant="Variant.Outlined">@ConsentChipText</MudChip>
+                        </MudStack>
+                    </MudStack>
+                </MudAlert>
+            }
+
+            @if (_status?.CanManageStreaming == true)
+            {
+                @if (_status.ConsentRequired)
+                {
+                    <MudPaper Outlined="true" Class="pa-3 entity-viewer-consent-panel">
+                        <MudStack Spacing="2">
+                            <MudText Typo="Typo.subtitle2">Consent Required</MudText>
+                            <MudText Typo="Typo.body2">@ConsentText</MudText>
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Warning"
+                                       StartIcon="@Icons.Material.Filled.VerifiedUser"
+                                       Disabled="@_busy"
+                                       OnClick="AcceptConsentAsync">
+                                Accept and Enable
+                            </MudButton>
+                        </MudStack>
+                    </MudPaper>
+                }
+
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Spacing="2">
+                        <MudText Typo="Typo.subtitle2">Asset Roots</MudText>
+                        @if (_roots is not null)
+                        {
+                            <MudAlert Severity="@RootSeverity" Variant="Variant.Text" Dense="true">
+                                @RootMessage
+                            </MudAlert>
+                        }
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudSelect T="string"
+                                           Label="Base game source"
+                                           Variant="Variant.Outlined"
+                                           Dense="true"
+                                           @bind-Value="_baseGameSourceMode">
+                                    <MudSelectItem T="string" Value="@("ManagedSteamCmd")">Managed SteamCMD install</MudSelectItem>
+                                    <MudSelectItem T="string" Value="@("ExternalInstall")">External Content folder</MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string"
+                                              Label="Dedicated Server Mods folder"
+                                              Variant="Variant.Outlined"
+                                              Immediate="true"
+                                              @bind-Value="_dedicatedServerModsPath" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField T="string"
+                                              Label="External Content folder"
+                                              Variant="Variant.Outlined"
+                                              Immediate="true"
+                                              Disabled="@(!IsExternalInstall)"
+                                              @bind-Value="_baseGameContentPath" />
+                            </MudItem>
+                        </MudGrid>
+                        @if (_roots is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Managed content: @DisplayPath(_roots.ManagedGameContentDirectory)
+                            </MudText>
+                        }
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Save"
+                                   Disabled="@_busy"
+                                   OnClick="SaveRootsAsync">
+                            Save Asset Roots
+                        </MudButton>
+                    </MudStack>
+                </MudPaper>
+
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Spacing="2">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudText Typo="Typo.subtitle2">SteamCMD Installer</MudText>
+                            @if (_installer is not null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@InstallerChipColor" Variant="Variant.Outlined">@InstallerStateText</MudChip>
+                            }
+                        </MudStack>
+                        @if (_installer is not null)
+                        {
+                            <MudText Typo="Typo.body2">@InstallerMessage</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                Install dir: @DisplayPath(_installer.InstallDirectory)
+                            </MudText>
+                        }
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="8">
+                                <MudTextField T="string"
+                                              Label="Steam account"
+                                              Variant="Variant.Outlined"
+                                              Immediate="true"
+                                              Placeholder="Account name"
+                                              Disabled="@InstallerRunning"
+                                              @bind-Value="_loginName" />
+                            </MudItem>
+                            <MudItem xs="12" md="4" Class="d-flex align-center">
+                                <MudCheckBox T="bool"
+                                             Label="Validate files"
+                                             Dense="true"
+                                             Disabled="@InstallerRunning"
+                                             @bind-Value="_validate" />
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudStack Row="true" Spacing="1" Class="entity-viewer-action-row">
+                                    <MudButton Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               StartIcon="@Icons.Material.Filled.Download"
+                                               Disabled="@(_busy || InstallerRunning)"
+                                               OnClick="StartInstallerAsync">
+                                        Install or Update
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Warning"
+                                               StartIcon="@Icons.Material.Filled.Stop"
+                                               Disabled="@(_busy || !InstallerRunning)"
+                                               OnClick="CancelInstallerAsync">
+                                        Cancel
+                                    </MudButton>
+                                </MudStack>
+                            </MudItem>
+                            <MudItem xs="12" md="8">
+                                <MudTextField T="string"
+                                              Label="SteamCMD input"
+                                              Variant="Variant.Outlined"
+                                              Immediate="true"
+                                              InputType="InputType.Password"
+                                              Disabled="@(!InstallerRunning)"
+                                              @bind-Value="_steamCmdInput" />
+                            </MudItem>
+                            <MudItem xs="12" md="4" Class="d-flex align-center">
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Send"
+                                           Disabled="@(_busy || !InstallerRunning || string.IsNullOrWhiteSpace(_steamCmdInput))"
+                                           OnClick="SendInstallerInputAsync">
+                                    Send
+                                </MudButton>
+                            </MudItem>
+                        </MudGrid>
+                        <MudPaper Outlined="true" Class="pa-2 entity-viewer-installer-log">
+                            <pre>@InstallerLogText</pre>
+                        </MudPaper>
+                    </MudStack>
+                </MudPaper>
+            }
+            else if (_status is not null)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                    Server asset streaming can only be configured by a Quasar user with management access.
+                </MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="@_busy"
+                   OnClick="LoadAsync">
+            Refresh
+        </MudButton>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Close">
+            Close
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code
+{
+    private const string ConsentText = "Server asset streaming sends Space Engineers game and mod asset files from this server to viewer users with Quasar access. CometWorks does not verify whether those users own Space Engineers. This is a legal grey area. As the server owner, you are responsible for ensuring every enabled user is allowed to receive and use these assets under the relevant licenses, server rules, and access policies. CometWorks is not responsible for how this feature is used. Enable only if you understand and accept this risk.";
+
+    private IJSObjectReference? _module;
+    private CancellationTokenSource? _pollingCts;
+    private AssetStreamingStatusDto? _status;
+    private AssetRootSettingsDto? _roots;
+    private SteamCmdInstallerStatusDto? _installer;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _changed;
+    private string _error = string.Empty;
+    private string _baseGameSourceMode = "ManagedSteamCmd";
+    private string _baseGameContentPath = string.Empty;
+    private string _dedicatedServerModsPath = string.Empty;
+    private string _loginName = string.Empty;
+    private string _steamCmdInput = string.Empty;
+    private bool _validate = true;
+
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public string AssetSetupModuleUrl { get; set; } = "/_quasar/plugins/cometworks.entityviewer/viewer-asset-setup.js";
+
+    [Parameter]
+    public string ApiBasePath { get; set; } = "/_quasar/plugins/cometworks.entityviewer/api/assets";
+
+    private bool IsExternalInstall => string.Equals(_baseGameSourceMode, "ExternalInstall", StringComparison.OrdinalIgnoreCase);
+
+    private bool InstallerRunning => _installer?.IsRunning == true;
+
+    private string StatusMessage => string.IsNullOrWhiteSpace(_status?.Message)
+        ? "Server asset streaming status unavailable."
+        : _status.Message;
+
+    private Severity StatusSeverity
+    {
+        get
+        {
+            if (_status is null)
+                return Severity.Info;
+            if (_status.StreamingEnabled && _status.FileStreamingReady)
+                return Severity.Success;
+            if (_status.ConsentRequired || !_status.FileStreamingReady)
+                return Severity.Warning;
+            return Severity.Info;
+        }
+    }
+
+    private Color StreamingChipColor => _status?.StreamingEnabled == true ? Color.Success : Color.Default;
+
+    private string StreamingChipText => _status?.StreamingEnabled == true ? "Streaming enabled" : "Streaming disabled";
+
+    private Color ContentChipColor => _status?.FileStreamingReady == true ? Color.Success : Color.Warning;
+
+    private string ContentChipText => _status?.FileStreamingReady == true ? "Content ready" : "Content missing";
+
+    private Color ConsentChipColor => _status?.ConsentAccepted == true ? Color.Success : Color.Warning;
+
+    private string ConsentChipText => _status?.ConsentAccepted == true ? "Consent accepted" : "Consent needed";
+
+    private Severity RootSeverity => _roots?.BaseGameContentConfigured == true && _roots.DedicatedServerModsPathExists
+        ? Severity.Success
+        : Severity.Warning;
+
+    private string RootMessage
+    {
+        get
+        {
+            if (_roots is null)
+                return "Asset roots not loaded.";
+
+            var content = _roots.BaseGameContentConfigured
+                ? "Base Content ready"
+                : "Base Content not ready";
+            var mods = _roots.DedicatedServerModsPathExists
+                ? "Mods path ready"
+                : "Mods path not set or missing";
+            return $"{content}. {mods}.";
+        }
+    }
+
+    private Color InstallerChipColor
+    {
+        get
+        {
+            var state = _installer?.State ?? string.Empty;
+            if (_installer?.IsRunning == true)
+                return Color.Info;
+            if (string.Equals(state, "Succeeded", StringComparison.OrdinalIgnoreCase))
+                return Color.Success;
+            if (string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(state, "SteamCmdMissing", StringComparison.OrdinalIgnoreCase))
+                return Color.Error;
+            return Color.Default;
+        }
+    }
+
+    private string InstallerStateText => string.IsNullOrWhiteSpace(_installer?.State)
+        ? "Idle"
+        : _installer.State;
+
+    private string InstallerMessage => string.IsNullOrWhiteSpace(_installer?.Message)
+        ? "Installer idle."
+        : _installer.Message;
+
+    private string InstallerLogText => _installer?.Log is { Count: > 0 } log
+        ? string.Join(Environment.NewLine, log.Select(entry =>
+        {
+            var timestamp = entry.TimestampUtc.HasValue
+                ? entry.TimestampUtc.Value.ToLocalTime().ToString("T")
+                : string.Empty;
+            return $"{timestamp} {entry.Stream} {entry.Message}".Trim();
+        }))
+        : "No installer output yet.";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = string.Empty;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var module = await GetModuleAsync();
+            _status = await module.InvokeAsync<AssetStreamingStatusDto>("fetchAssetStatus", ApiBasePath);
+            if (_status.CanManageStreaming)
+            {
+                _roots = await module.InvokeAsync<AssetRootSettingsDto>("fetchRootSettings", ApiBasePath);
+                SyncRootFields();
+                _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", ApiBasePath);
+                SyncInstallerFields();
+                UpdateInstallerPolling();
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+            Snackbar.Add(exception.Message, Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task AcceptConsentAsync()
+    {
+        await RunBusyAsync(async module =>
+        {
+            _status = await module.InvokeAsync<AssetStreamingStatusDto>("acceptConsent", ApiBasePath);
+            _changed = true;
+            Snackbar.Add("Server asset streaming enabled.", Severity.Success);
+            await LoadAsync();
+        });
+    }
+
+    private async Task SaveRootsAsync()
+    {
+        await RunBusyAsync(async module =>
+        {
+            _roots = await module.InvokeAsync<AssetRootSettingsDto>("saveRootSettings", ApiBasePath, new AssetRootSettingsRequest
+            {
+                BaseGameSourceMode = _baseGameSourceMode,
+                BaseGameContentPath = _baseGameContentPath,
+                DedicatedServerModsPath = _dedicatedServerModsPath,
+            });
+            _changed = true;
+            SyncRootFields();
+            _status = await module.InvokeAsync<AssetStreamingStatusDto>("fetchAssetStatus", ApiBasePath);
+            Snackbar.Add("Asset roots saved.", Severity.Success);
+        });
+    }
+
+    private async Task StartInstallerAsync()
+    {
+        await RunBusyAsync(async module =>
+        {
+            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("startInstaller", ApiBasePath, new SteamCmdInstallRequest
+            {
+                LoginName = _loginName,
+                Validate = _validate,
+            });
+            _changed = true;
+            SyncInstallerFields();
+            UpdateInstallerPolling();
+        });
+    }
+
+    private async Task SendInstallerInputAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_steamCmdInput))
+            return;
+
+        await RunBusyAsync(async module =>
+        {
+            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("sendInstallerInput", ApiBasePath, _steamCmdInput);
+            _steamCmdInput = string.Empty;
+            SyncInstallerFields();
+            UpdateInstallerPolling();
+        });
+    }
+
+    private async Task CancelInstallerAsync()
+    {
+        await RunBusyAsync(async module =>
+        {
+            _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("cancelInstaller", ApiBasePath);
+            _changed = true;
+            UpdateInstallerPolling();
+        });
+    }
+
+    private async Task RunBusyAsync(Func<IJSObjectReference, Task> action)
+    {
+        if (_busy)
+            return;
+
+        _busy = true;
+        _error = string.Empty;
+        try
+        {
+            await action(await GetModuleAsync());
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+            Snackbar.Add(exception.Message, Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async ValueTask<IJSObjectReference> GetModuleAsync()
+    {
+        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", AssetSetupModuleUrl);
+        return _module;
+    }
+
+    private void SyncRootFields()
+    {
+        if (_roots is null)
+            return;
+
+        _baseGameSourceMode = string.IsNullOrWhiteSpace(_roots.BaseGameSourceMode)
+            ? "ManagedSteamCmd"
+            : _roots.BaseGameSourceMode;
+        _baseGameContentPath = _roots.BaseGameContentPath ?? string.Empty;
+        _dedicatedServerModsPath = _roots.DedicatedServerModsPath ?? string.Empty;
+    }
+
+    private void SyncInstallerFields()
+    {
+        if (_installer is null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(_loginName) && !string.IsNullOrWhiteSpace(_installer.LoginName))
+            _loginName = _installer.LoginName;
+        _validate = _installer.Validate;
+    }
+
+    private void UpdateInstallerPolling()
+    {
+        if (_installer?.IsRunning == true)
+        {
+            if (_pollingCts is null)
+            {
+                _pollingCts = new CancellationTokenSource();
+                _ = PollInstallerAsync(_pollingCts.Token);
+            }
+            return;
+        }
+
+        StopPolling();
+    }
+
+    private async Task PollInstallerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                var module = await GetModuleAsync();
+                _installer = await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", cancellationToken, ApiBasePath);
+                if (_installer?.IsRunning != true)
+                {
+                    StopPolling();
+                    _status = await module.InvokeAsync<AssetStreamingStatusDto>("fetchAssetStatus", cancellationToken, ApiBasePath);
+                    _roots = await module.InvokeAsync<AssetRootSettingsDto>("fetchRootSettings", cancellationToken, ApiBasePath);
+                    SyncRootFields();
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _error = exception.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void StopPolling()
+    {
+        var cts = _pollingCts;
+        _pollingCts = null;
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+
+    private void Close()
+    {
+        MudDialog.Close(DialogResult.Ok(_changed));
+    }
+
+    private static string DisplayPath(string? path) =>
+        string.IsNullOrWhiteSpace(path) ? "-" : path;
+
+    public async ValueTask DisposeAsync()
+    {
+        StopPolling();
+        if (_module is not null)
+            await _module.DisposeAsync();
+    }
+
+    private sealed class AssetStreamingStatusDto
+    {
+        [JsonPropertyName("streamingEnabled")]
+        public bool StreamingEnabled { get; set; }
+
+        [JsonPropertyName("consentAccepted")]
+        public bool ConsentAccepted { get; set; }
+
+        [JsonPropertyName("consentRequired")]
+        public bool ConsentRequired { get; set; }
+
+        [JsonPropertyName("canManageStreaming")]
+        public bool CanManageStreaming { get; set; }
+
+        [JsonPropertyName("fileStreamingReady")]
+        public bool FileStreamingReady { get; set; }
+
+        [JsonPropertyName("message")]
+        public string Message { get; set; } = string.Empty;
+    }
+
+    private sealed class AssetRootSettingsDto
+    {
+        [JsonPropertyName("baseGameSourceMode")]
+        public string BaseGameSourceMode { get; set; } = "ManagedSteamCmd";
+
+        [JsonPropertyName("baseGameContentPath")]
+        public string BaseGameContentPath { get; set; } = string.Empty;
+
+        [JsonPropertyName("dedicatedServerModsPath")]
+        public string DedicatedServerModsPath { get; set; } = string.Empty;
+
+        [JsonPropertyName("managedGameContentDirectory")]
+        public string ManagedGameContentDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("baseGameContentConfigured")]
+        public bool BaseGameContentConfigured { get; set; }
+
+        [JsonPropertyName("dedicatedServerModsPathExists")]
+        public bool DedicatedServerModsPathExists { get; set; }
+    }
+
+    private sealed class AssetRootSettingsRequest
+    {
+        [JsonPropertyName("baseGameSourceMode")]
+        public string BaseGameSourceMode { get; set; } = "ManagedSteamCmd";
+
+        [JsonPropertyName("baseGameContentPath")]
+        public string BaseGameContentPath { get; set; } = string.Empty;
+
+        [JsonPropertyName("dedicatedServerModsPath")]
+        public string DedicatedServerModsPath { get; set; } = string.Empty;
+    }
+
+    private sealed class SteamCmdInstallRequest
+    {
+        [JsonPropertyName("loginName")]
+        public string LoginName { get; set; } = string.Empty;
+
+        [JsonPropertyName("validate")]
+        public bool Validate { get; set; } = true;
+    }
+
+    private sealed class SteamCmdInstallerStatusDto
+    {
+        [JsonPropertyName("state")]
+        public string State { get; set; } = "Idle";
+
+        [JsonPropertyName("isRunning")]
+        public bool IsRunning { get; set; }
+
+        [JsonPropertyName("message")]
+        public string Message { get; set; } = string.Empty;
+
+        [JsonPropertyName("installDirectory")]
+        public string InstallDirectory { get; set; } = string.Empty;
+
+        [JsonPropertyName("loginName")]
+        public string LoginName { get; set; } = string.Empty;
+
+        [JsonPropertyName("validate")]
+        public bool Validate { get; set; } = true;
+
+        [JsonPropertyName("log")]
+        public List<SteamCmdLogEntryDto> Log { get; set; } = [];
+    }
+
+    private sealed class SteamCmdLogEntryDto
+    {
+        [JsonPropertyName("timestampUtc")]
+        public DateTimeOffset? TimestampUtc { get; set; }
+
+        [JsonPropertyName("stream")]
+        public string Stream { get; set; } = string.Empty;
+
+        [JsonPropertyName("message")]
+        public string Message { get; set; } = string.Empty;
+    }
+}

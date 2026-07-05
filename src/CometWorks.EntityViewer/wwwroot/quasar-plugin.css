@@ -3,6 +3,10 @@
     min-width: 0;
 }
 
+.entity-viewer-title-row {
+    width: 100%;
+}
+
 .entity-viewer-subtitle {
     display: block;
     max-width: min(72rem, 78vw);
@@ -26,4 +30,22 @@
     height: 100%;
     border: 0;
     background: #05080c;
+}
+
+.entity-viewer-chip-row,
+.entity-viewer-action-row {
+    flex-wrap: wrap;
+}
+
+.entity-viewer-installer-log {
+    max-height: 16rem;
+    overflow: auto;
+    background: var(--mud-palette-background-gray);
+}
+
+.entity-viewer-installer-log pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.75rem;
+    line-height: 1.35;
 }
