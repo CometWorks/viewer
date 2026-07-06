@@ -9,7 +9,7 @@
   "stylesheets": [
     "quasar-plugin.css"
   ],
-  "quasarVersion": ">=0.1.0",
+  "quasarVersion": ">=1.1.0",
   "companionPlugins": [
     {
       "id": "cometworks.entityviewer",
