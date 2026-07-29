@@ -79,7 +79,7 @@
                                         <MudRadio T="string"
                                                   Value="@ExternalInstallSourceMode"
                                                   Color="Color.Primary">
-                                            Manual server folder
+                                            Manual game folder
                                         </MudRadio>
                                     </MudStack>
                                 </MudRadioGroup>
@@ -241,6 +241,7 @@
                                               Variant="Variant.Outlined"
                                               Immediate="true"
                                               InputType="InputType.Password"
+                                              HelperText="Sent to SteamCMD on the Quasar host. Transport encryption requires HTTPS."
                                               Disabled="@(!InstallerRunning)"
                                               @bind-Value="_steamCmdInput" />
                             </MudItem>

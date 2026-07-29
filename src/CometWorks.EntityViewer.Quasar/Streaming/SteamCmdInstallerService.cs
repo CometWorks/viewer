@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -18,6 +19,9 @@ public sealed class SteamCmdInstallerService(
     private const string WindowsSteamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
     private const string LinuxSteamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz";
     private static readonly HttpClient SteamCmdDownloadClient = new();
+    private static readonly Regex AnsiEscapeSequence = new(
+        @"\x1B\[[0-?]*[ -/]*[@-~]",
+        RegexOptions.Compiled);
 
     private readonly object _sync = new();
     private readonly List<SteamCmdInstallerLogEntry> _log = [];
@@ -192,9 +196,12 @@ public sealed class SteamCmdInstallerService(
         }
     }
 
-    public Task<SteamCmdInstallerStatusResponse> SendInputAsync(SteamCmdInputRequest request)
+    public async Task<SteamCmdInstallerStatusResponse> SendInputAsync(
+        SteamCmdInputRequest request,
+        CancellationToken cancellationToken)
     {
         var input = request.Input ?? string.Empty;
+        int sequenceAfterInput;
         lock (_sync)
         {
             if (_process is null || _process.HasExited)
@@ -202,7 +209,7 @@ public sealed class SteamCmdInstallerService(
                 _state = _state == "Idle" ? "Idle" : _state;
                 _message = "SteamCMD is not running.";
                 AddLogLocked("error", _message);
-                return Task.FromResult(BuildStatusLocked());
+                return BuildStatusLocked();
             }
 
             try
@@ -210,14 +217,29 @@ public sealed class SteamCmdInstallerService(
                 _process.StandardInput.WriteLine(input);
                 _process.StandardInput.Flush();
                 AddLogLocked("stdin", "Input sent to SteamCMD.");
-                return Task.FromResult(BuildStatusLocked());
+                sequenceAfterInput = _sequence;
             }
             catch (Exception exception)
             {
                 _message = exception.Message;
                 AddLogLocked("error", exception.Message);
-                return Task.FromResult(BuildStatusLocked());
+                return BuildStatusLocked();
             }
+        }
+
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                if (_sequence > sequenceAfterInput || _process is null || _process.HasExited)
+                    return BuildStatusLocked();
+            }
+        }
+
+        lock (_sync)
+        {
+            return BuildStatusLocked();
         }
     }
 
@@ -350,6 +372,10 @@ public sealed class SteamCmdInstallerService(
 
     private void AddProcessLog(string stream, string? message)
     {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        message = AnsiEscapeSequence.Replace(message, string.Empty);
         if (string.IsNullOrWhiteSpace(message))
             return;
 

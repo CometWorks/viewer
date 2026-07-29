@@ -255,9 +255,10 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             $"{routePrefix}/api/assets/installer/input",
             async (
                 SteamCmdInputRequest request,
-                SteamCmdInstallerService installerService) =>
+                SteamCmdInstallerService installerService,
+                CancellationToken cancellationToken) =>
             {
-                var status = await installerService.SendInputAsync(request);
+                var status = await installerService.SendInputAsync(request, cancellationToken);
                 return Results.Json(status);
             });
 
