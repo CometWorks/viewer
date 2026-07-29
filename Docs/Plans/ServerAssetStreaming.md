@@ -114,6 +114,10 @@ Notes:
 - Add hourly update checks with a background service using a single-flight lock.
   Skip if an install/update is already running, back off on failure, and expose
   status in the setup modal.
+- Hourly managed checks use `app_update 244850` without `validate`; SteamCMD
+  performs its normal manifest/update pass without revalidating every installed
+  file. Manual Content mode skips this service because that folder is owned by
+  the operator.
 
 ## Asset Origin Model
 
@@ -121,7 +125,8 @@ Support two base-game source modes:
 
 - **External install:** admin supplies an existing Space Engineers client
   install path. Validate it contains `Content/Data`, `Content/Models`, and
-  `Content/Textures`.
+  `Content/Textures`. Accept either the client install root or its `Content`
+  folder. Relative paths resolve from the Quasar install root.
 - **Managed install:** SteamCMD installs the client into
   `<QuasarInstallDir>/ManagedRuntime/Tools/SpaceEngineersClient`, then base
   assets resolve from its `Content` folder.

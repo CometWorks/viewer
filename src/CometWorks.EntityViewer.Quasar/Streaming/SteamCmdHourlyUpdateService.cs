@@ -33,7 +33,7 @@ public sealed class SteamCmdHourlyUpdateService(
     private async Task TryRunUpdateAsync(CancellationToken cancellationToken)
     {
         var settings = await settingsStore.GetAsync(cancellationToken).ConfigureAwait(false);
-        if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
+        if (!settings.StreamingEnabled || !settings.HasCurrentConsent || !settings.UsesManagedSteamCmd)
             return;
 
         if (string.IsNullOrWhiteSpace(settings.SteamCmdLoginName) ||
@@ -49,7 +49,7 @@ public sealed class SteamCmdHourlyUpdateService(
             new SteamCmdInstallRequest
             {
                 LoginName = settings.SteamCmdLoginName,
-                Validate = true,
+                Validate = false,
             },
             automatic: true,
             cancellationToken).ConfigureAwait(false);

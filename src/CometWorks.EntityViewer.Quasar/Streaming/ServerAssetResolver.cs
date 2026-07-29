@@ -36,12 +36,14 @@ public sealed class ServerAssetResolver(
                 return modAsset;
         }
 
-        return TryResolveContentAsset(normalized.Path);
+        return TryResolveContentAsset(settings, normalized.Path);
     }
 
-    private ResolvedServerAsset? TryResolveContentAsset(string logicalPath)
+    private ResolvedServerAsset? TryResolveContentAsset(
+        EntityViewerStreamingSettings settings,
+        string logicalPath)
     {
-        var contentRoot = ResolveContentRoot();
+        var contentRoot = ResolveContentRoot(settings);
         if (string.IsNullOrWhiteSpace(contentRoot) || !Directory.Exists(contentRoot))
             return null;
 
@@ -157,15 +159,15 @@ public sealed class ServerAssetResolver(
         }
     }
 
-    private string ResolveContentRoot()
-        => EntityViewerContentRoots.ResolveContentRoot(paths);
+    private string ResolveContentRoot(EntityViewerStreamingSettings settings)
+        => EntityViewerContentRoots.ResolveContentRoot(settings, paths);
 
     private string ResolveModsRoot(ViewerAssetSession session, EntityViewerStreamingSettings settings)
     {
-        if (!string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) &&
-            Directory.Exists(settings.DedicatedServerModsPath))
+        var configuredModsPath = paths.ResolveConfiguredPath(settings.DedicatedServerModsPath);
+        if (Directory.Exists(configuredModsPath))
         {
-            return Path.GetFullPath(settings.DedicatedServerModsPath);
+            return configuredModsPath;
         }
 
         var magnetarsRoot = Path.Combine(paths.QuasarDirectory, "Magnetars");

@@ -34,4 +34,39 @@ public sealed class EntityViewerStreamingPaths
     public string ManagedDedicatedServerContentDirectory { get; }
 
     public string SettingsPath { get; }
+
+    public string ResolveConfiguredPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim()
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar);
+        return Path.GetFullPath(Path.IsPathRooted(normalized)
+            ? normalized
+            : Path.Combine(QuasarDirectory, normalized));
+    }
+
+    public string ToStoredPath(string? value)
+    {
+        var resolved = ResolveConfiguredPath(value);
+        if (string.IsNullOrWhiteSpace(resolved))
+            return string.Empty;
+
+        var root = Path.TrimEndingDirectorySeparator(QuasarDirectory);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!resolved.Equals(root, comparison) &&
+            !resolved.StartsWith(root + Path.DirectorySeparatorChar, comparison))
+        {
+            return resolved;
+        }
+
+        var relative = Path.GetRelativePath(root, resolved);
+        return relative == "."
+            ? string.Empty
+            : relative.Replace('\\', '/');
+    }
 }

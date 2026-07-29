@@ -68,6 +68,15 @@ scene, the local `Content`/`Mods` folder controls are hidden. They remain a
 fallback path and reappear if the streaming status cannot be read or the
 streaming session cannot be created.
 
+Quasar admins can source streamed base-game assets from either the managed
+SteamCMD client install or a manually managed Space Engineers client `Content`
+folder. Manual paths may point directly to `Content` or to its client install
+parent. Relative manual Content and Mods paths resolve from the Quasar install
+root, so moving the complete Quasar directory preserves them. Managed mode runs
+an hourly SteamCMD `app_update 244850` pass without `validate`; SteamCMD checks
+the installed manifest and downloads changed files, while explicit installs can
+still request full validation.
+
 The viewer's JavaScript runtime dependencies are served from Quasar's own `/vendor` static assets instead of a public CDN. The static assets are staged at build time from exact npm packages pinned in this repository's `package-lock.json` (vendored as `Viewer/package-lock.json` inside Quasar): `three` `0.180.0` and `@zip.js/zip.js` `2.7.72`. This keeps startup independent of external CDN availability, proxy behavior, and third-party MIME headers while avoiding hand-copied partial packages.
 
 On Chrome, Edge, and other Chromium 122+ browsers with the File System Access API, the viewer uses `showDirectoryPicker`, stores the selected folder handle in IndexedDB, and calls `requestPermission()` on the stored handle during later visits so Chrome can offer persistent folder access. The selected Space Engineers `Content` folder name is also stored in browser `localStorage` and read on startup, so the viewer can show which folder was last used. Browsers do not expose reusable absolute folder paths from `localStorage`; actual access depends on the saved directory handle and permission.

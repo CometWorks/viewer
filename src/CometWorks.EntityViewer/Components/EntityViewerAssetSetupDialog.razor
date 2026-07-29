@@ -69,22 +69,89 @@
                         }
                         <MudGrid Spacing="2">
                             <MudItem xs="12">
-                                <MudTextField T="string"
-                                              Label="Dedicated Server Mods folder"
-                                              Variant="Variant.Outlined"
-                                              Immediate="true"
-                                              HelperText="Optional. Blank uses Quasar/Magnetars/{server}/DedicatedServer/Mods."
-                                              @bind-Value="_dedicatedServerModsPath" />
+                                <MudRadioGroup T="string" @bind-Value="_baseGameSourceMode">
+                                    <MudStack Row="true" Spacing="2" Class="entity-viewer-source-mode-options">
+                                        <MudRadio T="string"
+                                                  Value="@ManagedSteamCmdSourceMode"
+                                                  Color="Color.Primary">
+                                            Managed SteamCMD
+                                        </MudRadio>
+                                        <MudRadio T="string"
+                                                  Value="@ExternalInstallSourceMode"
+                                                  Color="Color.Primary">
+                                            Manual server folder
+                                        </MudRadio>
+                                    </MudStack>
+                                </MudRadioGroup>
                             </MudItem>
+                            @if (!UsesManagedSteamCmd)
+                            {
+                                <MudItem xs="12">
+                                    <MudAlert Severity="Severity.Info"
+                                              Variant="Variant.Outlined"
+                                              Dense="true"
+                                              Class="mb-2">
+                                        Server filesystem: enter a folder on the machine running Quasar. The viewer does not browse the filesystem of the device running this browser.
+                                    </MudAlert>
+                                    <MudTextField T="string"
+                                                  Label="Server path to Space Engineers client"
+                                                  Variant="Variant.Outlined"
+                                                  Immediate="true"
+                                                  HelperText="Enter the client install folder or its Content folder. Relative paths start at the Quasar root."
+                                                  @bind-Value="_baseGameContentPath" />
+                                </MudItem>
+                            }
                         </MudGrid>
+                        <MudExpansionPanels MultiExpansion="false"
+                                            Elevation="0"
+                                            Outlined="true"
+                                            Dense="true">
+                            <MudExpansionPanel KeepContentAlive="false">
+                                <TitleContent>
+                                    <MudStack Row="true"
+                                              Wrap="Wrap.Wrap"
+                                              AlignItems="AlignItems.Center"
+                                              Justify="Justify.SpaceBetween"
+                                              Class="w-100">
+                                        <MudStack Spacing="0">
+                                            <MudText Typo="Typo.subtitle2">Dedicated Server Mods path</MudText>
+                                            <MudText Typo="Typo.caption">Optional override for non-standard server layouts.</MudText>
+                                        </MudStack>
+                                        <MudChip T="string"
+                                                 Color="Color.Warning"
+                                                 Variant="Variant.Outlined"
+                                                 Size="Size.Small">
+                                            Advanced
+                                        </MudChip>
+                                    </MudStack>
+                                </TitleContent>
+                                <ChildContent>
+                                    <MudAlert Severity="Severity.Warning"
+                                              Variant="Variant.Outlined"
+                                              Dense="true"
+                                              Class="mb-3">
+                                        Leave blank for the managed server Mods path. Change only when assets live in a custom location.
+                                    </MudAlert>
+                                    <MudTextField T="string"
+                                                  Label="Dedicated Server Mods folder"
+                                                  Variant="Variant.Outlined"
+                                                  Immediate="true"
+                                                  HelperText="Absolute, or relative to the Quasar root. Blank uses Magnetars/{server}/DedicatedServer/Mods."
+                                                  @bind-Value="_dedicatedServerModsPath" />
+                                </ChildContent>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
                         @if (_roots is not null)
                         {
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 Active content: @DisplayPath(_roots.ActiveBaseGameContentDirectory)
                             </MudText>
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Managed client content: @DisplayPath(_roots.ManagedGameContentDirectory)
-                            </MudText>
+                            @if (UsesManagedSteamCmd)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                    Managed client content: @DisplayPath(_roots.ManagedGameContentDirectory)
+                                </MudText>
+                            }
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 Managed DS content: @DisplayPath(_roots.ManagedDedicatedServerContentDirectory)
                             </MudText>
@@ -99,8 +166,10 @@
                     </MudStack>
                 </MudPaper>
 
-                <MudPaper Outlined="true" Class="pa-3">
-                    <MudStack Spacing="2">
+                @if (UsesManagedSteamCmd)
+                {
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudStack Spacing="2">
                         <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
                             <MudText Typo="Typo.subtitle2">SteamCMD Installer</MudText>
                             @if (_installer is not null)
@@ -190,8 +259,9 @@
                                 <pre>@InstallerLogText</pre>
                             </div>
                         </MudPaper>
-                    </MudStack>
-                </MudPaper>
+                        </MudStack>
+                    </MudPaper>
+                }
             }
             else if (_status is not null)
             {
@@ -219,6 +289,8 @@
 
 @code
 {
+    private const string ManagedSteamCmdSourceMode = "ManagedSteamCmd";
+    private const string ExternalInstallSourceMode = "ExternalInstall";
     private const string ConsentText = "Server asset streaming sends Space Engineers game and mod asset files from this server to viewer users with Quasar access. CometWorks does not verify whether those users own Space Engineers. This is a legal grey area. As the server owner, you are responsible for ensuring every enabled user is allowed to receive and use these assets under the relevant licenses, server rules, and access policies. CometWorks is not responsible for how this feature is used. Enable only if you understand and accept this risk.";
 
     private IJSObjectReference? _module;
@@ -232,6 +304,8 @@
     private bool _changed;
     private bool _scrollInstallerLog;
     private string _error = string.Empty;
+    private string _baseGameSourceMode = ManagedSteamCmdSourceMode;
+    private string _baseGameContentPath = string.Empty;
     private string _dedicatedServerModsPath = string.Empty;
     private string _loginName = string.Empty;
     private string _steamCmdInput = string.Empty;
@@ -247,6 +321,9 @@
     public string ApiBasePath { get; set; } = "/_quasar/plugins/cometworks.entityviewer/api/assets";
 
     private bool InstallerRunning => _installer?.IsRunning == true;
+
+    private bool UsesManagedSteamCmd =>
+        !string.Equals(_baseGameSourceMode, ExternalInstallSourceMode, StringComparison.OrdinalIgnoreCase);
 
     private bool MissingSteamAccount => !InstallerRunning && string.IsNullOrWhiteSpace(_loginName);
 
@@ -410,6 +487,8 @@
         {
             _roots = await module.InvokeAsync<AssetRootSettingsDto>("saveRootSettings", ApiBasePath, new AssetRootSettingsRequest
             {
+                BaseGameSourceMode = _baseGameSourceMode,
+                BaseGameContentPath = _baseGameContentPath,
                 DedicatedServerModsPath = _dedicatedServerModsPath,
             });
             _changed = true;
@@ -504,6 +583,13 @@
         if (_roots is null)
             return;
 
+        _baseGameSourceMode = string.Equals(
+            _roots.BaseGameSourceMode,
+            ExternalInstallSourceMode,
+            StringComparison.OrdinalIgnoreCase)
+            ? ExternalInstallSourceMode
+            : ManagedSteamCmdSourceMode;
+        _baseGameContentPath = _roots.BaseGameContentPath ?? string.Empty;
         _dedicatedServerModsPath = _roots.DedicatedServerModsPath ?? string.Empty;
     }
 
@@ -628,6 +714,12 @@
 
     private sealed class AssetRootSettingsDto
     {
+        [JsonPropertyName("baseGameSourceMode")]
+        public string BaseGameSourceMode { get; set; } = ManagedSteamCmdSourceMode;
+
+        [JsonPropertyName("baseGameContentPath")]
+        public string BaseGameContentPath { get; set; } = string.Empty;
+
         [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
 
@@ -658,6 +750,12 @@
 
     private sealed class AssetRootSettingsRequest
     {
+        [JsonPropertyName("baseGameSourceMode")]
+        public string BaseGameSourceMode { get; set; } = ManagedSteamCmdSourceMode;
+
+        [JsonPropertyName("baseGameContentPath")]
+        public string BaseGameContentPath { get; set; } = string.Empty;
+
         [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
     }

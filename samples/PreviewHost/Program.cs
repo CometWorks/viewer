@@ -32,13 +32,13 @@ app.MapGet("/_content/CometWorks.EntityViewer/api/assets/status", () => Results.
     consentAccepted = false,
     consentRequired = false,
     consentVersion = "server-asset-streaming-v1",
-    canManageStreaming = false,
+    canManageStreaming = true,
     fileStreamingReady = false,
-    baseGameSourceMode = "ManagedSteamCmd",
+    baseGameSourceMode = "ExternalInstall",
     baseGameContentConfigured = false,
     managedGameContentExists = false,
     lastInstallStatus = "NotStarted",
-    message = "Preview host uses local asset folders.",
+    message = "Preview host asset streaming is not configured.",
 }));
 app.MapGet("/_content/CometWorks.EntityViewer/api/assets/installer/status", () => Results.Json(new
 {
@@ -64,13 +64,18 @@ app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/cancel", () 
     Results.Json(new { state = "Idle", isRunning = false, message = "Preview host does not run SteamCMD." }));
 app.MapGet("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () => Results.Json(new
 {
-    baseGameSourceMode = "ManagedSteamCmd",
-    baseGameContentPath = "",
+    baseGameSourceMode = "ExternalInstall",
+    baseGameContentPath = "ManagedRuntime/Tools/SpaceEngineersClient",
     dedicatedServerModsPath = "",
     managedGameClientDirectory = "",
     managedGameContentDirectory = "",
+    managedDedicatedServerContentDirectory = "",
+    activeBaseGameContentDirectory = "",
+    managedContentSource = "ExternalInstall",
     baseGameContentConfigured = false,
     managedGameContentExists = false,
+    managedDedicatedServerContentExists = false,
+    baseGameContentMessage = "Manual client Content not ready.",
     dedicatedServerModsPathExists = false,
 }));
 app.MapPost("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () =>

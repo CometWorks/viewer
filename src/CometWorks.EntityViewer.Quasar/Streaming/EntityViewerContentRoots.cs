@@ -38,6 +38,16 @@ public sealed class EntityViewerManagedContentSelection
 
 public static class EntityViewerContentRoots
 {
+    public static EntityViewerManagedContentSelection Select(
+        EntityViewerStreamingSettings settings,
+        EntityViewerStreamingPaths paths)
+    {
+        if (!settings.UsesManagedSteamCmd)
+            return SelectExternal(settings.BaseGameContentPath, paths);
+
+        return SelectManaged(paths);
+    }
+
     public static EntityViewerManagedContentSelection SelectManaged(EntityViewerStreamingPaths paths)
     {
         var client = Probe(paths.ManagedGameContentDirectory);
@@ -64,6 +74,35 @@ public static class EntityViewerContentRoots
             ClientProbe = client,
             DedicatedServerProbe = dedicated,
             Message = $"Managed client Content not ready. {client.Message}",
+        };
+    }
+
+    public static EntityViewerManagedContentSelection SelectExternal(
+        string configuredPath,
+        EntityViewerStreamingPaths paths)
+    {
+        var candidate = paths.ResolveConfiguredPath(configuredPath);
+        var direct = Probe(candidate);
+        var nestedPath = string.IsNullOrWhiteSpace(candidate)
+            ? string.Empty
+            : Path.Combine(candidate, "Content");
+        var nested = Probe(nestedPath);
+        var active = direct.IsUsable
+            ? direct
+            : nested.DirectoryExists
+                ? nested
+                : direct;
+
+        return new EntityViewerManagedContentSelection
+        {
+            Source = EntityViewerStreamingSettings.ExternalInstallSourceMode,
+            ContentDirectory = active.Path,
+            ActiveProbe = active,
+            ClientProbe = Probe(paths.ManagedGameContentDirectory),
+            DedicatedServerProbe = Probe(paths.ManagedDedicatedServerContentDirectory),
+            Message = active.IsUsable
+                ? BuildReadyMessage("Manual client Content", active)
+                : $"Manual client Content not ready. {active.Message}",
         };
     }
 
@@ -108,7 +147,9 @@ public static class EntityViewerContentRoots
         };
     }
 
-    public static string ResolveContentRoot(EntityViewerStreamingPaths paths) => SelectManaged(paths).ContentDirectory;
+    public static string ResolveContentRoot(
+        EntityViewerStreamingSettings settings,
+        EntityViewerStreamingPaths paths) => Select(settings, paths).ContentDirectory;
 
     public static bool LooksUsable(string path) => Probe(path).IsUsable;
 

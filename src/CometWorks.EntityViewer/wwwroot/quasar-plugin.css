@@ -33,7 +33,8 @@
 }
 
 .entity-viewer-chip-row,
-.entity-viewer-action-row {
+.entity-viewer-action-row,
+.entity-viewer-source-mode-options {
     flex-wrap: wrap;
 }
 

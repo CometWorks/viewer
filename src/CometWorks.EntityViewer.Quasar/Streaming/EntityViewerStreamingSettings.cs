@@ -3,6 +3,8 @@ namespace CometWorks.EntityViewer.Quasar.Streaming;
 public sealed class EntityViewerStreamingSettings
 {
     public const string CurrentConsentVersion = "server-asset-streaming-v1";
+    public const string ManagedSteamCmdSourceMode = "ManagedSteamCmd";
+    public const string ExternalInstallSourceMode = "ExternalInstall";
 
     public bool StreamingEnabled { get; set; }
 
@@ -14,7 +16,7 @@ public sealed class EntityViewerStreamingSettings
 
     public DateTimeOffset? ConsentAcceptedAtUtc { get; set; }
 
-    public string BaseGameSourceMode { get; set; } = "ManagedSteamCmd";
+    public string BaseGameSourceMode { get; set; } = ManagedSteamCmdSourceMode;
 
     public string BaseGameContentPath { get; set; } = string.Empty;
 
@@ -35,4 +37,12 @@ public sealed class EntityViewerStreamingSettings
     public bool HasCurrentConsent =>
         ConsentAccepted &&
         string.Equals(ConsentVersion, CurrentConsentVersion, StringComparison.Ordinal);
+
+    public bool UsesManagedSteamCmd =>
+        !string.Equals(BaseGameSourceMode, ExternalInstallSourceMode, StringComparison.OrdinalIgnoreCase);
+
+    public static string NormalizeSourceMode(string? value) =>
+        string.Equals(value, ExternalInstallSourceMode, StringComparison.OrdinalIgnoreCase)
+            ? ExternalInstallSourceMode
+            : ManagedSteamCmdSourceMode;
 }

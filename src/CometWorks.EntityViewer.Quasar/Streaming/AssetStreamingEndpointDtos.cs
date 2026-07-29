@@ -23,7 +23,7 @@ public sealed class AssetStreamingStatusResponse
 
     public bool FileStreamingReady { get; init; }
 
-    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+    public string BaseGameSourceMode { get; init; } = EntityViewerStreamingSettings.ManagedSteamCmdSourceMode;
 
     public bool BaseGameContentConfigured { get; init; }
 
@@ -33,7 +33,7 @@ public sealed class AssetStreamingStatusResponse
 
     public string ActiveBaseGameContentDirectory { get; init; } = string.Empty;
 
-    public string ManagedContentSource { get; init; } = "ManagedSteamCmd";
+    public string ManagedContentSource { get; init; } = EntityViewerStreamingSettings.ManagedSteamCmdSourceMode;
 
     public string BaseGameContentMessage { get; init; } = string.Empty;
 
@@ -46,7 +46,7 @@ public sealed class AssetStreamingStatusResponse
 
 public sealed class AssetStreamingRootSettingsRequest
 {
-    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+    public string BaseGameSourceMode { get; init; } = EntityViewerStreamingSettings.ManagedSteamCmdSourceMode;
 
     public string BaseGameContentPath { get; init; } = string.Empty;
 
@@ -55,7 +55,7 @@ public sealed class AssetStreamingRootSettingsRequest
 
 public sealed class AssetStreamingRootSettingsResponse
 {
-    public string BaseGameSourceMode { get; init; } = "ManagedSteamCmd";
+    public string BaseGameSourceMode { get; init; } = EntityViewerStreamingSettings.ManagedSteamCmdSourceMode;
 
     public string BaseGameContentPath { get; init; } = string.Empty;
 
@@ -69,7 +69,7 @@ public sealed class AssetStreamingRootSettingsResponse
 
     public string ActiveBaseGameContentDirectory { get; init; } = string.Empty;
 
-    public string ManagedContentSource { get; init; } = "ManagedSteamCmd";
+    public string ManagedContentSource { get; init; } = EntityViewerStreamingSettings.ManagedSteamCmdSourceMode;
 
     public bool BaseGameContentConfigured { get; init; }
 

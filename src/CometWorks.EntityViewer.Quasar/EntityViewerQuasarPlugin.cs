@@ -215,9 +215,11 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             {
                 var settings = await settingsStore.UpdateAsync(current =>
                 {
-                    current.BaseGameSourceMode = "ManagedSteamCmd";
-                    current.BaseGameContentPath = string.Empty;
-                    current.DedicatedServerModsPath = NormalizeOptionalPath(request.DedicatedServerModsPath);
+                    current.BaseGameSourceMode = EntityViewerStreamingSettings.NormalizeSourceMode(request.BaseGameSourceMode);
+                    current.BaseGameContentPath = current.UsesManagedSteamCmd
+                        ? string.Empty
+                        : paths.ToStoredPath(request.BaseGameContentPath);
+                    current.DedicatedServerModsPath = paths.ToStoredPath(request.DedicatedServerModsPath);
                     return current;
                 }, cancellationToken);
                 return Results.Json(BuildRootSettingsResponse(settings, paths));
@@ -235,9 +237,14 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             $"{routePrefix}/api/assets/installer/start",
             async (
                 SteamCmdInstallRequest request,
+                IEntityViewerStreamingSettingsStore settingsStore,
                 SteamCmdInstallerService installerService,
                 CancellationToken cancellationToken) =>
             {
+                var settings = await settingsStore.GetAsync(cancellationToken);
+                if (!settings.UsesManagedSteamCmd)
+                    return Results.Conflict(new { error = "SteamCMD install is disabled while manual Content mode is selected." });
+
                 var status = await installerService.StartAsync(request, automatic: false, cancellationToken);
                 return Results.Json(status);
             });
@@ -363,10 +370,10 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
     {
         var consentAccepted = settings.HasCurrentConsent;
         var streamingEnabled = settings.StreamingEnabled && consentAccepted;
-        var managedContent = EntityViewerContentRoots.SelectManaged(paths);
-        var baseGameContentConfigured = managedContent.IsUsable;
-        var activeContentDirectory = managedContent.ContentDirectory;
-        var contentMessage = managedContent.Message;
+        var content = EntityViewerContentRoots.Select(settings, paths);
+        var baseGameContentConfigured = content.IsUsable;
+        var activeContentDirectory = content.ContentDirectory;
+        var contentMessage = content.Message;
 
         return new AssetStreamingStatusResponse
         {
@@ -377,12 +384,12 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion,
             CanManageStreaming = canManageStreaming,
             FileStreamingReady = baseGameContentConfigured,
-            BaseGameSourceMode = "ManagedSteamCmd",
+            BaseGameSourceMode = EntityViewerStreamingSettings.NormalizeSourceMode(settings.BaseGameSourceMode),
             BaseGameContentConfigured = baseGameContentConfigured,
-            ManagedGameContentExists = managedContent.ClientProbe.IsUsable,
-            ManagedDedicatedServerContentExists = managedContent.DedicatedServerProbe.IsUsable,
+            ManagedGameContentExists = content.ClientProbe.IsUsable,
+            ManagedDedicatedServerContentExists = content.DedicatedServerProbe.IsUsable,
             ActiveBaseGameContentDirectory = activeContentDirectory,
-            ManagedContentSource = managedContent.Source,
+            ManagedContentSource = content.Source,
             BaseGameContentMessage = contentMessage,
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
@@ -396,27 +403,27 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         EntityViewerStreamingSettings settings,
         EntityViewerStreamingPaths paths)
     {
-        var managedContent = EntityViewerContentRoots.SelectManaged(paths);
-        var baseGameContentConfigured = managedContent.IsUsable;
-        var activeContentDirectory = managedContent.ContentDirectory;
-        var contentMessage = managedContent.Message;
+        var content = EntityViewerContentRoots.Select(settings, paths);
+        var baseGameContentConfigured = content.IsUsable;
+        var activeContentDirectory = content.ContentDirectory;
+        var contentMessage = content.Message;
+        var configuredModsPath = paths.ResolveConfiguredPath(settings.DedicatedServerModsPath);
 
         return new AssetStreamingRootSettingsResponse
         {
-            BaseGameSourceMode = "ManagedSteamCmd",
-            BaseGameContentPath = string.Empty,
+            BaseGameSourceMode = EntityViewerStreamingSettings.NormalizeSourceMode(settings.BaseGameSourceMode),
+            BaseGameContentPath = settings.BaseGameContentPath,
             DedicatedServerModsPath = settings.DedicatedServerModsPath,
             ManagedGameClientDirectory = paths.ManagedGameClientDirectory,
             ManagedGameContentDirectory = paths.ManagedGameContentDirectory,
             ManagedDedicatedServerContentDirectory = paths.ManagedDedicatedServerContentDirectory,
             ActiveBaseGameContentDirectory = activeContentDirectory,
-            ManagedContentSource = managedContent.Source,
+            ManagedContentSource = content.Source,
             BaseGameContentConfigured = baseGameContentConfigured,
-            ManagedGameContentExists = managedContent.ClientProbe.IsUsable,
-            ManagedDedicatedServerContentExists = managedContent.DedicatedServerProbe.IsUsable,
+            ManagedGameContentExists = content.ClientProbe.IsUsable,
+            ManagedDedicatedServerContentExists = content.DedicatedServerProbe.IsUsable,
             BaseGameContentMessage = contentMessage,
-            DedicatedServerModsPathExists = !string.IsNullOrWhiteSpace(settings.DedicatedServerModsPath) &&
-                                             Directory.Exists(settings.DedicatedServerModsPath),
+            DedicatedServerModsPathExists = Directory.Exists(configuredModsPath),
         };
     }
 
@@ -441,14 +448,6 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             return "Server asset streaming is disabled by the server owner.";
 
         return "Server asset streaming is disabled. Local asset folders remain active.";
-    }
-
-    private static string NormalizeOptionalPath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return string.Empty;
-
-        return Path.GetFullPath(path.Trim());
     }
 
     private static string UserId(ClaimsPrincipal user)
