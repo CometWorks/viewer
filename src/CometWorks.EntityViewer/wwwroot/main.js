@@ -120,7 +120,7 @@ async function reloadScene() {
 
 async function prepareRemoteAssets(scene) {
     try {
-        log("Checking server asset streaming session (viewer runtime 0.1.2).");
+        log("Checking server asset streaming session (viewer runtime 0.1.3).");
         const result = await prepareRemoteAssetSession(scene);
         if (result.changed) clearAssetFolderCaches();
         remoteAssetSessionChecked = true;

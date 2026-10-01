@@ -56,6 +56,7 @@ test("cached bytes still require a successful resolve in each new session", asyn
     const previousCache = globalThis.caches;
     const cached = new Map();
     globalThis.caches = { async open() { return {
+        async keys() { return [...cached.keys()].map(url => ({ url })); },
         async match(url) { return cached.get(String(url))?.clone(); },
         async put(url, response) { cached.set(String(url), response.clone()); },
     }; } };

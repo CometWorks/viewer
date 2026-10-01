@@ -224,7 +224,8 @@ export async function renderEntityScene(scene, options = {}) {
     if (renderToken !== modelRenderToken) return;
 
     const progress = createProgressiveModelRender(scene, definitions, gridGroups, renderTextureToken, renderToken, preloadedTextures);
-    progress.rebuild();
+    await progress.rebuild();
+    if (renderToken !== modelRenderToken || state.viewerDisposed) return;
     disposeTextureCacheExcept(collectCurrentSceneTextures());
     updateModelStats(resolutionStats, progress.lastRenderStats, modelAssets.size);
 
@@ -232,7 +233,7 @@ export async function renderEntityScene(scene, options = {}) {
     updateSceneBounds(false);
     updateSunLightPosition();
     fitCameraToScene();
-    progress.rebuild();
+    // Three.js LODs update with the camera; framing does not require rebuilding every model.
 
     await nextAnimationFrame();
     if (renderToken !== modelRenderToken) return;
@@ -298,7 +299,7 @@ function createProgressiveModelRender(scene, definitions, gridGroups, textureTok
         requestAnimationFrame(() => {
             rebuildQueued = false;
             if (renderToken !== modelRenderToken) return;
-            progress.rebuild();
+            progress.rebuild().catch(error => log(`Model rebuild failed: ${error.message}`, true));
         });
     }
 
@@ -333,7 +334,8 @@ function createProgressiveModelRender(scene, definitions, gridGroups, textureTok
 
             queueRebuild(readyForRebuild ? MODEL_REBUILD_THROTTLE_MS : rebuildMaxDelayMs);
         },
-        rebuild() {
+        async rebuild() {
+            if (renderToken !== modelRenderToken || state.viewerDisposed) return;
             if (rebuildTimer) {
                 window.clearTimeout(rebuildTimer);
                 rebuildTimer = 0;
@@ -341,7 +343,12 @@ function createProgressiveModelRender(scene, definitions, gridGroups, textureTok
             rebuildQueued = false;
             completedSinceLastRebuild = 0;
             const renderContext = createRenderContext(textureToken, preloadedTextures);
-            const nextLayer = buildModelLayer(scene, definitions, renderContext, gridGroups);
+            const nextLayer = await buildModelLayer(scene, definitions, renderContext, gridGroups, renderToken);
+            if (!nextLayer) return;
+            if (renderToken !== modelRenderToken || state.viewerDisposed) {
+                disposeObjectTree(nextLayer.layer);
+                return;
+            }
             const previousLayer = modelLayer;
             modelLayer = nextLayer.layer;
             for (const gridGroup of gridGroups.values()) {
@@ -441,7 +448,7 @@ function floorAxisOffset(cellCount, gridSize) {
     return Math.abs(cellCount % 2) === 1 ? gridSize * 0.5 : 0;
 }
 
-function buildModelLayer(scene, definitions, renderContext, gridGroups) {
+async function buildModelLayer(scene, definitions, renderContext, gridGroups, renderToken) {
     const layer = new THREE.Group();
     layer.name = "QuasarGridModels";
     layer.userData.modelLayerToken = `models:${Date.now()}:${Math.random()}`;
@@ -450,6 +457,8 @@ function buildModelLayer(scene, definitions, renderContext, gridGroups) {
     const stats = { proxyBatches: 0, modelBatches: 0 };
     const blocksByGrid = new Map();
     const clipBounds = contextBlockClipBounds(scene);
+    let sliceStarted = performance.now();
+    let maxSliceMs = 0;
     for (const block of scene.blockInstances || []) {
         const gridId = String(block.gridId || primaryGrid(scene)?.id || "");
         let blocks = blocksByGrid.get(gridId);
@@ -471,6 +480,17 @@ function buildModelLayer(scene, definitions, renderContext, gridGroups) {
         const blockClip = grid.isContext && clipBounds ? { bounds: clipBounds, gridMatrix, inverseGridMatrix: gridMatrix.clone().invert() } : null;
         const proxyBatches = new Map();
         for (const block of blocks) {
+            const sliceMs = performance.now() - sliceStarted;
+            if (sliceMs >= 8) {
+                maxSliceMs = Math.max(maxSliceMs, sliceMs);
+                await nextAnimationFrame();
+                if (renderToken !== modelRenderToken || state.viewerDisposed) {
+                    disposeObjectTree(layer);
+                    disposeObjectTree(gridLayer);
+                    return null;
+                }
+                sliceStarted = performance.now();
+            }
             const definition = definitions.get(block.blockTypeId);
             const box = blockBox(block, grid.gridSize || LARGE_GRID_CUBE_SIZE);
             const clipRelation = blockClip ? boxClipVolumeRelation(box, blockClip.gridMatrix, blockClip.bounds) : "inside";
@@ -512,6 +532,8 @@ function buildModelLayer(scene, definitions, renderContext, gridGroups) {
         stats.modelBatches += flushModelBatches(gridLayer, gridRenderContext);
         if (gridLayer.children.length) layer.add(gridLayer);
     }
+
+    state.stats["Model build max slice ms"] = Math.round(Math.max(maxSliceMs, performance.now() - sliceStarted));
 
     return {
         layer,
