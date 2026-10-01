@@ -6,6 +6,7 @@ import { clearAssetFolderCaches, getFileAccessSupport, getSavedContentFolderName
 import { fetchAssetStreamingStatus, prepareRemoteAssetSession } from "./asset-streaming.js";
 import { renderEntityScene } from "./entity-renderer.js";
 import { downloadLog, log } from "./logging.js";
+import { clearStreamedAssetCache } from "./asset-cache.js";
 import { startQuasarThemeSync } from "./theme.js";
 
 let serverAssetStreamingReady = false;
@@ -30,6 +31,17 @@ async function start() {
     initScene();
     wireControls({ reloadScene, pickContent: selectContentFolder, pickMods: selectModsFolder });
     els.downloadLog.addEventListener("click", downloadLog);
+    els.clearAssetCache?.addEventListener("click", async () => {
+        els.clearAssetCache.disabled = true;
+        try {
+            await clearStreamedAssetCache();
+            log("Streamed asset cache cleared. Future loads will download assets again.");
+        } catch (error) {
+            log(`Could not clear the browser asset cache: ${error.message}`, true);
+        } finally {
+            els.clearAssetCache.disabled = false;
+        }
+    });
     animate();
 
     await refreshAssetStreamingStatus();
@@ -108,7 +120,7 @@ async function reloadScene() {
 
 async function prepareRemoteAssets(scene) {
     try {
-        log("Checking server asset streaming session (viewer runtime 0.1.1).");
+        log("Checking server asset streaming session (viewer runtime 0.1.2).");
         const result = await prepareRemoteAssetSession(scene);
         if (result.changed) clearAssetFolderCaches();
         remoteAssetSessionChecked = true;

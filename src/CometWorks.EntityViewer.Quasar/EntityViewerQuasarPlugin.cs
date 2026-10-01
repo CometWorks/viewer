@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Net.Http.Headers;
 using CometWorks.EntityViewer.Quasar.Streaming;
 using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
@@ -321,6 +322,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 {
                     Found = true,
                     AssetToken = token.Id,
+                    CacheKey = asset.CacheKeyForUser(userId),
                     ExpiresAtUtc = token.ExpiresAtUtc,
                     LogicalPath = asset.LogicalPath,
                     RootId = asset.RootId,
@@ -335,8 +337,14 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
         var fileEndpoint = endpoints.MapGet(
             $"{routePrefix}/api/assets/files/{{assetToken}}",
-            (string assetToken, HttpContext httpContext, ViewerAssetSessionStore sessionStore) =>
+            async (string assetToken, HttpContext httpContext, ViewerAssetSessionStore sessionStore,
+                IEntityViewerStreamingSettingsStore settingsStore, CancellationToken cancellationToken) =>
             {
+                // Authenticated bytes must never enter Cloudflare or another shared HTTP cache.
+                httpContext.Response.Headers.CacheControl = "private, no-store";
+                var settings = await settingsStore.GetAsync(cancellationToken);
+                if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
+                    return Results.Problem("Server asset streaming is not enabled.", statusCode: StatusCodes.Status409Conflict);
                 var token = sessionStore.TryGetAssetToken(assetToken, UserId(httpContext.User));
                 if (token is null)
                     return Results.NotFound();
@@ -345,10 +353,13 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 {
                     var asset = token.Asset;
                     var stream = asset.OpenRead();
+                    if (asset.IsArchiveEntry)
+                        httpContext.Response.ContentLength = asset.Size;
                     return Results.File(
                         stream,
                         contentType: asset.ContentType,
                         lastModified: asset.LastModifiedUtc,
+                        entityTag: new EntityTagHeaderValue($"\"{asset.CacheKeyForUser(token.UserId)}\""),
                         enableRangeProcessing: !asset.IsArchiveEntry);
                 }
                 catch (FileNotFoundException)

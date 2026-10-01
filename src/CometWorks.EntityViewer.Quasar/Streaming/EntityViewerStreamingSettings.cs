@@ -41,6 +41,9 @@ public sealed class EntityViewerStreamingSettings
     public bool UsesManagedSteamCmd =>
         !string.Equals(BaseGameSourceMode, ExternalInstallSourceMode, StringComparison.OrdinalIgnoreCase);
 
+    // All settings are values or immutable strings; callers may mutate their own snapshot.
+    public EntityViewerStreamingSettings Copy() => (EntityViewerStreamingSettings)MemberwiseClone();
+
     public static string NormalizeSourceMode(string? value) =>
         string.Equals(value, ExternalInstallSourceMode, StringComparison.OrdinalIgnoreCase)
             ? ExternalInstallSourceMode

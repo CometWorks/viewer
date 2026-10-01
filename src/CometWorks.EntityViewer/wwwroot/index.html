@@ -94,6 +94,8 @@
                 <h2>Assets</h2>
                 <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
                 <p class="hint">Use the Server Asset Streaming button in the Quasar viewer dialog title bar to accept consent, install or update SteamCMD assets, and configure server asset roots.</p>
+                <p class="hint">Streamed models and textures are cached in this browser and reused until the server files change.</p>
+                <button id="clearAssetCache" type="button" class="wide">Clear Streamed Asset Cache</button>
                 <div id="localAssetFallback" class="asset-folder-fallback">
                     <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
                         <strong>Persistent file access is not enabled.</strong>

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace CometWorks.EntityViewer.Quasar.Streaming;
@@ -6,9 +7,12 @@ namespace CometWorks.EntityViewer.Quasar.Streaming;
 public sealed class ServerAssetResolver(
     EntityViewerStreamingPaths paths,
     IEntityViewerStreamingSettingsStore settingsStore,
-    ILogger<ServerAssetResolver> logger)
+    ILogger<ServerAssetResolver> logger) : IDisposable
 {
     private static readonly string[] KnownExtensions = [".mwm", ".dds", ".png", ".jpg", ".jpeg", ".webp", ".sbc", ".xml"];
+    private readonly MemoryCache _archiveIndexes = new(new MemoryCacheOptions { SizeLimit = 100_000 });
+
+    public void Dispose() => _archiveIndexes.Dispose();
 
     public async Task<ResolvedServerAsset?> ResolveAsync(
         ViewerAssetSession session,
@@ -128,16 +132,25 @@ public sealed class ServerAssetResolver(
     {
         try
         {
-            using var archive = ZipFile.OpenRead(archivePath);
+            var info = new FileInfo(archivePath);
+            var key = (archivePath, info.LastWriteTimeUtc, info.Length);
+            var index = _archiveIndexes.GetOrCreate(key, cacheEntry =>
+            {
+                using var archive = ZipFile.OpenRead(archivePath);
+                var entries = new Dictionary<string, ArchiveAsset>(StringComparer.Ordinal);
+                foreach (var candidate in archive.Entries)
+                {
+                    if (string.IsNullOrWhiteSpace(candidate.Name)) continue;
+                    entries.TryAdd(ArchivePathKey(candidate.FullName),
+                        new ArchiveAsset(candidate.FullName, candidate.Length, candidate.LastWriteTime.UtcDateTime));
+                }
+                cacheEntry.SetSize(Math.Max(1, entries.Count)).SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
+                return new ArchiveIndex(DetectSingleTopLevel(archive), entries);
+            })!;
             var targetKey = ArchivePathKey(logicalPath);
-            var singleTopLevel = DetectSingleTopLevel(archive);
-            var entry = archive.Entries.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.Name) &&
-                                                                    ArchivePathKey(candidate.FullName) == targetKey)
-                        ?? (!string.IsNullOrWhiteSpace(singleTopLevel)
-                            ? archive.Entries.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate.Name) &&
-                                                                         ArchivePathKey(candidate.FullName) == ArchivePathKey($"{singleTopLevel}/{logicalPath}"))
-                            : null);
-            if (entry is null)
+            if (!index.Entries.TryGetValue(targetKey, out var entry) &&
+                (string.IsNullOrWhiteSpace(index.TopLevel) ||
+                 !index.Entries.TryGetValue(ArchivePathKey($"{index.TopLevel}/{logicalPath}"), out entry)))
                 return null;
 
             return new ResolvedServerAsset
@@ -146,9 +159,11 @@ public sealed class ServerAssetResolver(
                 RootId = rootId,
                 RootKind = rootKind,
                 FilePath = archivePath,
-                ArchiveEntryName = entry.FullName,
-                Size = entry.Length,
-                LastModifiedUtc = entry.LastWriteTime.UtcDateTime,
+                ArchiveEntryName = entry!.Name,
+                Size = entry.Size,
+                LastModifiedUtc = entry.Modified,
+                SourceSize = info.Length,
+                SourceLastModifiedUtc = info.LastWriteTimeUtc,
                 ContentType = ContentTypeForPath(logicalPath),
             };
         }
@@ -504,4 +519,6 @@ public sealed class ServerAssetResolver(
     private sealed record NormalizedPath(string Path, string ModName);
 
     private sealed record ModRoot(string Kind, string Path);
+    private sealed record ArchiveAsset(string Name, long Size, DateTimeOffset Modified);
+    private sealed record ArchiveIndex(string TopLevel, Dictionary<string, ArchiveAsset> Entries);
 }

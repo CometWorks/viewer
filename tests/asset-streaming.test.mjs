@@ -3,7 +3,8 @@ import test from "node:test";
 
 let moduleId = 0;
 
-async function streamingClient(t, sessionResponse) {
+async function streamingClient(t, sessionResponse, resolveResponse = () =>
+    Response.json({ found: true, assetToken: "asset-token", logicalPath: "Models/block.mwm" })) {
     const previousWindow = globalThis.window;
     globalThis.window = { location: { search: "?agentId=server&entityId=123" } };
     t.after(() => { globalThis.window = previousWindow; });
@@ -14,7 +15,7 @@ async function streamingClient(t, sessionResponse) {
             return Response.json({ streamingEnabled: true, fileStreamingReady: true });
         if (String(url).endsWith("/sessions")) return sessionResponse();
         if (String(url).endsWith("/resolve"))
-            return Response.json({ found: true, assetToken: "asset-token", logicalPath: "Models/block.mwm" });
+            return resolveResponse();
         if (String(url).endsWith("/files/asset-token")) return new Response("model bytes");
         throw new Error(`Unexpected request: ${url}`);
     });
@@ -49,4 +50,31 @@ test("a failed session renewal clears the old session", async t => {
     await client.prepareRemoteAssetSession({});
     await assert.rejects(client.prepareRemoteAssetSession({}), /409.*Streaming disabled/);
     assert.equal(client.getRemoteAssetSessionKey(), "");
+});
+
+test("cached bytes still require a successful resolve in each new session", async t => {
+    const previousCache = globalThis.caches;
+    const cached = new Map();
+    globalThis.caches = { async open() { return {
+        async match(url) { return cached.get(String(url))?.clone(); },
+        async put(url, response) { cached.set(String(url), response.clone()); },
+    }; } };
+    t.after(() => { globalThis.caches = previousCache; });
+    let allowed = true;
+    let session = 0;
+    const { client, requests } = await streamingClient(t,
+        () => Response.json({ sessionId: `session-${++session}` }),
+        () => allowed ? Response.json({ found: true, assetToken: "asset-token", cacheKey: "f".repeat(64), size: 11 })
+            : new Response(null, { status: 403 }));
+    for (let i = 0; i < 2; i++) {
+        await client.prepareRemoteAssetSession({});
+        const asset = await client.resolveRemoteAssetFile("Models/block.mwm");
+        assert.equal(await (await asset.getFile()).text(), "model bytes");
+    }
+    assert.equal(requests.filter(r => r.url.endsWith("/resolve")).length, 2);
+    assert.equal(requests.filter(r => r.url.endsWith("/files/asset-token")).length, 1);
+    allowed = false;
+    await client.prepareRemoteAssetSession({});
+    assert.equal(await client.resolveRemoteAssetFile("Models/block.mwm"), null);
+    assert.equal(requests.filter(r => r.url.endsWith("/files/asset-token")).length, 1);
 });

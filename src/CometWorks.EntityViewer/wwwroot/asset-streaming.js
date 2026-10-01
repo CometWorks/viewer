@@ -1,5 +1,6 @@
 import { getViewerParams } from "./quasar-api.js";
 import { log } from "./logging.js";
+import { loadStreamedAsset } from "./asset-cache.js";
 
 const STATUS_PATH = "api/assets/status";
 const SESSIONS_PATH = "api/assets/sessions";
@@ -91,18 +92,19 @@ export async function resolveRemoteAssetFile(logicalPath, options = {}) {
 }
 
 async function fetchResolvedRemoteFile(resolved) {
-    const response = await fetch(pluginApiUrl(`api/assets/files/${encodeURIComponent(resolved.assetToken)}`), {
-        headers: { "Accept": resolved.contentType || "application/octet-stream" },
-        credentials: "same-origin",
+    const blob = await loadStreamedAsset(resolved, async () => {
+        const response = await fetch(pluginApiUrl(`api/assets/files/${encodeURIComponent(resolved.assetToken)}`), {
+            headers: { "Accept": resolved.contentType || "application/octet-stream" },
+            credentials: "same-origin",
+        });
+        if (!response.ok) throw await createStatusError(response, "Asset stream request failed");
+        return await response.blob();
     });
-    if (!response.ok) throw await createStatusError(response, "Asset stream request failed");
-
-    const blob = await response.blob();
     const fileName = String(resolved.logicalPath || "asset").split("/").filter(Boolean).pop() || "asset";
     const lastModified = resolved.lastModifiedUtc ? Date.parse(resolved.lastModifiedUtc) : Date.now();
     if (typeof File === "function") {
         return new File([blob], fileName, {
-            type: response.headers.get("content-type") || resolved.contentType || blob.type || "",
+            type: resolved.contentType || blob.type || "",
             lastModified: Number.isFinite(lastModified) ? lastModified : Date.now(),
         });
     }

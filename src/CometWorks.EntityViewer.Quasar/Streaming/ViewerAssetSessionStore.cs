@@ -9,6 +9,7 @@ public sealed class ViewerAssetSessionStore
     private readonly object _sync = new();
     private readonly Dictionary<string, ViewerAssetSession> _sessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ViewerAssetToken> _tokens = new(StringComparer.Ordinal);
+    private DateTimeOffset _nextCleanupUtc;
 
     public ViewerAssetSession CreateSession(string userId, AssetSessionRequest request)
     {
@@ -83,12 +84,21 @@ public sealed class ViewerAssetSessionStore
             if (!string.Equals(token.UserId, userId, StringComparison.Ordinal))
                 return null;
 
-            return token.ExpiresAtUtc > now ? token : null;
+            return token.ExpiresAtUtc > now &&
+                   _sessions.TryGetValue(token.SessionId, out var session) &&
+                   session.ExpiresAtUtc > now &&
+                   string.Equals(session.UserId, userId, StringComparison.Ordinal)
+                ? token : null;
         }
     }
 
     private void CleanupExpiredLocked(DateTimeOffset now)
     {
+        // Expiry is checked on every lookup; scan the whole store only once per minute.
+        if (now < _nextCleanupUtc)
+            return;
+        _nextCleanupUtc = now.AddMinutes(1);
+
         foreach (var expired in _sessions.Where(pair => pair.Value.ExpiresAtUtc <= now).Select(pair => pair.Key).ToList())
             _sessions.Remove(expired);
 

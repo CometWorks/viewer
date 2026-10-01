@@ -14,13 +14,19 @@ public sealed class FileEntityViewerStreamingSettingsStore(
     };
 
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private Snapshot? _snapshot;
 
     public async Task<EntityViewerStreamingSettings> GetAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot is not null && snapshot.Stamp is not null && snapshot.Stamp == SettingsStamp())
+            return snapshot.Settings.Copy();
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await ReadAsync(cancellationToken).ConfigureAwait(false);
+            return (await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false)).Copy();
         }
         finally
         {
@@ -35,16 +41,46 @@ public sealed class FileEntityViewerStreamingSettingsStore(
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var current = await ReadAsync(cancellationToken).ConfigureAwait(false);
+            var current = (await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false)).Copy();
             var next = update(current) ?? new EntityViewerStreamingSettings();
             await WriteAsync(next, cancellationToken).ConfigureAwait(false);
-            return next;
+            Volatile.Write(ref _snapshot, new Snapshot(SettingsStamp(), next.Copy()));
+            return next.Copy();
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    private async Task<EntityViewerStreamingSettings> ReadSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var stamp = SettingsStamp();
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot is not null && stamp is not null && snapshot.Stamp == stamp)
+            return snapshot.Settings;
+
+        var settings = await ReadAsync(cancellationToken).ConfigureAwait(false);
+        // Use the pre-read stamp so a concurrent external replacement triggers another read.
+        Volatile.Write(ref _snapshot, new Snapshot(stamp, settings));
+        return settings;
+    }
+
+    private (DateTime Modified, long Size)? SettingsStamp()
+    {
+        try
+        {
+            var info = new FileInfo(paths.SettingsPath);
+            return info.Exists ? (info.LastWriteTimeUtc, info.Length) : (DateTime.MinValue, 0);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Fail closed through ReadAsync; never reuse enabled settings when metadata cannot be read.
+            return null;
+        }
+    }
+
+    private sealed record Snapshot((DateTime Modified, long Size)? Stamp, EntityViewerStreamingSettings Settings);
 
     private async Task<EntityViewerStreamingSettings> ReadAsync(CancellationToken cancellationToken)
     {

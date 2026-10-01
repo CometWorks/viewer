@@ -46,6 +46,48 @@ Failed or malformed session responses clear the previous session and show a
 warning. Model loading always asks the asset resolver for each model; missing
 assets produce warnings with their logical paths and retain proxy geometry.
 
+Streamed model, texture, and definition files are stored in the browser's Cache
+Storage and reused across viewer dialogs and page reloads. Every new viewer
+session still resolves assets against the authenticated server before accessing
+cached bytes. Opaque cache keys include the user, source file, size, and last
+modification time; changing an archive also invalidates its cached entries.
+Parsed models and decoded textures continue to use the existing memory caches
+inside each viewer. Concurrent requests for the same streamed file share one
+download. Exported diagnostics report **Streamed asset cache hits** and
+**Streamed asset downloads**.
+
+Use **Clear Streamed Asset Cache** in the Assets section to remove downloaded
+files from this browser. Browser storage is best-effort and subject to browser
+quota/eviction; private browsing or blocked storage can disable persistence.
+Files larger than 64 MiB are streamed without persistent caching. Storage
+failures do not stop viewing. Asset HTTP responses use `private, no-store` so
+shared proxies cannot cache authenticated downloads; the viewer owns the
+persistent cache explicitly.
+
+Multiple users and sessions can stream concurrently. Each download owns its
+file/ZIP stream, and archive entries decompress as the response is sent rather
+than being copied completely into server memory first. Archive metadata indexes
+are cached with a size bound and refreshed when the archive changes. Settings
+reads reuse isolated snapshots until the settings file changes, and session
+lookups check expiry directly without scanning all tokens for every asset.
+Disabling streaming also rejects downloads using previously issued tokens.
+
+### Streaming regression checks
+
+Run `npm test` and `npm run check` for browser session/cache behavior and module
+syntax. The standalone HTTP checks exercise the actual plugin endpoints using
+two authenticated users, eight concurrent 16 MiB archive downloads, an unread
+slow-client response, consent revocation, cache revisions, cancellation, and
+plain-file ranges:
+
+```bash
+dotnet run --project tests/StreamingChecks/StreamingChecks.csproj \
+  -p:QuasarPluginAbstractionsProject=/path/to/Quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj
+```
+
+These checks run an isolated loopback test host; they do not start Quasar or
+SteamCMD.
+
 For troubleshooting, the Download Log records the viewer runtime revision, the
 session request path, and its HTTP status without recording session tokens.
 After installing an update, restart Quasar from **Settings → UI Plugins**, then
