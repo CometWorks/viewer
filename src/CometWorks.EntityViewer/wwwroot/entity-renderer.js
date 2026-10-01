@@ -10,6 +10,7 @@ import { resolveModelAsset } from "./mwm-loader.js";
 import { armorFallbackModelCount, armorFallbackModelForDefinition } from "./armor-fallback-models.js";
 import { loadTexture, textureToCanvas } from "./texture-loader.js";
 import { log } from "./logging.js";
+import { getRemoteAssetSessionKey } from "./asset-streaming.js";
 import { disposeTextureCacheExcept, getContentFolderCacheGeneration, resolveContentFile, setSceneModRoots } from "./content-folder.js";
 import { drawLcdBitmapText, getLoadedLcdBitmapFont, lcdBitmapTextScale, loadLcdBitmapFont, supportedLcdFontId } from "./lcd-font-loader.js";
 
@@ -3255,7 +3256,7 @@ function transparentLcdSurfaceOpacity(surface) {
 }
 
 async function ensureArmorSkinDefinitionsLoaded() {
-    if (!state.contentFolder) {
+    if (!state.contentFolder && !getRemoteAssetSessionKey()) {
         armorSkinDefinitionsGeneration = -1;
         armorSkinDefinitionsPromise = null;
         armorSkinDefinitions = new Map();
@@ -3327,7 +3328,7 @@ function parseArmorSkinDefinitions(text) {
 }
 
 async function ensureTransparentMaterialDefinitionsLoaded() {
-    if (!state.contentFolder) {
+    if (!state.contentFolder && !getRemoteAssetSessionKey()) {
         transparentMaterialDefinitionsGeneration = -1;
         transparentMaterialDefinitionsPromise = null;
         transparentMaterialDefinitions = new Map();
@@ -4479,7 +4480,8 @@ function fallbackArmorVertexToGrid(vertex, matrix, deformations, gridSize) {
 }
 
 async function resolveReferencedModelsProgressively(scene, modelAssets, stats, progress, renderToken, reportProgress = null) {
-    if (!state.contentFolder && !state.modsFolder) {
+    const remoteAssetsAvailable = !!getRemoteAssetSessionKey();
+    if (!state.contentFolder && !state.modsFolder && !remoteAssetsAvailable) {
         log("No local Content or Mods folder selected; all models render as proxies.", true);
         stats.missing = (scene.modelAssets || []).length;
         updateModelStats(stats, progress.lastRenderStats, modelAssets.size);
@@ -4487,8 +4489,8 @@ async function resolveReferencedModelsProgressively(scene, modelAssets, stats, p
         return stats;
     }
 
-    if (!state.contentFolder) log("No local Content folder selected; vanilla fallback assets may render as proxies.", true);
-    if (!state.modsFolder && [...modelAssets.values()].some(asset => asset.rootId || asset.RootId || String(asset.sourceKind || asset.SourceKind || "").toLowerCase() === "mod")) {
+    if (!state.contentFolder && !remoteAssetsAvailable) log("No local Content folder selected; vanilla fallback assets may render as proxies.", true);
+    if (!state.modsFolder && !remoteAssetsAvailable && [...modelAssets.values()].some(asset => asset.rootId || asset.RootId || String(asset.sourceKind || asset.SourceKind || "").toLowerCase() === "mod")) {
         log("No local Mods folder selected; selecting the global Mods folder may resolve modded assets.", true);
     }
 
@@ -4720,10 +4722,11 @@ function addTextureAsset(assets, logicalPath, usage, rootId = "") {
 function initializeTextureStats(textureAssets) {
     state.textureResolution.clear();
     state.textureStats = { listed: textureAssets.size, found: 0, loaded: 0, missing: 0, failed: 0 };
+    const hasAssetSource = !!(state.contentFolder || state.modsFolder || getRemoteAssetSessionKey());
     for (const [key, asset] of textureAssets) {
-        state.textureResolution.set(key, { asset, localStatus: state.contentFolder || state.modsFolder ? "pending" : "missing", loadStatus: "pending" });
+        state.textureResolution.set(key, { asset, localStatus: hasAssetSource ? "pending" : "missing", loadStatus: "pending" });
     }
-    if (!state.contentFolder && !state.modsFolder) state.textureStats.missing = textureAssets.size;
+    if (!hasAssetSource) state.textureStats.missing = textureAssets.size;
     return state.textureStats;
 }
 
