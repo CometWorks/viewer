@@ -108,6 +108,7 @@ async function reloadScene() {
 
 async function prepareRemoteAssets(scene) {
     try {
+        log("Checking server asset streaming session (viewer runtime 0.1.1).");
         const result = await prepareRemoteAssetSession(scene);
         if (result.changed) clearAssetFolderCaches();
         remoteAssetSessionChecked = true;
@@ -116,6 +117,8 @@ async function prepareRemoteAssets(scene) {
         if (result.active) {
             updateAssetStreamingStatus("Server asset streaming session ready. Local asset folders are hidden.", false);
             log("Server asset streaming session ready.");
+        } else {
+            log("Server asset streaming is disabled or its asset roots are not ready; using local asset folders.", true);
         }
         updateLocalAssetFallbackVisibility();
     } catch (error) {

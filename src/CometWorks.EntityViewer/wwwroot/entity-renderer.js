@@ -153,7 +153,7 @@ export async function renderEntityScene(scene, options = {}) {
     await ensureTransparentMaterialDefinitionsLoaded();
     if (renderToken !== modelRenderToken) return;
 
-    reportProgress("Loading models", "Resolving local model files...", 0, Math.max(1, modelAssets.size));
+    reportProgress("Loading models", "Resolving model files...", 0, Math.max(1, modelAssets.size));
     await resolveReferencedModelsProgressively(scene, modelAssets, resolutionStats, preloadProgress, renderToken, reportProgress);
     if (renderToken !== modelRenderToken) return;
 
@@ -4480,20 +4480,6 @@ function fallbackArmorVertexToGrid(vertex, matrix, deformations, gridSize) {
 }
 
 async function resolveReferencedModelsProgressively(scene, modelAssets, stats, progress, renderToken, reportProgress = null) {
-    const remoteAssetsAvailable = !!getRemoteAssetSessionKey();
-    if (!state.contentFolder && !state.modsFolder && !remoteAssetsAvailable) {
-        log("No local Content or Mods folder selected; all models render as proxies.", true);
-        stats.missing = (scene.modelAssets || []).length;
-        updateModelStats(stats, progress.lastRenderStats, modelAssets.size);
-        if (reportProgress) reportProgress("Loading models", "No local asset folder selected; models will use proxies.", modelAssets.size, Math.max(1, modelAssets.size));
-        return stats;
-    }
-
-    if (!state.contentFolder && !remoteAssetsAvailable) log("No local Content folder selected; vanilla fallback assets may render as proxies.", true);
-    if (!state.modsFolder && !remoteAssetsAvailable && [...modelAssets.values()].some(asset => asset.rootId || asset.RootId || String(asset.sourceKind || asset.SourceKind || "").toLowerCase() === "mod")) {
-        log("No local Mods folder selected; selecting the global Mods folder may resolve modded assets.", true);
-    }
-
     let completed = 0;
     await runWithConcurrency([...modelAssets.values()], MAX_CONCURRENT_MODEL_RESOLVES, async asset => {
         const result = await resolveModelAsset(asset);

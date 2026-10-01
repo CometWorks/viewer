@@ -1,7 +1,7 @@
 {
   "id": "cometworks.entityviewer",
   "displayName": "Entity Viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "entryAssembly": "CometWorks.EntityViewer.Quasar.dll",
   "entryType": "CometWorks.EntityViewer.Quasar.EntityViewerQuasarPlugin",
   "projectPath": "src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj",

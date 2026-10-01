@@ -28,7 +28,29 @@ instead of leaving the scene spinner active indefinitely.
 
 ## Asset Boundary
 
-Quasar does not serve Space Engineers assets to the browser.
+The scene endpoint returns metadata, not model or texture bytes. Opt-in server
+asset streaming uses separate plugin-owned endpoints after the server owner
+accepts consent and configures the asset roots.
+
+### Server asset streaming
+
+Use the **Server asset streaming** button in the viewer dialog title bar to
+accept consent and configure either SteamCMD-managed assets or a manual server
+Content folder. When streaming is enabled and the Content root is ready, the
+browser creates an asset session and resolves models and textures from the
+server before trying local folders. Local Content and Mods selections are not
+required for streaming.
+
+A session is ready only after the response supplies a nonempty session ID.
+Failed or malformed session responses clear the previous session and show a
+warning. Model loading always asks the asset resolver for each model; missing
+assets produce warnings with their logical paths and retain proxy geometry.
+
+For troubleshooting, the Download Log records the viewer runtime revision, the
+session request path, and its HTTP status without recording session tokens.
+After installing an update, restart Quasar from **Settings → UI Plugins**, then
+reload the viewer. Restarting the Dedicated Server loads the companion but does
+not reload the Quasar UI plugin.
 
 The viewer endpoint returns scene metadata and, when explicitly requested with `voxels=1`, bounded voxel terrain content/material samples intersecting the selected grid bounds or the selected asteroid's live storage:
 
@@ -54,7 +76,7 @@ The endpoint must not return:
 - raw texture bytes
 - server-rendered LCD texture bytes
 - raw extracted game model geometry, UVs, skinning data, or material texture data
-- a generic asset download API
+- arbitrary filesystem downloads through the scene endpoint
 
 Voxel data payloads are sampled by the running server from live voxel storage and are limited by conservative chunk and byte budgets. They do not include Space Engineers `.mwm`, `.dds`, `.png`, or other asset files.
 

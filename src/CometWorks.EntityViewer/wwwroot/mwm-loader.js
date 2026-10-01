@@ -34,7 +34,7 @@ export async function resolveModelAsset(asset) {
         rootId: asset.rootId || asset.RootId || "",
         sourceKind: asset.sourceKind || asset.SourceKind || "",
     });
-    if (!resolved) return { status: "missing", message: `Missing local model: ${asset.logicalPath}${asset.rootId || asset.RootId ? " from mod" : ""}` };
+    if (!resolved) return { status: "missing", message: `Missing model: ${asset.logicalPath}${asset.rootId || asset.RootId ? " from mod" : ""}` };
 
     let file = null;
     try {
