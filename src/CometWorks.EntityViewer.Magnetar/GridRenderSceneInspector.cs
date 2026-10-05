@@ -69,11 +69,17 @@ namespace CometWorks.EntityViewer.Magnetar
                 throw new InvalidOperationException("Grid not found or not loaded on this server.");
 
             var catalog = new MetadataAssetCatalog();
+            var viewWorldMatrix = grid.WorldMatrix;
+            viewWorldMatrix.Translation = Vector3D.Transform(grid.PositionComp.LocalAABB.Center, grid.WorldMatrix);
+            var gravityFrame = ViewerReferenceFrame.GravityAligned(viewWorldMatrix,
+                MyGravityProviderSystem.CalculateNaturalGravityInPoint(viewWorldMatrix.Translation));
+            viewWorldMatrix = gravityFrame ?? viewWorldMatrix;
             var scene = new EntityRenderScene
             {
                 GameVersion = gameVersion ?? string.Empty,
                 PluginVersion = pluginVersion ?? string.Empty,
                 Grid = ToGrid(grid),
+                GravityAlignedViewFrame = gravityFrame.HasValue ? ToDto(gravityFrame.Value) : null,
                 Environment = ToEnvironment(),
                 CapturedAtUtc = DateTimeOffset.UtcNow,
             };
@@ -82,10 +88,9 @@ namespace CometWorks.EntityViewer.Magnetar
 
             var definitions = new Dictionary<string, ViewerBlockDefinition>(StringComparer.Ordinal);
             var chunks = new Dictionary<string, ChunkBuilder>(StringComparer.Ordinal);
-            var contextLocalAabb = includeContext ? ContextLocalAabb(grid) : (BoundingBoxD?)null;
-            var contextRelativeAabb = contextLocalAabb.HasValue ? ContextRelativeAabb(grid, contextLocalAabb.Value) : (BoundingBoxD?)null;
-            var contextClip = contextRelativeAabb.HasValue ? BuildContextClipVolume(grid, contextRelativeAabb.Value) : null;
-            var contextAabb = contextLocalAabb.HasValue ? LocalAabbToWorldAabb(contextLocalAabb.Value.Min, contextLocalAabb.Value.Max, grid.WorldMatrix) : (BoundingBoxD?)null;
+            var contextRelativeAabb = includeContext ? ContextRelativeAabb(grid, gravityFrame) : (BoundingBoxD?)null;
+            var contextClip = contextRelativeAabb.HasValue ? BuildContextClipVolume(grid, contextRelativeAabb.Value, viewWorldMatrix, gravityFrame.HasValue) : null;
+            var contextAabb = contextRelativeAabb.HasValue ? LocalAabbToWorldAabb(contextRelativeAabb.Value.Min, contextRelativeAabb.Value.Max, viewWorldMatrix) : (BoundingBoxD?)null;
             var contextClipAabb = contextClip != null ? ContextClipWorldAabb(contextClip) : (BoundingBoxD?)null;
             var contextVoxelAabb = contextClipAabb ?? contextAabb;
             var contextBlocks = 0;
@@ -131,7 +136,7 @@ namespace CometWorks.EntityViewer.Magnetar
             scene.Voxels = LoadedVoxels(contextVoxelAabb, contextClip);
             if (includeVoxels)
             {
-                scene.VoxelDeformations = BuildVoxelDeformations(grid, scene.Warnings, contextVoxelAabb);
+                scene.VoxelDeformations = BuildVoxelDeformations(scene.Warnings, contextVoxelAabb ?? VoxelSamplingWorldAabb(grid, gravityFrame));
                 scene.VoxelDamageDeformations = BuildVoxelDamageDeformations(scene.VoxelDeformations, scene.Warnings);
                 scene.VoxelMaterials = BuildVoxelMaterials(scene.VoxelDeformations, scene.Warnings);
             }
@@ -325,19 +330,20 @@ namespace CometWorks.EntityViewer.Magnetar
             return new GridSceneAddResult { Grid = gridDto, IncludedBlockCount = included, SkippedBlockCount = skipped };
         }
 
-        private static BoundingBoxD ContextLocalAabb(MyCubeGrid grid)
+        private static BoundingBoxD ContextRelativeAabb(MyCubeGrid grid, MatrixD? gravityFrame)
         {
             var selected = new BoundingBoxD(grid.PositionComp.LocalAABB.Min, grid.PositionComp.LocalAABB.Max);
-            var center = selected.Center;
+            if (gravityFrame.HasValue)
+                selected = LocalAabbToWorldAabb(selected.Min, selected.Max, grid.WorldMatrix * MatrixD.Invert(gravityFrame.Value));
             var halfExtents = (selected.Max - selected.Min) * 0.5;
             halfExtents.X = Math.Max(halfExtents.X, LargeGridCubeSize);
             halfExtents.Y = Math.Max(halfExtents.Y, LargeGridCubeSize);
             halfExtents.Z = Math.Max(halfExtents.Z, LargeGridCubeSize);
             var contextHalfExtents = halfExtents * ContextHalfExtentScale;
-            return new BoundingBoxD(center - contextHalfExtents, center + contextHalfExtents);
+            return new BoundingBoxD(-contextHalfExtents, contextHalfExtents);
         }
 
-        private static ContextClipVolume BuildContextClipVolume(MyCubeGrid grid, BoundingBoxD contextRelativeAabb)
+        private static ContextClipVolume BuildContextClipVolume(MyCubeGrid grid, BoundingBoxD contextRelativeAabb, MatrixD viewWorldMatrix, bool gravityAligned)
         {
             Vector3I minCell;
             Vector3I maxCell;
@@ -345,8 +351,8 @@ namespace CometWorks.EntityViewer.Magnetar
             var hasBlocks = TryGridLocalBlockBounds(grid, out selected, out minCell, out maxCell);
 
             var padding = LargeGridCubeSize * FloorGridPaddingSupersquares;
-            var offsetX = hasBlocks ? FloorAxisOffset(maxCell.X - minCell.X + 1, LargeGridCubeSize) : 0;
-            var offsetZ = hasBlocks ? FloorAxisOffset(maxCell.Z - minCell.Z + 1, LargeGridCubeSize) : 0;
+            var offsetX = hasBlocks && !gravityAligned ? FloorAxisOffset(maxCell.X - minCell.X + 1, LargeGridCubeSize) : 0;
+            var offsetZ = hasBlocks && !gravityAligned ? FloorAxisOffset(maxCell.Z - minCell.Z + 1, LargeGridCubeSize) : 0;
             var startXCell = (int)Math.Floor((contextRelativeAabb.Min.X - padding - offsetX) / SmallGridCubeSize);
             var endXCell = (int)Math.Ceiling((contextRelativeAabb.Max.X + padding - offsetX) / SmallGridCubeSize);
             var startZCell = (int)Math.Floor((contextRelativeAabb.Min.Z - padding - offsetZ) / SmallGridCubeSize);
@@ -354,8 +360,7 @@ namespace CometWorks.EntityViewer.Magnetar
 
             return new ContextClipVolume
             {
-                Primary = grid,
-                CenterLocal = new BoundingBoxD(grid.PositionComp.LocalAABB.Min, grid.PositionComp.LocalAABB.Max).Center,
+                WorldMatrix = viewWorldMatrix,
                 MinX = offsetX + startXCell * SmallGridCubeSize,
                 MaxX = offsetX + endXCell * SmallGridCubeSize,
                 MinY = contextRelativeAabb.Min.Y,
@@ -365,18 +370,11 @@ namespace CometWorks.EntityViewer.Magnetar
             };
         }
 
-        private static BoundingBoxD ContextRelativeAabb(MyCubeGrid grid, BoundingBoxD contextLocalAabb)
-        {
-            var selected = new BoundingBoxD(grid.PositionComp.LocalAABB.Min, grid.PositionComp.LocalAABB.Max);
-            var center = selected.Center;
-            return new BoundingBoxD(contextLocalAabb.Min - center, contextLocalAabb.Max - center);
-        }
-
         private static BoundingBoxD ContextClipWorldAabb(ContextClipVolume contextClip)
         {
-            var localMin = contextClip.CenterLocal + new Vector3D(contextClip.MinX, contextClip.MinY, contextClip.MinZ);
-            var localMax = contextClip.CenterLocal + new Vector3D(contextClip.MaxX, contextClip.MaxY, contextClip.MaxZ);
-            return LocalAabbToWorldAabb(localMin, localMax, contextClip.Primary.WorldMatrix);
+            var localMin = new Vector3D(contextClip.MinX, contextClip.MinY, contextClip.MinZ);
+            var localMax = new Vector3D(contextClip.MaxX, contextClip.MaxY, contextClip.MaxZ);
+            return LocalAabbToWorldAabb(localMin, localMax, contextClip.WorldMatrix);
         }
 
         private static IEnumerable<SceneGridCandidate> ContextGrids(MyCubeGrid primary, ContextClipVolume contextClip, BoundingBoxD? contextClipAabb, List<string> warnings)
@@ -503,16 +501,15 @@ namespace CometWorks.EntityViewer.Magnetar
 
         private static BoundingBoxD? ProjectLocalAabbToContext(MyCubeGrid grid, BoundingBoxD localAabb, ContextClipVolume contextClip)
         {
-            if (grid == null || contextClip == null || contextClip.Primary == null)
+            if (grid == null || contextClip == null)
                 return null;
 
             var projected = BoundingBoxD.CreateInvalid();
-            var inversePrimaryWorld = MatrixD.Invert(contextClip.Primary.WorldMatrix);
+            var inverseViewWorld = MatrixD.Invert(contextClip.WorldMatrix);
             foreach (var corner in LocalAabbCorners(localAabb.Min, localAabb.Max))
             {
                 var world = Vector3D.Transform(corner, grid.WorldMatrix);
-                var primaryLocal = Vector3D.Transform(world, inversePrimaryWorld) - contextClip.CenterLocal;
-                projected.Include(primaryLocal);
+                projected.Include(Vector3D.Transform(world, inverseViewWorld));
             }
 
             return projected;
@@ -520,15 +517,14 @@ namespace CometWorks.EntityViewer.Magnetar
 
         private static BoundingBoxD? ProjectWorldAabbToContext(BoundingBoxD worldAabb, ContextClipVolume contextClip)
         {
-            if (contextClip == null || contextClip.Primary == null)
+            if (contextClip == null)
                 return null;
 
             var projected = BoundingBoxD.CreateInvalid();
-            var inversePrimaryWorld = MatrixD.Invert(contextClip.Primary.WorldMatrix);
+            var inverseViewWorld = MatrixD.Invert(contextClip.WorldMatrix);
             foreach (var corner in LocalAabbCorners(worldAabb.Min, worldAabb.Max))
             {
-                var primaryLocal = Vector3D.Transform(corner, inversePrimaryWorld) - contextClip.CenterLocal;
-                projected.Include(primaryLocal);
+                projected.Include(Vector3D.Transform(corner, inverseViewWorld));
             }
 
             return projected;
@@ -919,14 +915,13 @@ namespace CometWorks.EntityViewer.Magnetar
             return result;
         }
 
-        private static List<ViewerVoxelDataChunk> BuildVoxelDeformations(MyCubeGrid grid, List<string> warnings, BoundingBoxD? samplingOverride = null)
+        private static List<ViewerVoxelDataChunk> BuildVoxelDeformations(List<string> warnings, BoundingBoxD samplingAabb)
         {
             var session = MySession.Static;
             var result = new List<ViewerVoxelDataChunk>();
             if (session?.VoxelMaps?.Instances == null)
                 return result;
 
-            var samplingAabb = samplingOverride ?? VoxelSamplingWorldAabb(grid);
             var samples = new List<VoxelSceneSample>();
             var totalBytes = 0;
             var chunkBudgetReached = false;
@@ -1430,15 +1425,18 @@ namespace CometWorks.EntityViewer.Magnetar
                 : 0L;
         }
 
-        private static BoundingBoxD VoxelSamplingWorldAabb(MyCubeGrid grid)
+        private static BoundingBoxD VoxelSamplingWorldAabb(MyCubeGrid grid, MatrixD? gravityFrame)
         {
             if (!TryGridLocalBlockBounds(grid, out var bounds, out var minCell, out var maxCell))
                 return grid.PositionComp.WorldAABB;
 
             var gridSize = GridCubeSize(grid);
             var padding = gridSize * FloorGridPaddingSupersquares;
-            var offsetX = FloorAxisOffset(maxCell.X - minCell.X + 1, gridSize);
-            var offsetZ = FloorAxisOffset(maxCell.Z - minCell.Z + 1, gridSize);
+            var samplingFrame = gravityFrame ?? grid.WorldMatrix;
+            if (gravityFrame.HasValue)
+                bounds = LocalAabbToWorldAabb(bounds.Min, bounds.Max, grid.WorldMatrix * MatrixD.Invert(samplingFrame));
+            var offsetX = gravityFrame.HasValue ? 0 : FloorAxisOffset(maxCell.X - minCell.X + 1, gridSize);
+            var offsetZ = gravityFrame.HasValue ? 0 : FloorAxisOffset(maxCell.Z - minCell.Z + 1, gridSize);
             var startXCell = (int)Math.Floor((bounds.Min.X - padding - offsetX) / SmallGridCubeSize);
             var endXCell = (int)Math.Ceiling((bounds.Max.X + padding - offsetX) / SmallGridCubeSize);
             var startZCell = (int)Math.Floor((bounds.Min.Z - padding - offsetZ) / SmallGridCubeSize);
@@ -1452,7 +1450,7 @@ namespace CometWorks.EntityViewer.Magnetar
                 offsetX + endXCell * SmallGridCubeSize,
                 bounds.Max.Y + padding,
                 offsetZ + endZCell * SmallGridCubeSize);
-            return LocalAabbToWorldAabb(localMin, localMax, grid.WorldMatrix);
+            return LocalAabbToWorldAabb(localMin, localMax, samplingFrame);
         }
 
         private static bool TryGridLocalBlockBounds(MyCubeGrid grid, out BoundingBoxD bounds, out Vector3I minCell, out Vector3I maxCell)
@@ -3102,9 +3100,7 @@ namespace CometWorks.EntityViewer.Magnetar
 
         private sealed class ContextClipVolume
         {
-            public MyCubeGrid Primary { get; set; }
-
-            public Vector3D CenterLocal { get; set; }
+            public MatrixD WorldMatrix { get; set; }
 
             public double MinX { get; set; }
 

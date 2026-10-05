@@ -23,6 +23,12 @@ public class EntityRenderSceneRequest
 /// </summary>
 public class EntityRenderScene
 {
+    /// <summary>
+    /// World-space viewer frame centered on the primary grid, with up opposite natural gravity.
+    /// Null keeps the primary grid's alignment (including snapshots from older companions).
+    /// </summary>
+    public ViewerMatrix? GravityAlignedViewFrame { get; set; }
+
     public string SchemaVersion { get; set; } = "quasar-grid-scene.v1";
 
     public string GameVersion { get; set; } = string.Empty;

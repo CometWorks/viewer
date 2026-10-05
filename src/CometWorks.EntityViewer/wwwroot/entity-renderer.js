@@ -404,6 +404,9 @@ function floorGridAlignment(scene) {
     if (standaloneVoxelBody(scene)) {
         return { offsetX: 0, offsetZ: 0, cellCountX: 0, cellCountZ: 0, minorStep: LARGE_GRID_CUBE_SIZE };
     }
+    if (scene.gravityAlignedViewFrame) {
+        return { offsetX: 0, offsetZ: 0, cellCountX: 0, cellCountZ: 0 };
+    }
 
     const primary = primaryGrid(scene) || scene.grid || {};
     const primaryId = String(primary.id || "");
@@ -573,6 +576,12 @@ function createOverlayMaskRenderContext() {
 }
 
 function configureRelativeView(scene) {
+    if (scene.gravityAlignedViewFrame) {
+        const frame = matrixDtoToThree(scene.gravityAlignedViewFrame);
+        state.viewRotation = new THREE.Matrix4().extractRotation(frame).invert();
+        state.viewTransform = frame.invert();
+        return;
+    }
     const anchorGrid = primaryGrid(scene) || scene.grid || {};
     const worldMatrix = matrixDtoToThree(anchorGrid.worldMatrix);
     const voxel = standaloneVoxelBody(scene);
