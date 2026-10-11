@@ -5,13 +5,13 @@ asteroid voxels, and future entity-focused views.
 
 ## Layout
 
-- `src/CometWorks.EntityViewer/` contains reusable MudBlazor/Razor UI,
+- `src/CometWorks.EntityViewer/` contains reusable native HTML/Razor UI,
   services, and the static viewer runtime under `wwwroot/`.
 - `src/CometWorks.EntityViewer.Quasar/` contains the thin Quasar UI plugin
   adapter.
 - `src/CometWorks.EntityViewer.Magnetar/` contains the Magnetar companion
   plugin that captures live scene snapshots for the viewer.
-- `samples/PreviewHost/` contains a standalone MudBlazor preview host for
+- `samples/PreviewHost/` contains a standalone native preview host for
   checking plugin components without running Quasar.
 - `Docs/` contains viewer user/developer documentation.
 - `package.json` and `package-lock.json` pin browser runtime packages that
@@ -26,7 +26,7 @@ and mounts `src/CometWorks.EntityViewer/wwwroot` under
 
 The repository follows the Quasar UI plugin template split:
 
-- `CometWorks.EntityViewer` owns Razor components, MudBlazor dialog UI, shared UI
+- `CometWorks.EntityViewer` owns Razor components, native browser dialog UI, shared UI
   service registration, and static assets.
 - `CometWorks.EntityViewer.Quasar` implements `IQuasarPlugin` and contributes the
   Entities page viewer column extension targets. Its scene API endpoint calls
@@ -53,7 +53,7 @@ also asks Quasar to inject scoped `quasar-plugin.css` from that static asset
 directory so the viewer dialog and replacement column can share host page
 styling without loading the iframe-global viewer runtime CSS into Quasar. The
 manifest also declares the `cometworks.entityviewer` companion plugin id. The
-adapter opens a fullscreen MudBlazor dialog that serves the viewer from
+adapter opens a fullscreen native browser dialog that serves the viewer from
 `/_quasar/plugins/cometworks.entityviewer/`.
 
 ## Preview Workflow
@@ -64,7 +64,7 @@ Build or run the standalone preview host while developing viewer plugin UI:
 dotnet run --project samples/PreviewHost/PreviewHost.csproj
 ```
 
-The preview host uses Quasar-like MudBlazor theming and references only the
+The preview host uses Quasar appearance tokens and references only the
 shared `CometWorks.EntityViewer` UI project. It can render the replacement
 Entities page column, the fullscreen dialog, and the static viewer runtime
 without loading Quasar.
@@ -79,11 +79,29 @@ Content and Mods folder handles through the File System Access API and
 IndexedDB. Other browsers use the backup folder-input viewer path and warn that
 folder selections must be repeated after reload.
 
-Future submodule updates should move the `Viewer` gitlink in Quasar. The Quasar
-release workflow watches that path, so a merge to `main` that updates the
-viewer submodule pointer triggers the release build.
+Viewer releases are installed from pinned QuasarHub revisions. Publish the
+adapter and static assets together; no Quasar submodule update is required.
 
 When Quasar embeds the viewer in its fullscreen entity dialog, the viewer reads
-MudBlazor CSS palette, typography, and border-radius variables from the parent
-document and maps them onto its own CSS/Three.js theme tokens. Standalone direct
-viewer URLs keep the built-in fallback palette.
+`--quasar-palette-*` variables from the enclosing Quasar shell and maps them onto
+its CSS/Three.js theme tokens. It observes appearance changes and releases its
+observer when the iframe is unloaded. Legacy host palette variables remain a
+fallback during the core UI migration. Standalone direct viewer URLs keep the
+built-in fallback palette. The UI, adapter, and preview host no longer reference
+MudBlazor; scene rendering and companion APIs remain unchanged.
+
+## UI regression checks
+
+```bash
+dotnet build src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj
+dotnet build samples/PreviewHost/PreviewHost.csproj
+dotnet test tests/UiChecks/UiChecks.csproj
+npm test
+npm run check
+```
+
+Component checks cover viewer URLs, native modal closure, asset consent and root
+saves, and read-only management controls. Browser tests cover native/legacy theme
+mapping, live appearance changes, standalone fallback, and observer cleanup.
+Real Quasar circuits and authenticated asset streaming still need integration
+acceptance with the matching installed plugin package.

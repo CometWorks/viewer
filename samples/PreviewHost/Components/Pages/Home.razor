@@ -1,68 +1,9 @@
 @page "/"
 
 <PageTitle>Entity Viewer Preview</PageTitle>
-
-<MudStack Spacing="3">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-        <MudText Typo="Typo.h4">Entity Viewer</MudText>
-        <MudButton Href="@ViewerAssetUrl"
-                   Target="_blank"
-                   Variant="Variant.Filled"
-                   Color="Color.Primary"
-                   StartIcon="@Icons.Material.Filled.OpenInNew">
-            Open Static Viewer
-        </MudButton>
-    </MudStack>
-
-    <MudGrid>
-        <MudItem xs="12" lg="7">
-            <MudPaper Class="pa-4" Outlined="true">
-                <MudStack Spacing="2">
-                    <MudText Typo="Typo.h6">Entities Column</MudText>
-                    <MudTable T="PreviewEntity" Items="@_entities" Dense="true" Hover="true">
-                        <HeaderContent>
-                            <MudTh>Type</MudTh>
-                            <MudTh>Entity ID</MudTh>
-                            <MudTh>Name</MudTh>
-                            <EntityViewerColumnHeader />
-                        </HeaderContent>
-                        <RowTemplate>
-                            <MudTd DataLabel="Type">@context.Type</MudTd>
-                            <MudTd DataLabel="Entity ID" Class="mono">@context.EntityId</MudTd>
-                            <MudTd DataLabel="Name">@context.Name</MudTd>
-                            <EntityViewerColumnCell
-                                ServerName="Preview Server"
-                                EntityId="@context.EntityId"
-                                EntityType="@context.Type"
-                                EntitySubType="@context.SubType"
-                                EntityDisplayName="@context.Name"
-                                CanViewEntity="@context.CanView"
-                                ViewerUrl="@ViewerAssetUrl"
-                                AssetSetupModuleUrl="@AssetSetupModuleUrl"
-                                AssetSetupApiBasePath="@AssetSetupApiBasePath"
-                                AutoOpenAssetSetup="false" />
-                        </RowTemplate>
-                    </MudTable>
-                </MudStack>
-            </MudPaper>
-        </MudItem>
-        <MudItem xs="12" lg="5">
-            <MudPaper Class="pa-4" Outlined="true">
-                <MudStack Spacing="2">
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-                        <MudText Typo="Typo.h6">Static Runtime</MudText>
-                        <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined">Iframe</MudChip>
-                    </MudStack>
-                    <div class="preview-frame-host">
-                        <iframe src="@ViewerAssetUrl"
-                                title="Entity Viewer static runtime"
-                                class="preview-frame"></iframe>
-                    </div>
-                </MudStack>
-            </MudPaper>
-        </MudItem>
-    </MudGrid>
-</MudStack>
+<h1>Entity Viewer Preview</h1>
+<p>This host renders native plugin components with Quasar appearance tokens.</p>
+<div class="preview-grid"><section class="preview-panel"><h2>Entities Column</h2><div class="preview-table-scroll"><table class="preview-table"><thead><tr><th scope="col">Type</th><th scope="col">Entity ID</th><th scope="col">Name</th><EntityViewerColumnHeader /></tr></thead><tbody>@foreach (var entity in _entities) { <tr @key="entity.EntityId"><td>@entity.Type</td><td class="mono">@entity.EntityId</td><td>@entity.Name</td><EntityViewerColumnCell ServerName="Preview Server" EntityId="@entity.EntityId" EntityType="@entity.Type" EntitySubType="@entity.SubType" EntityDisplayName="@entity.Name" CanViewEntity="@entity.CanView" ViewerUrl="@ViewerAssetUrl" AssetSetupModuleUrl="@AssetSetupModuleUrl" AssetSetupApiBasePath="@AssetSetupApiBasePath" AutoOpenAssetSetup="false" /></tr> }</tbody></table></div></section><section class="preview-panel"><h2>Static Runtime</h2><a href="@ViewerAssetUrl" target="_blank" rel="noopener">Open viewer</a><div class="preview-frame-host"><iframe src="@ViewerAssetUrl" title="Entity Viewer static runtime" class="preview-frame"></iframe></div></section></div>
 
 @code
 {

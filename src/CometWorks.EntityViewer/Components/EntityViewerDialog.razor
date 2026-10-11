@@ -1,57 +1,35 @@
 @using System.Text.Json.Serialization
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
-@inject IDialogService DialogService
 @inject IJSRuntime JS
-@inject ISnackbar Snackbar
 
-<MudDialog>
-    <TitleContent>
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="entity-viewer-title-row">
-            <MudIconButton Icon="@Icons.Material.Filled.Close"
-                           Color="Color.Default"
-                           Size="Size.Small"
-                           OnClick="Close"
-                           title="Close viewer" />
-            <MudStack Spacing="0" Class="entity-viewer-title-stack">
-                <MudText Typo="Typo.h6">@Title</MudText>
-                @if (!string.IsNullOrWhiteSpace(Subtitle))
-                {
-                    <MudText Typo="Typo.caption" Class="entity-viewer-subtitle">@Subtitle</MudText>
-                }
-            </MudStack>
-            <MudSpacer />
-            <MudTooltip Text="Server asset streaming">
-                <MudIconButton Icon="@Icons.Material.Filled.CloudSync"
-                               Color="Color.Primary"
-                               Size="Size.Small"
-                               Disabled="@_assetSetupBusy"
-                               OnClick="OpenAssetSetupAsync" />
-            </MudTooltip>
-        </MudStack>
-    </TitleContent>
-    <DialogContent>
-        @if (string.IsNullOrWhiteSpace(ViewerUrl))
-        {
-            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Viewer URL missing.</MudAlert>
-        }
+<ViewerModal @ref="_dialog" Title="@Title" Fullscreen="true" ModuleUrl="@DialogModuleUrl" Closed="Closed">
+    <Header>
+        @if (!string.IsNullOrWhiteSpace(Subtitle)) { <span class="entity-viewer-subtitle">@Subtitle</span> }
+        <button type="button" class="entity-viewer-icon-button" title="Server asset streaming" aria-label="Server asset streaming" @onclick="OpenAssetSetupAsync"><ViewerIcon Icon="@ViewerIcons.CloudSync" /></button>
+        <button type="button" class="entity-viewer-icon-button" title="Close viewer" aria-label="Close viewer" @onclick="Close"><ViewerIcon Icon="@ViewerIcons.Close" /></button>
+    </Header>
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(_notice)) { <p class="entity-viewer-notice" role="status">@_notice</p> }
+        @if (string.IsNullOrWhiteSpace(ViewerUrl)) { <p class="entity-viewer-notice entity-viewer-tone-error">Viewer URL missing.</p> }
         else
         {
-            <div class="entity-viewer-frame-shell">
-                <iframe class="entity-viewer-frame"
-                        @key="_viewerRevision"
-                        src="@ViewerUrl"
-                        title="@Title"
-                        allow="fullscreen"></iframe>
-            </div>
+            <div class="entity-viewer-frame-shell"><iframe class="entity-viewer-frame" @key="_viewerRevision" src="@ViewerUrl" title="@Title" allow="fullscreen"></iframe></div>
         }
-    </DialogContent>
-</MudDialog>
+        @if (_assetSetupOpen)
+        {
+            <EntityViewerAssetSetupDialog AssetSetupModuleUrl="@AssetSetupModuleUrl" ApiBasePath="@AssetSetupApiBasePath" Closed="AssetSetupClosed" />
+        }
+    </ChildContent>
+</ViewerModal>
 
 @code
 {
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public EventCallback Closed { get; set; }
+    private ViewerModal? _dialog;
+    private bool _assetSetupOpen;
+    private string _notice = string.Empty;
+    private string DialogModuleUrl => AssetSetupModuleUrl[..(AssetSetupModuleUrl.LastIndexOf('/') + 1)] + "viewer-dialog.js";
 
     [Parameter]
     public string ViewerUrl { get; set; } = string.Empty;
@@ -72,7 +50,6 @@
     public bool AutoOpenAssetSetup { get; set; } = true;
 
     private IJSObjectReference? _assetSetupModule;
-    private bool _assetSetupBusy;
     private bool _assetSetupPromptChecked;
     private int _viewerRevision;
 
@@ -98,40 +75,19 @@
         }
     }
 
-    private async Task OpenAssetSetupAsync()
+    private Task OpenAssetSetupAsync()
     {
-        if (_assetSetupBusy)
-            return;
+        _assetSetupOpen = true;
+        return Task.CompletedTask;
+    }
 
-        _assetSetupBusy = true;
-        try
+    private void AssetSetupClosed(bool changed)
+    {
+        _assetSetupOpen = false;
+        if (changed)
         {
-            var parameters = new DialogParameters
-            {
-                [nameof(EntityViewerAssetSetupDialog.AssetSetupModuleUrl)] = AssetSetupModuleUrl,
-                [nameof(EntityViewerAssetSetupDialog.ApiBasePath)] = AssetSetupApiBasePath,
-            };
-            var options = new DialogOptions
-            {
-                CloseOnEscapeKey = true,
-                FullWidth = true,
-                MaxWidth = MaxWidth.Medium,
-            };
-
-            var dialog = await DialogService.ShowAsync<EntityViewerAssetSetupDialog>(
-                "Server Asset Streaming",
-                parameters,
-                options);
-            var result = await dialog.Result;
-            if (result is { Canceled: false, Data: bool changed } && changed)
-            {
-                _viewerRevision++;
-                Snackbar.Add("Reloading viewer asset session.", Severity.Info);
-            }
-        }
-        finally
-        {
-            _assetSetupBusy = false;
+            _viewerRevision++;
+            _notice = "Reloading viewer asset session.";
         }
     }
 
@@ -141,10 +97,7 @@
         return _assetSetupModule;
     }
 
-    private void Close()
-    {
-        MudDialog.Close();
-    }
+    private Task Close() => _dialog?.CloseAsync() ?? Task.CompletedTask;
 
     public async ValueTask DisposeAsync()
     {
