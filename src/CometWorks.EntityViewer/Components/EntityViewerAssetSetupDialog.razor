@@ -2,291 +2,85 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
-@inject ISnackbar Snackbar
 
-<MudDialog Class="entity-viewer-asset-setup-dialog">
-    <TitleContent>
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-            <MudIcon Icon="@Icons.Material.Filled.CloudSync" Color="Color.Primary" />
-            <MudText Typo="Typo.h6">Server Asset Streaming</MudText>
-        </MudStack>
-    </TitleContent>
-    <DialogContent>
-        <MudStack Spacing="2">
-            @if (_loading)
-            {
-                <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
-            }
-
-            @if (!string.IsNullOrWhiteSpace(_error))
-            {
-                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
-                    @_error
-                </MudAlert>
-            }
-
+<ViewerModal @ref="_dialog" Title="Server Asset Streaming" ModuleUrl="@DialogModuleUrl" Closed="HandleClosed">
+    <ChildContent>
+        <div class="entity-viewer-stack">
+            @if (_loading) { <progress class="entity-viewer-progress" aria-label="Loading asset streaming status"></progress> }
+            @if (!string.IsNullOrWhiteSpace(_error)) { <p class="entity-viewer-notice entity-viewer-tone-error" role="alert">@_error</p> }
+            @if (!string.IsNullOrWhiteSpace(_notice)) { <p class="entity-viewer-notice" role="status">@_notice</p> }
             @if (_status is not null)
             {
-                <MudAlert Severity="@StatusSeverity" Variant="Variant.Outlined">
-                    <MudStack Spacing="1">
-                        <MudText Typo="Typo.body2">@StatusMessage</MudText>
-                        <MudStack Row="true" Spacing="1" Class="entity-viewer-chip-row">
-                            <MudChip T="string" Size="Size.Small" Color="@StreamingChipColor" Variant="Variant.Outlined">@StreamingChipText</MudChip>
-                            <MudChip T="string" Size="Size.Small" Color="@ContentChipColor" Variant="Variant.Outlined">@ContentChipText</MudChip>
-                            <MudChip T="string" Size="Size.Small" Color="@ConsentChipColor" Variant="Variant.Outlined">@ConsentChipText</MudChip>
-                        </MudStack>
-                    </MudStack>
-                </MudAlert>
+                <div class="entity-viewer-notice entity-viewer-tone-@StatusSeverity"><p>@StatusMessage</p><div class="entity-viewer-row">
+                    <span class="entity-viewer-chip entity-viewer-tone-@StreamingChipColor">@StreamingChipText</span>
+                    <span class="entity-viewer-chip entity-viewer-tone-@ContentChipColor">@ContentChipText</span>
+                    <span class="entity-viewer-chip entity-viewer-tone-@ConsentChipColor">@ConsentChipText</span>
+                </div></div>
             }
-
             @if (_status?.CanManageStreaming == true)
             {
-                @if (_status.ConsentRequired)
-                {
-                    <MudPaper Outlined="true" Class="pa-3 entity-viewer-consent-panel">
-                        <MudStack Spacing="2">
-                            <MudText Typo="Typo.subtitle2">Consent Required</MudText>
-                            <MudText Typo="Typo.body2">@ConsentText</MudText>
-                            <MudButton Variant="Variant.Filled"
-                                       Color="Color.Warning"
-                                       StartIcon="@Icons.Material.Filled.VerifiedUser"
-                                       Disabled="@_busy"
-                                       OnClick="AcceptConsentAsync">
-                                Accept and Enable
-                            </MudButton>
-                        </MudStack>
-                    </MudPaper>
-                }
-
-                <MudPaper Outlined="true" Class="pa-3">
-                    <MudStack Spacing="2">
-                        <MudText Typo="Typo.subtitle2">Asset Roots</MudText>
+                <fieldset class="entity-viewer-fieldset" disabled="@(_busy || _loading)">
+                    @if (_status.ConsentRequired)
+                    {
+                        <section class="entity-viewer-panel"><h3>Consent Required</h3><p>@ConsentText</p>
+                            <button type="button" class="entity-viewer-button" @onclick="AcceptConsentAsync"><ViewerIcon Icon="@ViewerIcons.VerifiedUser" />Accept and Enable</button>
+                        </section>
+                    }
+                    <section class="entity-viewer-panel entity-viewer-stack">
+                        <h3>Asset Roots</h3>
+                        @if (_roots is not null) { <p class="entity-viewer-notice entity-viewer-tone-@RootSeverity">@RootMessage</p> }
+                        <label class="entity-viewer-field"><span>Base game asset source</span><select @bind="_baseGameSourceMode"><option value="@ManagedSteamCmdSourceMode">Managed SteamCMD</option><option value="@ExternalInstallSourceMode">Manual game folder</option></select></label>
+                        @if (!UsesManagedSteamCmd)
+                        {
+                            <p class="entity-viewer-notice">Server filesystem: enter a folder on the machine running Quasar. The viewer does not browse the filesystem of the device running this browser.</p>
+                            <label class="entity-viewer-field"><span>Server path to Space Engineers client</span><input @bind="_baseGameContentPath" @bind:event="oninput" /><small>Enter the client install folder or its Content folder. Relative paths start at the Quasar root.</small></label>
+                        }
+                        <details class="entity-viewer-panel"><summary>Dedicated Server Mods path · Advanced</summary>
+                            <p class="entity-viewer-notice entity-viewer-tone-warning">Leave blank for the managed server Mods path. Change only when assets live in a custom location.</p>
+                            <label class="entity-viewer-field"><span>Dedicated Server Mods folder</span><input @bind="_dedicatedServerModsPath" @bind:event="oninput" /><small>Absolute, or relative to the Quasar root. Blank uses Magnetars/{server}/DedicatedServer/Mods.</small></label>
+                        </details>
                         @if (_roots is not null)
                         {
-                            <MudAlert Severity="@RootSeverity" Variant="Variant.Text" Dense="true">
-                                @RootMessage
-                            </MudAlert>
+                            <p class="entity-viewer-muted">Active content: @DisplayPath(_roots.ActiveBaseGameContentDirectory)</p>
+                            @if (UsesManagedSteamCmd) { <p class="entity-viewer-muted">Managed client content: @DisplayPath(_roots.ManagedGameContentDirectory)</p> }
+                            <p class="entity-viewer-muted">Managed DS content: @DisplayPath(_roots.ManagedDedicatedServerContentDirectory)</p>
                         }
-                        <MudGrid Spacing="2">
-                            <MudItem xs="12">
-                                <MudRadioGroup T="string" @bind-Value="_baseGameSourceMode">
-                                    <MudStack Row="true" Spacing="2" Class="entity-viewer-source-mode-options">
-                                        <MudRadio T="string"
-                                                  Value="@ManagedSteamCmdSourceMode"
-                                                  Color="Color.Primary">
-                                            Managed SteamCMD
-                                        </MudRadio>
-                                        <MudRadio T="string"
-                                                  Value="@ExternalInstallSourceMode"
-                                                  Color="Color.Primary">
-                                            Manual game folder
-                                        </MudRadio>
-                                    </MudStack>
-                                </MudRadioGroup>
-                            </MudItem>
-                            @if (!UsesManagedSteamCmd)
-                            {
-                                <MudItem xs="12">
-                                    <MudAlert Severity="Severity.Info"
-                                              Variant="Variant.Outlined"
-                                              Dense="true"
-                                              Class="mb-2">
-                                        Server filesystem: enter a folder on the machine running Quasar. The viewer does not browse the filesystem of the device running this browser.
-                                    </MudAlert>
-                                    <MudTextField T="string"
-                                                  Label="Server path to Space Engineers client"
-                                                  Variant="Variant.Outlined"
-                                                  Immediate="true"
-                                                  HelperText="Enter the client install folder or its Content folder. Relative paths start at the Quasar root."
-                                                  @bind-Value="_baseGameContentPath" />
-                                </MudItem>
-                            }
-                        </MudGrid>
-                        <MudExpansionPanels MultiExpansion="false"
-                                            Elevation="0"
-                                            Outlined="true"
-                                            Dense="true">
-                            <MudExpansionPanel KeepContentAlive="false">
-                                <TitleContent>
-                                    <MudStack Row="true"
-                                              Wrap="Wrap.Wrap"
-                                              AlignItems="AlignItems.Center"
-                                              Justify="Justify.SpaceBetween"
-                                              Class="w-100">
-                                        <MudStack Spacing="0">
-                                            <MudText Typo="Typo.subtitle2">Dedicated Server Mods path</MudText>
-                                            <MudText Typo="Typo.caption">Optional override for non-standard server layouts.</MudText>
-                                        </MudStack>
-                                        <MudChip T="string"
-                                                 Color="Color.Warning"
-                                                 Variant="Variant.Outlined"
-                                                 Size="Size.Small">
-                                            Advanced
-                                        </MudChip>
-                                    </MudStack>
-                                </TitleContent>
-                                <ChildContent>
-                                    <MudAlert Severity="Severity.Warning"
-                                              Variant="Variant.Outlined"
-                                              Dense="true"
-                                              Class="mb-3">
-                                        Leave blank for the managed server Mods path. Change only when assets live in a custom location.
-                                    </MudAlert>
-                                    <MudTextField T="string"
-                                                  Label="Dedicated Server Mods folder"
-                                                  Variant="Variant.Outlined"
-                                                  Immediate="true"
-                                                  HelperText="Absolute, or relative to the Quasar root. Blank uses Magnetars/{server}/DedicatedServer/Mods."
-                                                  @bind-Value="_dedicatedServerModsPath" />
-                                </ChildContent>
-                            </MudExpansionPanel>
-                        </MudExpansionPanels>
-                        @if (_roots is not null)
-                        {
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Active content: @DisplayPath(_roots.ActiveBaseGameContentDirectory)
-                            </MudText>
-                            @if (UsesManagedSteamCmd)
-                            {
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                    Managed client content: @DisplayPath(_roots.ManagedGameContentDirectory)
-                                </MudText>
-                            }
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Managed DS content: @DisplayPath(_roots.ManagedDedicatedServerContentDirectory)
-                            </MudText>
-                        }
-                        <MudButton Variant="Variant.Filled"
-                                   Color="Color.Primary"
-                                   StartIcon="@Icons.Material.Filled.Save"
-                                   Disabled="@_busy"
-                                   OnClick="SaveRootsAsync">
-                            Save Asset Roots
-                        </MudButton>
-                    </MudStack>
-                </MudPaper>
-
-                @if (UsesManagedSteamCmd)
-                {
-                    <MudPaper Outlined="true" Class="pa-3">
-                        <MudStack Spacing="2">
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-                            <MudText Typo="Typo.subtitle2">SteamCMD Installer</MudText>
+                        <div><button type="button" class="entity-viewer-button" @onclick="SaveRootsAsync"><ViewerIcon Icon="@ViewerIcons.Save" />Save Asset Roots</button></div>
+                    </section>
+                    @if (UsesManagedSteamCmd)
+                    {
+                        <section class="entity-viewer-panel entity-viewer-stack">
+                            <div class="entity-viewer-row"><h3>SteamCMD Installer</h3>@if (_installer is not null) { <span class="entity-viewer-chip entity-viewer-tone-@InstallerChipColor">@InstallerStateText</span> }</div>
                             @if (_installer is not null)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="@InstallerChipColor" Variant="Variant.Outlined">@InstallerStateText</MudChip>
+                                <p>@InstallerMessage</p>
+                                @if (!string.IsNullOrWhiteSpace(_installer.ContentDiagnostics)) { <p class="entity-viewer-notice entity-viewer-tone-@InstallerContentSeverity">@_installer.ContentDiagnostics</p> }
+                                <p class="entity-viewer-muted">Install dir: @DisplayPath(_installer.InstallDirectory)</p><p class="entity-viewer-muted">Expected client Content: @DisplayPath(_installer.ContentDirectory)</p>
                             }
-                        </MudStack>
-                        @if (_installer is not null)
-                        {
-                            <MudText Typo="Typo.body2">@InstallerMessage</MudText>
-                            @if (!string.IsNullOrWhiteSpace(_installer.ContentDiagnostics))
-                            {
-                                <MudAlert Severity="@InstallerContentSeverity" Variant="Variant.Text" Dense="true">
-                                    @_installer.ContentDiagnostics
-                                </MudAlert>
-                            }
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Install dir: @DisplayPath(_installer.InstallDirectory)
-                            </MudText>
-                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                Expected client Content: @DisplayPath(_installer.ContentDirectory)
-                            </MudText>
-                        }
-                        @if (MissingSteamAccount)
-                        {
-                            <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Dense="true">
-                                Steam account name is required for paid client app 244850 and owned DLC depots.
-                            </MudAlert>
-                        }
-                        <MudGrid Spacing="2">
-                            <MudItem xs="12" md="8">
-                                <MudTextField T="string"
-                                              Label="Steam account (required)"
-                                              Variant="Variant.Outlined"
-                                              Immediate="true"
-                                              Placeholder="Account name"
-                                              HelperText="SteamCMD will prompt below for password and Steam Guard if needed."
-                                              Disabled="@InstallerRunning"
-                                              @bind-Value="_loginName" />
-                            </MudItem>
-                            <MudItem xs="12" md="4" Class="d-flex align-center">
-                                <MudCheckBox T="bool"
-                                             Label="Validate files"
-                                             Dense="true"
-                                             Disabled="@InstallerRunning"
-                                             @bind-Value="_validate" />
-                            </MudItem>
-                            <MudItem xs="12">
-                                <MudStack Row="true" Spacing="1" Class="entity-viewer-action-row">
-                                    <MudButton Variant="Variant.Filled"
-                                               Color="Color.Primary"
-                                               StartIcon="@Icons.Material.Filled.Download"
-                                               Disabled="@(_busy || InstallerRunning || MissingSteamAccount)"
-                                               OnClick="StartInstallerAsync">
-                                        Install or Update
-                                    </MudButton>
-                                    <MudButton Variant="Variant.Outlined"
-                                               Color="Color.Warning"
-                                               StartIcon="@Icons.Material.Filled.Stop"
-                                               Disabled="@(_busy || !InstallerRunning)"
-                                               OnClick="CancelInstallerAsync">
-                                        Cancel
-                                    </MudButton>
-                                </MudStack>
-                            </MudItem>
-                            <MudItem xs="12" md="8">
-                                <MudTextField T="string"
-                                              Label="SteamCMD input"
-                                              Variant="Variant.Outlined"
-                                              Immediate="true"
-                                              InputType="InputType.Password"
-                                              HelperText="Sent to SteamCMD on the Quasar host. Transport encryption requires HTTPS."
-                                              Disabled="@(!InstallerRunning)"
-                                              @bind-Value="_steamCmdInput" />
-                            </MudItem>
-                            <MudItem xs="12" md="4" Class="d-flex align-center">
-                                <MudButton Variant="Variant.Outlined"
-                                           Color="Color.Primary"
-                                           StartIcon="@Icons.Material.Filled.Send"
-                                           Disabled="@(_busy || !InstallerRunning || string.IsNullOrWhiteSpace(_steamCmdInput))"
-                                           OnClick="SendInstallerInputAsync">
-                                    Send
-                                </MudButton>
-                            </MudItem>
-                        </MudGrid>
-                        <MudPaper Outlined="true" Class="pa-0">
-                            <div class="pa-2 entity-viewer-installer-log" @ref="_installerLogElement">
-                                <pre>@InstallerLogText</pre>
+                            @if (MissingSteamAccount) { <p class="entity-viewer-notice entity-viewer-tone-warning">Steam account name is required for paid client app 244850 and owned DLC depots.</p> }
+                            <label class="entity-viewer-field"><span>Steam account (required)</span><input @bind="_loginName" @bind:event="oninput" placeholder="Account name" disabled="@InstallerRunning" autocomplete="username" /><small>SteamCMD will prompt below for password and Steam Guard if needed.</small></label>
+                            <label class="entity-viewer-check"><input type="checkbox" @bind="_validate" disabled="@InstallerRunning" />Validate files</label>
+                            <div class="entity-viewer-row">
+                                <button type="button" class="entity-viewer-button" disabled="@(InstallerRunning || MissingSteamAccount)" @onclick="StartInstallerAsync"><ViewerIcon Icon="@ViewerIcons.Download" />Install or Update</button>
+                                <button type="button" class="entity-viewer-button" disabled="@(!InstallerRunning)" @onclick="CancelInstallerAsync"><ViewerIcon Icon="@ViewerIcons.Stop" />Cancel</button>
                             </div>
-                        </MudPaper>
-                        </MudStack>
-                    </MudPaper>
-                }
+                            <form class="entity-viewer-row" @onsubmit="SendInstallerInputAsync" @onsubmit:preventDefault>
+                                <label class="entity-viewer-field"><span>SteamCMD input</span><input type="password" @bind="_steamCmdInput" @bind:event="oninput" disabled="@(!InstallerRunning)" autocomplete="off" /><small>Sent to SteamCMD on the Quasar host. Transport encryption requires HTTPS.</small></label>
+                                <button type="submit" class="entity-viewer-button" disabled="@(!InstallerRunning || string.IsNullOrWhiteSpace(_steamCmdInput))"><ViewerIcon Icon="@ViewerIcons.Send" />Send</button>
+                            </form>
+                            <div class="entity-viewer-installer-log" @ref="_installerLogElement"><pre>@InstallerLogText</pre></div>
+                        </section>
+                    }
+                </fieldset>
             }
-            else if (_status is not null)
-            {
-                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-                    Server asset streaming can only be configured by a Quasar user with management access.
-                </MudAlert>
-            }
-        </MudStack>
-    </DialogContent>
-    <DialogActions>
-        <MudButton Variant="Variant.Text"
-                   StartIcon="@Icons.Material.Filled.Refresh"
-                   Disabled="@_busy"
-                   OnClick="LoadAsync">
-            Refresh
-        </MudButton>
-        <MudSpacer />
-        <MudButton Variant="Variant.Filled"
-                   Color="Color.Primary"
-                   OnClick="Close">
-            Close
-        </MudButton>
-    </DialogActions>
-</MudDialog>
+            else if (_status is not null) { <p class="entity-viewer-notice">Server asset streaming can only be configured by a Quasar user with management access.</p> }
+        </div>
+    </ChildContent>
+    <Actions>
+        <button type="button" class="entity-viewer-button" disabled="@(_busy || _loading)" @onclick="LoadAsync"><ViewerIcon Icon="@ViewerIcons.Refresh" />Refresh</button>
+        <button type="button" class="entity-viewer-button" @onclick="Close">Close</button>
+    </Actions>
+</ViewerModal>
 
 @code
 {
@@ -312,8 +106,10 @@
     private string _steamCmdInput = string.Empty;
     private bool _validate = true;
 
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public EventCallback<bool> Closed { get; set; }
+    private ViewerModal? _dialog;
+    private string _notice = string.Empty;
+    private string DialogModuleUrl => AssetSetupModuleUrl[..(AssetSetupModuleUrl.LastIndexOf('/') + 1)] + "viewer-dialog.js";
 
     [Parameter]
     public string AssetSetupModuleUrl { get; set; } = "/_quasar/plugins/cometworks.entityviewer/viewer-asset-setup.js";
@@ -332,38 +128,38 @@
         ? "Server asset streaming status unavailable."
         : _status.Message;
 
-    private Severity StatusSeverity
+    private string StatusSeverity
     {
         get
         {
             if (_status is null)
-                return Severity.Info;
+                return "info";
             if (_status.StreamingEnabled && _status.FileStreamingReady)
-                return Severity.Success;
+                return "success";
             if (_status.ConsentRequired || !_status.FileStreamingReady)
-                return Severity.Warning;
-            return Severity.Info;
+                return "warning";
+            return "info";
         }
     }
 
-    private Color StreamingChipColor => _status?.StreamingEnabled == true ? Color.Success : Color.Default;
+    private string StreamingChipColor => _status?.StreamingEnabled == true ? "success" : "default";
 
     private string StreamingChipText => _status?.StreamingEnabled == true ? "Streaming enabled" : "Streaming disabled";
 
-    private Color ContentChipColor => _status?.FileStreamingReady == true ? Color.Success : Color.Warning;
+    private string ContentChipColor => _status?.FileStreamingReady == true ? "success" : "warning";
 
     private string ContentChipText => _status?.FileStreamingReady == true ? "Content ready" : "Content missing";
 
-    private Color ConsentChipColor => _status?.ConsentAccepted == true ? Color.Success : Color.Warning;
+    private string ConsentChipColor => _status?.ConsentAccepted == true ? "success" : "warning";
 
     private string ConsentChipText => _status?.ConsentAccepted == true ? "Consent accepted" : "Consent needed";
 
     private bool ConfiguredModsPathMissing => !string.IsNullOrWhiteSpace(_dedicatedServerModsPath) &&
                                               _roots?.DedicatedServerModsPathExists != true;
 
-    private Severity RootSeverity => _roots?.BaseGameContentConfigured == true && !ConfiguredModsPathMissing
-        ? Severity.Success
-        : Severity.Warning;
+    private string RootSeverity => _roots?.BaseGameContentConfigured == true && !ConfiguredModsPathMissing
+        ? "success"
+        : "warning";
 
     private string RootMessage
     {
@@ -387,19 +183,19 @@
         }
     }
 
-    private Color InstallerChipColor
+    private string InstallerChipColor
     {
         get
         {
             var state = _installer?.State ?? string.Empty;
             if (_installer?.IsRunning == true)
-                return Color.Info;
+                return "info";
             if (string.Equals(state, "Succeeded", StringComparison.OrdinalIgnoreCase))
-                return Color.Success;
+                return "success";
             if (string.Equals(state, "Failed", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(state, "SteamCmdMissing", StringComparison.OrdinalIgnoreCase))
-                return Color.Error;
-            return Color.Default;
+                return "error";
+            return "default";
         }
     }
 
@@ -407,9 +203,9 @@
         ? "Idle"
         : _installer.State;
 
-    private Severity InstallerContentSeverity => _installer?.ContentReady == true
-        ? Severity.Success
-        : Severity.Warning;
+    private string InstallerContentSeverity => _installer?.ContentReady == true
+        ? "success"
+        : "warning";
 
     private string InstallerMessage => string.IsNullOrWhiteSpace(_installer?.Message)
         ? "Installer idle."
@@ -462,7 +258,7 @@
         catch (Exception exception)
         {
             _error = exception.Message;
-            Snackbar.Add(exception.Message, Severity.Error);
+            _notice = exception.Message;
         }
         finally
         {
@@ -477,7 +273,7 @@
         {
             _status = await module.InvokeAsync<AssetStreamingStatusDto>("acceptConsent", ApiBasePath);
             _changed = true;
-            Snackbar.Add("Server asset streaming enabled.", Severity.Success);
+            _notice = "Server asset streaming enabled.";
             await LoadAsync();
         });
     }
@@ -495,7 +291,7 @@
             _changed = true;
             SyncRootFields();
             _status = await module.InvokeAsync<AssetStreamingStatusDto>("fetchAssetStatus", ApiBasePath);
-            Snackbar.Add("Asset roots saved.", Severity.Success);
+            _notice = "Asset roots saved.";
         });
     }
 
@@ -552,7 +348,7 @@
         catch (Exception exception)
         {
             _error = exception.Message;
-            Snackbar.Add(exception.Message, Severity.Error);
+            _notice = exception.Message;
         }
         finally
         {
@@ -671,10 +467,8 @@
         cts?.Dispose();
     }
 
-    private void Close()
-    {
-        MudDialog.Close(DialogResult.Ok(_changed));
-    }
+    private Task Close() => _dialog?.CloseAsync() ?? Task.CompletedTask;
+    private Task HandleClosed() => Closed.InvokeAsync(_changed);
 
     private static string DisplayPath(string? path) =>
         string.IsNullOrWhiteSpace(path) ? "-" : path;

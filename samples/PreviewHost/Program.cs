@@ -1,14 +1,12 @@
 using CometWorks.EntityViewer.Components;
 using CometWorks.EntityViewer.Services;
 using Microsoft.Extensions.FileProviders;
-using MudBlazor.Services;
 using PreviewHost.Components;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
-builder.Services.AddMudServices();
 builder.Services.AddEntityViewerUi();
 
 var app = builder.Build();

@@ -1,19 +1,21 @@
-@inject IDialogService DialogService
 
-<MudTd DataLabel="" Class="quasar-actions-column">
+<td class="quasar-actions-column">
     <span @onclick:stopPropagation="true">
-        <MudTooltip Text="@TooltipText">
-            <MudIconButton Icon="@Icons.Material.Filled.Visibility"
-                           Color="Color.Primary"
-                           Size="Size.Small"
-                           Disabled="@(!CanOpenViewer)"
-                           OnClick="OpenViewerAsync" />
-        </MudTooltip>
+        <button type="button" class="entity-viewer-icon-button" title="@TooltipText" aria-label="@TooltipText" disabled="@(!CanOpenViewer)" @onclick="OpenViewerAsync"><ViewerIcon Icon="@ViewerIcons.Visibility" /></button>
     </span>
-</MudTd>
+    @if (_open)
+    {
+        <EntityViewerDialog ViewerUrl="@_activeViewerUrl" Title="@_title" Subtitle="@_subtitle" AssetSetupModuleUrl="@AssetSetupModuleUrl" AssetSetupApiBasePath="@AssetSetupApiBasePath" AutoOpenAssetSetup="AutoOpenAssetSetup" Closed="@(() => _open = false)" />
+    }
+</td>
 
 @code
 {
+    private bool _open;
+    private string _activeViewerUrl = string.Empty;
+    private string _title = string.Empty;
+    private string _subtitle = string.Empty;
+
     private const string PluginViewerPath = "/_quasar/plugins/cometworks.entityviewer/index.html";
     private const string PluginAssetSetupModulePath = "/_quasar/plugins/cometworks.entityviewer/viewer-asset-setup.js";
     private const string PluginAssetSetupApiBasePath = "/_quasar/plugins/cometworks.entityviewer/api/assets";
@@ -78,22 +80,10 @@
                 ? $"Entity {EntityId}"
                 : EntityDisplayName;
             var subtitle = $"{ServerName ?? AgentId ?? "Unknown server"} - {EntityType ?? "Entity"} #{EntityId}";
-            var parameters = new DialogParameters
-            {
-                [nameof(EntityViewerDialog.ViewerUrl)] = viewerUrl,
-                [nameof(EntityViewerDialog.Title)] = title,
-                [nameof(EntityViewerDialog.Subtitle)] = subtitle,
-                [nameof(EntityViewerDialog.AssetSetupModuleUrl)] = AssetSetupModuleUrl,
-                [nameof(EntityViewerDialog.AssetSetupApiBasePath)] = AssetSetupApiBasePath,
-                [nameof(EntityViewerDialog.AutoOpenAssetSetup)] = AutoOpenAssetSetup,
-            };
-            var options = new DialogOptions
-            {
-                CloseOnEscapeKey = true,
-                FullScreen = true,
-            };
-
-            await DialogService.ShowAsync<EntityViewerDialog>(title, parameters, options);
+            _activeViewerUrl = viewerUrl;
+            _title = title;
+            _subtitle = subtitle;
+            _open = true;
             return;
         }
 
