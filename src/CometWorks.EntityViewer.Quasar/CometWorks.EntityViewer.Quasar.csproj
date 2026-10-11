@@ -29,4 +29,7 @@
     <PackageReference Include="Quasar.Plugin.Abstractions" Version="0.1.0-preview.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../Replay/*.cs" Link="Replay/Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

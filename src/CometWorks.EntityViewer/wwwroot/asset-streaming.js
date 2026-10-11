@@ -7,6 +7,7 @@ const SESSIONS_PATH = "api/assets/sessions";
 
 let currentStatus = null;
 let remoteAssetSession = null;
+let sessionGeneration = 0;
 
 export async function fetchAssetStreamingStatus() {
     const response = await fetch(pluginApiUrl(STATUS_PATH), {
@@ -18,14 +19,15 @@ export async function fetchAssetStreamingStatus() {
     return currentStatus;
 }
 
-export async function prepareRemoteAssetSession(scene) {
+export async function prepareRemoteAssetSession(scene, target = null) {
+    const generation = ++sessionGeneration;
     const previousId = remoteAssetSession?.sessionId || "";
     remoteAssetSession = null;
     if (!currentStatus?.streamingEnabled || !currentStatus?.fileStreamingReady) {
         return { active: false, changed: !!previousId };
     }
 
-    const { agentId, entityId } = getViewerParams();
+    const { agentId, entityId } = target || getViewerParams();
     const sessionUrl = pluginApiUrl(SESSIONS_PATH);
     log(`Creating server asset streaming session: POST ${sessionUrl.pathname}.`);
     const response = await fetch(sessionUrl, {
@@ -45,6 +47,7 @@ export async function prepareRemoteAssetSession(scene) {
     if (!response.ok) throw await createStatusError(response, "Asset streaming session request failed");
 
     const body = await response.json();
+    if (generation !== sessionGeneration) return { active: false, changed: false };
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
     if (!sessionId) {
         const fields = body && typeof body === "object" ? Object.keys(body).join(", ") : "none";

@@ -1,3 +1,4 @@
+using CometWorks.EntityViewer.Quasar.Replay;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
@@ -33,6 +34,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
     public void ConfigureServices(IServiceCollection services, QuasarPluginContext context)
     {
         services.AddEntityViewerUi();
+        services.AddSingleton(provider => new ReplayHistoryService(context, provider.GetRequiredService<IQuasarCompanionChannel>(), provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ReplayHistoryService>>()));
+        services.AddHostedService(provider => provider.GetRequiredService<ReplayHistoryService>());
         services.AddSingleton(new EntityViewerStreamingPaths(context));
         services.AddSingleton<IEntityViewerStreamingSettingsStore, FileEntityViewerStreamingSettingsStore>();
         services.AddSingleton<SteamCmdInstallerService>();
@@ -45,6 +48,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
     {
         foreach (var routePrefix in ViewerRoutePrefixes)
         {
+            ReplayEndpoints.Map(endpoints, routePrefix);
             var sceneEndpoint = MapSceneEndpoint(endpoints, routePrefix);
             sceneEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
         }
@@ -98,7 +102,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
     public IEnumerable<QuasarNavItem> GetNavItems()
     {
-        yield break;
+        yield return new QuasarNavItem("Entity history", PluginRoutePrefix + "/replay.html", "history", QuasarNavZones.Tools, 100, QuasarPolicyNames.CanManageSecurity);
     }
 
     public IEnumerable<QuasarExtensionContribution> GetExtensions()

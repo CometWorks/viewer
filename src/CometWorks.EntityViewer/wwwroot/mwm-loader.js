@@ -1,6 +1,7 @@
 import { resolveAssetFile } from "./content-folder.js";
 
 const modelCache = new Map();
+export function clearModelCache() { modelCache.clear(); }
 const textDecoder = new TextDecoder();
 
 const TECHNIQUE_ORDER = new Map([

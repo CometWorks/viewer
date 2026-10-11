@@ -105,3 +105,23 @@ saves, and read-only management controls. Browser tests cover native/legacy them
 mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
+
+## Recording history
+
+The companion continuously records coarse grid/player observations while a world
+is running. Damage and sustained abnormal motion automatically increase capture
+frequency around the incident. Quasar collects compressed records independently
+of open browser sessions and retains at most 24 hours. Open **Entity history** in
+Quasar's tools navigation, or **Open recording history** inside the live viewer.
+History requires administrator access and works for removed entities and offline
+servers. See [Replay.md](Docs/Replay.md) for recording limits, storage, detection
+semantics, and validation.
+
+This version requires the matching Quasar companion-channel implementation with
+`GetConnectedServers()`. Deploy Quasar and both viewer plugins together. Older
+hosts do not support automatic background history collection.
+
+Historical grid replay uses deduplicated block-layout pages and records removals,
+placement, build progress and integrity. Available game/mod models render the
+recorded blocks; missing assets use explicit block proxies. Fine deformation,
+debris and animated subparts are not captured. See [replay capture and limits](Docs/Replay.md).

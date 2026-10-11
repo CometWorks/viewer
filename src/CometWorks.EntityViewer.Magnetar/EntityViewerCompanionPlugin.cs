@@ -1,4 +1,6 @@
 using System;
+using CometWorks.EntityViewer.Magnetar.Replay;
+using CometWorks.EntityViewer.Replay;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +28,7 @@ namespace CometWorks.EntityViewer.Magnetar
         };
 
         private readonly SemaphoreSlim _sceneBuildGate = new SemaphoreSlim(1, 1);
+        private readonly ServerReplayRecorder _replay = new ServerReplayRecorder();
         private string _pluginVersion = string.Empty;
 
         public string PluginId => "cometworks.entityviewer";
@@ -38,10 +41,12 @@ namespace CometWorks.EntityViewer.Magnetar
 
         public void Update()
         {
+            _replay.Update();
         }
 
         public void Dispose()
         {
+            _replay.Dispose();
             EmissivePartCapturePatches.Dispose();
             _sceneBuildGate.Dispose();
         }
@@ -50,6 +55,8 @@ namespace CometWorks.EntityViewer.Magnetar
             CompanionPluginRequest request,
             CancellationToken cancellationToken)
         {
+            if (string.Equals(request.Operation, "read-replay", StringComparison.Ordinal))
+                return Task.Run(() => Ok(request, _replay.Read(JsonConvert.DeserializeObject<ReplayReadRequest>(request.PayloadJson ?? "{}") ?? new ReplayReadRequest())), cancellationToken);
             if (!string.Equals(request.Operation, GetEntitySceneOperation, StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(Fail(request, $"Unsupported Entity Viewer operation '{request.Operation}'."));

@@ -50,4 +50,7 @@
     <ProjectReference Include="$(MagnetarProtocolProject)" Private="False" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../Replay/*.cs" Link="Replay/Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
