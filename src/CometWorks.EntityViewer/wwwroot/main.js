@@ -25,6 +25,7 @@ window.addEventListener("pageshow", event => {
 async function start() {
     startQuasarThemeSync();
     cacheElements();
+    document.getElementById("openHistory").href = "replay.html" + window.location.search;
     showLoading("Loading scene", "Initializing renderer...");
     state.voxelSupport = parseVoxelFlag();
     state.contextSupport = parseContextFlag();
