@@ -89,13 +89,19 @@ internal sealed class ReplayWriter : IDisposable
                     if (_layouts.Apply(record)) continue;
                     var parts = _layouts.Attach(record);
                     var extra = parts.Where(p => !geometry.ContainsKey(p.Key)).Sum(p => p.Value.Length);
-                    if (records.Count > 0 && (records.Count >= 128 || record.At - records[0].At > 60000 || geometry.Sum(p => p.Value.Length) + extra > 2 * 1024 * 1024))
+                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(record.At, records.Max(r => r.At)) - Math.Min(record.At, records.Min(r => r.At)) > 60000 || geometry.Sum(p => p.Value.Length) + extra > 2 * 1024 * 1024))
                     { Write(records, geometry); records.Clear(); geometry.Clear(); }
                     foreach (var part in parts) geometry[part.Key] = part.Value;
                     records.Add(record);
                 }
                 var dropped = Interlocked.Exchange(ref _dropped, 0);
-                if (dropped != 0) records.Add(new ReplayRecord { Kind = "gap", At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Value = dropped, Detail = "Recorder queue overflow" });
+                if (dropped != 0)
+                {
+                    var gapAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(gapAt, records.Max(r => r.At)) - Math.Min(gapAt, records.Min(r => r.At)) > 60000))
+                    { Write(records, geometry); records.Clear(); geometry.Clear(); }
+                    records.Add(new ReplayRecord { Kind = "gap", At = gapAt, Value = dropped, Detail = "Recorder queue overflow" });
+                }
                 if (records.Count == 0) { _store.Prune(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); continue; }
                 Write(records, geometry);
             }
@@ -119,7 +125,7 @@ internal sealed class ReplayWriter : IDisposable
             }
             var batch = new ReplayBatch { Session = _session, World = _world, Records = compact };
             var bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(batch, Json));
-            var id = ReplayChunkStore.NewId(records.Min(r => r.At), records.Count(r => r.Kind == "damage" || r.Kind == "physics"));
+            var id = ReplayChunkStore.NewId(records.Min(r => r.At), records.Count(r => r.Kind == "damage" || r.Kind == "physics" || r.Kind == "death" || r.Kind == "explosion" || r.Kind == "split" || r.Kind == "merge"));
             _store.Put(new ReplayChunk { Id = id, Data = ReplayChunkStore.Compress(bytes), Geometry = geometry }, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             _error = "";
         }

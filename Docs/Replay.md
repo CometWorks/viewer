@@ -1,4 +1,4 @@
-# Contextual replay — initial implementation
+# Contextual replay
 
 The recorder runs in the Entity Viewer Magnetar companion, without an open
 browser. Quasar's viewer plugin collects and archives data through the existing
@@ -37,7 +37,7 @@ live agent. Cross-node incident stitching is not implemented. Matching Quasar an
   to the last written sample; incident position tolerance is 1 cm. Cadence
   transitions are written even if the entity is stationary. Continuous low-rate
   history supplies pre-incident context; high-rate detail begins after detection.
-- Damage hooks observe `MyDamageSystem` after-damage callbacks for slim blocks.
+- Damage hooks observe `MyDamageSystem` after-damage callbacks for slim blocks and characters.
   Amount is the callback's damage amount, **not a claimed integrity delta**. The
   game can accumulate damage and apply it later. Matching target block, source,
   damage type/deformation flag and 250 ms bucket are coalesced into a total/count.
@@ -52,14 +52,12 @@ live agent. Cross-node incident stitching is not implemented. Matching Quasar an
 
 Block additions, removals and integrity changes use the game's grid events. The
 capture loop observes affected cells within its work budget; the next scheduled
-sample contains their updated layout. Destruction timing therefore has the same
-sampling limits as movement (1 Hz baseline, 5 Hz during incidents). A background
+sample contains their updated layout. Block-add/remove journal events preserve the original callback timestamp and cell; visual layout changes arrive at the next complete captured sample (1 Hz baseline, 5 Hz during incidents). The event position for these block changes is resolved when the bounded queue is drained, so it is contextual rather than an exact impact point. A background
 walk on the simulation thread also revisits blocks every 30 seconds to observe
 paint and other changes without reliable events. Initial layout capture is spread
 across updates. Structural changes restart an invalidated iterator; incomplete or
 over-budget grids remain visibly bounds-only until a complete capture succeeds.
-Splits produce separately discovered entities; merges invalidate and recapture
-rebased layouts. This is observed geometry, not a deterministic replay of physics.
+Splits produce separately discovered entities and explicit original-to-fragment links; merges record the grid pair, invalidate and recapture rebased layouts. This is observed geometry, not a deterministic replay of physics.
 
 The worker partitions blocks into stable cell-hash pages, roughly 64 blocks per
 page initially, and hashes compressed page contents. A changed block rewrites
@@ -85,9 +83,11 @@ asset generations and disposes their GPU resources.
 
 Missing models use wireframe block proxies (or generated armor topology); missing
 historical pages use bounds only. Characters use recorded model/paint and nametags
-in their asset's static pose. Missing character assets use a labelled approximate
-humanoid. Animation bones, equipment/skin overrides, LCD contents, runtime lights,
-emissive changes, terrain, debris and fine deformation are not reconstructed.
+with GPU-skinned procedural animation when the asset provides a valid skeleton.
+Missing skeletons retain the static asset pose; missing character assets use a
+labelled approximate humanoid. Bone frames are never recorded. Equipment meshes,
+skin overrides, LCD contents, runtime lights, emissive changes, terrain, debris and
+fine deformation are not reconstructed.
 Assets are not version-pinned: a changed game/mod asset can alter the appearance of
 recorded geometry. Integrity is available in block diagnostics; the fallback armor
 also uses a red integrity tint.
@@ -96,7 +96,7 @@ also uses a red integrity tint.
 
 Capture yields between entities and blocks after a 0.5 ms elapsed-work budget per update.
 It examines at most 128 grid slots per update, tracks at most 8192 grids, and
-bounds pending damage to 1024 callbacks and pending output to 4096 records. Player
+bounds all pending damage/action/explosion/lineage events to a shared 1024 callbacks and pending output to 4096 records. Player
 capture examines at most 128 online players and shares the update budget.
 Block capture processes at most four cells per visited grid, caps pending cells
 at 1024 per grid / 4096 total, and holds at most 50,000 blocks per grid / 262,144
@@ -162,8 +162,12 @@ to focus its recorded surroundings and motion trail. Damage events mark world
 positions and can be selected to inspect their recorded evidence. The timeline
 aligns damage, suspected physics incidents and simulation speed.
 
-Playback holds the most recent observation, without inventing intermediate
-positions. It hides data after removal, expired heartbeats, recording gaps, or a
+Playback optionally interpolates translation and quaternion rotation between
+observations at most 1.5 seconds apart. It never interpolates geometry or action
+state, crosses a control/character change, or bridges explicit gaps, removals,
+sessions or motion inconsistent with recorded velocity. Longer suppression
+intervals hold the previous observation. **Observations only** disables motion
+interpolation and reconstructed character animation. It hides data after removal, expired heartbeats, recording gaps, or a
 new recording session. Sessions are separate even if game entity IDs are reused.
 Queries include short pre-roll so unchanged entities are visible at the window
 start. Seeking backward restores the recorded layout directly, including blocks
@@ -176,6 +180,53 @@ text. The event list describes damage, suspected instability, departures, cadenc
 transitions and layout changes. Download the selected entity's event log (or all
 entities) as timestamped text. Layout changes are observations, not proof of damage
 or player responsibility.
+
+## Incident playback and compact actions
+
+Loaded history derives local incident clips around damage, explosions, deaths,
+block removals, splits/merges and physics warnings. Nearby events (1 km) and shared
+entity/source/lineage IDs group together within the quiet tail. Clips have up to
+10 seconds of existing baseline pre-roll and extend 15 seconds after the last
+trigger. Explicit gaps are flagged. Clip grouping is contextual, not a claim of
+causation. Clips are views of the retained history: no additional high-frequency
+pre-trigger sampling, preserved archive or sharing endpoint is created.
+
+Use 0.1×, 0.25× or 0.5× playback, step to the previous/next recorded observation,
+or use Space / arrow shortcuts. The six clickable tracks show damage/deaths/
+explosions, actions, grid changes, suspected physics instability, simulation
+speed and gaps. Buttons jump to first damage, largest recorded damage amount or
+lowest recorded simulation speed within the chosen clip/range. Orbit, follow-grid,
+follow-player and free camera are available. Free camera uses WASD/QE, Shift and
+drag. The player-perspective camera uses recorded body orientation and sampled
+head angles; it is reconstructed, not the player's recorded screen or aim ray.
+Older recordings without head angles retain an orbit camera.
+
+Seven action bits represent aim, primary fire/tool, secondary fire/tool, crouch,
+sprint, using/seated and death. Four transition-only Harmony hooks observe
+`OnBeginShoot`, `StopShooting`, `ZoomMode` and `UsingEntity`; no per-shot, physics
+step or per-frame patch runs. Hook failures produce a gap and budgeted player
+samples remain available. Native character-death and explosion events enqueue
+compact observations; sampled action changes cover remaining movement state.
+Brief firing pulses between transform samples survive as timestamped transitions.
+All new event types share the existing bounded event queue and capture drain.
+Head angles and weapon/character IDs are small optional player fields; old data
+continues to decode. Empty new identifiers are omitted from recorded JSON.
+
+The browser reconstructs poses deterministically from time, movement and action
+state using the MWM bind skeleton and Three.js GPU skinning. Animation is illustrative,
+including firing recoil, crouch, seating and death; it does not reconstruct exact
+server hitboxes or projectile trajectories. Real recorded layouts remain authoritative.
+Recent damaged cells have a bounded wireframe highlight and recorded explosion
+radii have translucent markers. Split/merge links are included in evidence.
+
+Select a timeline/list event to inspect its reported source and any unique player
+observed controlling that character, weapon, seat or grid at the event time.
+Missing, ambiguous, stale or gapped control evidence remains **unknown**. The control
+observation timestamp is shown; control between samples is not guaranteed. Ownership
+and proximity never establish responsibility. Double-click a hovered grid/block/player
+to select it and inspect its relevant recent evidence; action events follow the
+selected player's historical character ID. Hover distinguishes held from interpolated
+motion and names reconstructed animation. All reconstruction stays in the browser.
 
 ## Checks
 

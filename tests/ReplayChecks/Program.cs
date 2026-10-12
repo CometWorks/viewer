@@ -53,6 +53,14 @@ try
     unchanged = Sample(3000); unchanged.Model = character.Model; unchanged.Color = character.Color; unchanged.Gravity = [0, -5, 0];
     Check(appearance.Observe(unchanged, 3000, out _), "Gravity changes must survive suppression");
 
+    var actions = new ReplaySchedule();
+    var idlePlayer = Sample(0); idlePlayer.Actions = 0; idlePlayer.Character = "character"; idlePlayer.View = [0, 0];
+    actions.Observe(idlePlayer, 0, out _);
+    var firing = Sample(1000); firing.Actions = 2; firing.Character = "character"; firing.View = [0, 0];
+    Check(actions.Observe(firing, 1000, out _), "Stationary player action changes must survive suppression");
+    var aimed = Sample(2000); aimed.Actions = 2; aimed.Character = "character"; aimed.View = [5, 0];
+    Check(actions.Observe(aimed, 2000, out _), "Changed recorded view direction must survive suppression");
+
     var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var batch = new ReplayBatch { Session = Guid.NewGuid().ToString("N"), World = "world", Records = [new ReplayRecord { At = now - 2000, Kind = "health", Value = 1 }, new ReplayRecord { At = now - 2000, Kind = "sample", Entity = "9223372036854775807", Position = [1, 2, 3] }] };
     var chunk = new ReplayChunk { Id = ReplayChunkStore.NewId(now - 2000, 0), Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)) };
@@ -68,6 +76,15 @@ try
     appearanceRecord.Model = ""; appearanceRecord.Gravity = [1, 2];
     Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Malformed gravity must be rejected");
     appearanceRecord.Gravity = null; appearanceRecord.Color = null;
+    appearanceRecord.Actions = 128;
+    Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Unknown action flags must be rejected");
+    appearanceRecord.Actions = 2; appearanceRecord.View = [1, 2, 3];
+    Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Malformed recorded view must be rejected");
+    appearanceRecord.View = [10, 20]; appearanceRecord.Cell = [1, 2];
+    Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Malformed block event cell must be rejected");
+    appearanceRecord.Cell = [1, 2, 3]; appearanceRecord.Character = "character";
+    Check(ReplayHistoryService.Decode(AppearanceChunk()).Records[1].Actions == 2, "Compact actions must survive transport");
+    appearanceRecord.Actions = null; appearanceRecord.View = null; appearanceRecord.Cell = null; appearanceRecord.Character = "";
     var spoolPath = Path.Combine(root, "spool");
     var spool = new ReplayChunkStore(spoolPath, 8192);
     spool.Put(chunk, now); spool.Put(chunk, now);
@@ -98,6 +115,12 @@ try
     var aggregated = written.SelectMany(b => b.Records).Single(r => r.Kind == "damage");
     Check(aggregated.Value == 30 && aggregated.Count == 2, "Real writer must coalesce matching damage and preserve its count/total");
     Check(written.Length == 2 && written.Select(b => b.Session).Distinct().Count() == 2, "Fast world reload must drain both writers without mixing sessions or deleting pending segments");
+
+    var delayedWriter = new ReplayWriter(Path.Combine(root, "delayed"), batch.Session, "world");
+    delayedWriter.Add(new ReplayRecord { At = now, Kind = "health", Value = 1 });
+    delayedWriter.Add(new ReplayRecord { At = now - 90000, Kind = "block-removed", Entity = "grid", Cell = [1, 2, 3] });
+    delayedWriter.Dispose(); await delayedWriter.Completion.WaitAsync(TimeSpan.FromSeconds(10));
+    foreach (var segment in delayedWriter.Read(new ReplayReadRequest()).Chunks) ReplayHistoryService.Decode(segment);
 
     await GeometryChecks.Run(root, now);
     var page = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new[] { GeometryChecks.Block(0) }, json));

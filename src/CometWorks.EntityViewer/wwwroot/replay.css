@@ -14,7 +14,9 @@
 .replay-transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .replay-transport label { margin-top: 0; }
 #scrub, #tracks { display: block; width: 100%; }
-#tracks { height: 84px; }
+#tracks { height: 132px; cursor: crosshair; }
+.replay-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.replay-inspector > label { margin-top: 10px; }
 #status { margin: 0; min-height: 1.5em; font-size: .85rem; overflow-wrap: anywhere; }
 #load, #play { color: var(--button-text); }
 @media (max-width: 860px) { .replay-workspace { height: 85dvh; min-height: 540px; } }

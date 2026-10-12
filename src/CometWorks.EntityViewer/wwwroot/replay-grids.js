@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createReplayCharacter } from "./replay-character.js";
 import { armorFallbackModelForDefinition } from "./armor-fallback-models.js";
 import { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, disposeReplayRenderContext } from "./entity-renderer.js";
 import { disposeTextureCache } from "./content-folder.js";
@@ -41,7 +42,7 @@ export class ReplayGrids {
             this.queue.push({ key, block, entry, epoch: this.epoch });
             this.pump();
         }
-        if (entry?.geometry) return { geometry: entry.geometry, materials: entry.materials, kind: "model", key };
+        if (entry?.geometry) return { geometry: entry.geometry, materials: entry.materials, kind: "model", key, skin: entry.skin };
         const fallback = !block.mod && (block.build ?? 1) >= 0.999 ? armorFallbackModelForDefinition({ id: block.definition }) : null;
         if (fallback) {
             const key = fallback.description;
@@ -72,12 +73,12 @@ export class ReplayGrids {
                     if (item.epoch !== this.epoch) return;
                     if (result.status !== "parsed") { item.entry.error = result.message; return; }
                     const model = result.model;
-                    const bytes = model.positions.byteLength + model.indices.byteLength + (model.normals?.byteLength || 0) + (model.uvs?.byteLength || 0);
+                    const bytes = (model.blendIndices?.byteLength || 0) + (model.blendWeights?.byteLength || 0) + model.positions.byteLength + model.indices.byteLength + (model.normals?.byteLength || 0) + (model.uvs?.byteLength || 0);
                     if (this.modelBytes + bytes > 64 * 1024 * 1024) { item.entry.error = "Geometry budget exceeded"; return; }
                     this.modelBytes += bytes;
                     const renderable = await prepareReplayModel(model, context);
                     if (item.epoch !== this.epoch || !renderable) return;
-                    Object.assign(item.entry, renderable); this.revision++;
+                    Object.assign(item.entry, renderable, { skin: model.bones?.length ? { bones: model.bones, indices: model.blendIndices, weights: model.blendWeights } : null }); this.revision++;
                 }).catch(error => { item.entry.error = error.message; })
                 .finally(() => { this.active--; this.pump(); if (item.epoch === this.epoch) this.changed(); });
         }
@@ -85,7 +86,7 @@ export class ReplayGrids {
     character(sample) {
         const model = this.model(sample);
         if (model.kind !== "model") return null;
-        return createReplayModelBatch(model, [{ matrix: new THREE.Matrix4(), colorMask: mask(sample.color), block: sample }]);
+        return createReplayCharacter(model, sample) || createReplayModelBatch(model, [{ matrix: new THREE.Matrix4(), colorMask: mask(sample.color), block: sample }]);
     }
     update(group, sample, pages) {
         group.userData.pages ||= new Map();
@@ -153,6 +154,9 @@ export class ReplayGrids {
 function mask(color) { color ||= [0, -1, 0]; return { x: color[0], y: color[1], z: color[2] }; }
 function releaseInstances(group) {
     group.traverse(object => {
+        if (object.isSkinnedMesh) {
+            object.skeleton.dispose(); object.geometry.dispose(); object.material.forEach(material => material.dispose()); return;
+        }
         if (!object.isInstancedMesh) return;
         if (object.userData.isModelBatch) object.geometry.dispose(); // Per-batch UV offsets; base geometry remains shared.
         object.dispose();

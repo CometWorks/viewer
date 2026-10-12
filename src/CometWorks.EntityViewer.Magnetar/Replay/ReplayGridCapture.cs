@@ -15,9 +15,11 @@ namespace CometWorks.EntityViewer.Magnetar.Replay;
 internal sealed class ReplayGridCapture : IDisposable
 {
     private readonly MyCubeGrid _grid;
+    private readonly Action<ReplayRecord> _event;
+    private struct Change { public Vector3I Cell; public long At; public string Kind; }
     private readonly ReplayWriter _writer;
     private readonly string _id;
-    private readonly ConcurrentQueue<Vector3I> _dirty = new ConcurrentQueue<Vector3I>();
+    private readonly ConcurrentQueue<Change> _dirty = new ConcurrentQueue<Change>();
     private Dictionary<Vector3I, ReplayBlock> _known = new Dictionary<Vector3I, ReplayBlock>();
     private HashSet<MySlimBlock>.Enumerator _iterator;
     private bool _scanning;
@@ -33,23 +35,35 @@ internal sealed class ReplayGridCapture : IDisposable
     private readonly ReplayBlockBudget _budget;
     public bool Ready => _ready && _pending == 0 && _lossVersion == _writer.LossVersion;
 
-    public ReplayGridCapture(MyCubeGrid grid, ReplayWriter writer, ReplayBlockBudget budget)
+    public ReplayGridCapture(MyCubeGrid grid, ReplayWriter writer, ReplayBlockBudget budget, Action<ReplayRecord> eventSink)
     {
-        _budget = budget; _grid = grid; _writer = writer; _id = grid.EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        grid.OnBlockAdded += TopologyChanged;
-        grid.OnBlockRemoved += TopologyChanged;
+        _event = eventSink; _budget = budget; _grid = grid; _writer = writer; _id = grid.EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        grid.OnBlockAdded += Added;
+        grid.OnBlockRemoved += Removed;
         grid.OnBlockIntegrityChanged += Changed;
         grid.OnGridMerge += Rebased;
+        grid.OnGridSplit += Split;
     }
-    private void Rebased(MyCubeGrid first, MyCubeGrid second) { Interlocked.Increment(ref _topology); Interlocked.Exchange(ref _overflow, 1); }
-    private void TopologyChanged(MySlimBlock block) { Interlocked.Increment(ref _topology); Changed(block); }
-    private void Changed(MySlimBlock block)
+    private void Rebased(MyCubeGrid first, MyCubeGrid second) { Interlocked.Increment(ref _topology); Interlocked.Exchange(ref _overflow, 1); Lineage("merge", first, second); }
+    private void Split(MyCubeGrid first, MyCubeGrid second) => Lineage("split", first, second);
+    private void Lineage(string kind, MyCubeGrid first, MyCubeGrid second)
+    {
+        if (_disposed || first != _grid) return;
+        try { _event(new ReplayRecord { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Kind = kind, Entity = first.EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Related = second.EntityId.ToString(System.Globalization.CultureInfo.InvariantCulture), Position = new[] { first.WorldMatrix.Translation.X, first.WorldMatrix.Translation.Y, first.WorldMatrix.Translation.Z },
+            Detail = kind == "split" ? "Original grid → fragment" : "Merged grid pair; survivor determined by subsequent observations" }); }
+        catch { Interlocked.Exchange(ref _overflow, 1); }
+    }
+    private void Added(MySlimBlock block) { Interlocked.Increment(ref _topology); Changed(block, "block-added"); }
+    private void Removed(MySlimBlock block) { Interlocked.Increment(ref _topology); Changed(block, "block-removed"); }
+    private void Changed(MySlimBlock block) => Changed(block, null);
+    private void Changed(MySlimBlock block, string kind)
     {
         if (_disposed || _grid.BlocksCount > ReplayLayoutPage.MaxBlocksPerGrid) return;
         if (Interlocked.Increment(ref _pending) > 1024) { Interlocked.Decrement(ref _pending); Interlocked.Exchange(ref _overflow, 1); return; }
         if (Interlocked.Increment(ref _budget.Pending) > 4096)
         { Interlocked.Decrement(ref _budget.Pending); Interlocked.Decrement(ref _pending); Interlocked.Exchange(ref _overflow, 1); return; }
-        _dirty.Enqueue(block.Position);
+        _dirty.Enqueue(new Change { Cell = block.Position, At = kind == null ? 0 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Kind = kind });
     }
     public bool Update(double now, long started, long budget)
     {
@@ -77,9 +91,11 @@ internal sealed class ReplayGridCapture : IDisposable
         }
         for (var work = 0; work < 4 && Stopwatch.GetTimestamp() - started < budget; work++)
         {
-            if (_dirty.TryDequeue(out var cell))
+            if (_dirty.TryDequeue(out var change))
             {
                 Interlocked.Decrement(ref _pending); Interlocked.Decrement(ref _budget.Pending);
+                var cell = change.Cell;
+                if (change.Kind != null) _event(new ReplayRecord { At = change.At, Elapsed = now, Kind = change.Kind, Entity = _id, Cell = C(cell), Position = WorldCell(cell), Detail = "Block topology callback; layout captured subsequently" });
                 var block = _grid.GetCubeBlock(cell);
                 if (block != null)
                 {
@@ -158,13 +174,14 @@ internal sealed class ReplayGridCapture : IDisposable
         return System.IO.Path.IsPathRooted(path) || path.Contains(":") ? "" : path;
     }
     private void Emit(string kind, double now, ReplayBlock block = null) => _writer.Add(new ReplayRecord { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Elapsed = now, Entity = _id, Kind = kind, Block = block, Count = kind == "layout-reset" ? _grid.BlocksCount : 0 });
+    private double[] WorldCell(Vector3I cell) { var p = _grid.GridIntegerToWorld(cell); return p.IsValid() ? new[] { p.X, p.Y, p.Z } : null; }
     private static int[] C(Vector3I v) => new[] { v.X, v.Y, v.Z };
     private static double[] V(Vector3 v) => new[] { Math.Round((double)v.X, 4), Math.Round((double)v.Y, 4), Math.Round((double)v.Z, 4) };
     public void Dispose()
     {
         _disposed = true; if (_known.Count > 0) { _budget.Count -= _known.Count; _known = new Dictionary<Vector3I, ReplayBlock>(); }
-        _grid.OnGridMerge -= Rebased;
-        _grid.OnBlockAdded -= TopologyChanged; _grid.OnBlockRemoved -= TopologyChanged; _grid.OnBlockIntegrityChanged -= Changed;
+        _grid.OnGridMerge -= Rebased; _grid.OnGridSplit -= Split;
+        _grid.OnBlockAdded -= Added; _grid.OnBlockRemoved -= Removed; _grid.OnBlockIntegrityChanged -= Changed;
         if (_scanning) _iterator.Dispose();
         DiscardPending();
     }

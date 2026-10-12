@@ -190,6 +190,9 @@ public sealed class ReplayHistoryService : BackgroundService
                 record.Layout = layouts.TryGetValue(record.LayoutId, out var layout) ? layout.Pages : null;
             if (record == null || record.At < start || record.At > start + 60000 || record.Entity == null || record.Name == null || record.Detail == null || record.Source == null || record.Kind == null || record.Type == null
                 || record.Entity.Length > 128 || record.Name.Length > 256 || record.Detail.Length > 1024 || record.Source.Length > 128 || record.Kind.Length > 32 || record.Type.Length > 32
+                || record.Character == null || record.Character.Length > 128 || record.Weapon == null || record.Weapon.Length > 128
+                || record.Related == null || record.Related.Length > 128 || record.Actions is < 0 or > 127 || !ValidVector(record.View, 2)
+                || record.Cell != null && !ValidCell(record.Cell)
                 || !double.IsFinite(record.Value) || !double.IsFinite(record.Elapsed) || !ValidVector(record.Position, 3) || !ValidVector(record.Rotation, 4)
                 || !ValidVector(record.Gravity, 3) || !ValidVector(record.Color, 3) || !ValidAssetPath(record.Model)
                 || record.Mod == null || record.Mod.Length > 256 || record.Mod.IndexOfAny(['/', '\\', ':']) >= 0 || record.Mod == ".."
