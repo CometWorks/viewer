@@ -124,5 +124,13 @@ hosts do not support automatic background history collection.
 
 Historical grid replay uses deduplicated block-layout pages and records removals,
 placement, build progress and integrity. Available game/mod models render the
-recorded blocks; missing assets use explicit block proxies. Fine deformation,
+recorded blocks using the main viewer’s textured materials and gravity orientation.
+History preloads assets, displays character models with nametags and GPU-reconstructed action animation, and provides hover
+diagnostics and a downloadable event log. Missing assets use explicit proxies. Fine deformation,
 debris and animated subparts are not captured. See [replay capture and limits](Docs/Replay.md).
+
+Incident clips group nearby events with coarse pre-roll and a quiet tail. Playback
+includes slow motion, observed-frame stepping, camera follow/free modes, clickable
+event tracks and source/control evidence. Observations-only mode disables visual
+reconstruction. Compact transition recording preserves the existing game-thread
+budget, sampling targets, 50,000-block grid cap and 24-hour retention.

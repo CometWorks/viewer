@@ -102,6 +102,7 @@ async function parseResolvedModelUncached(resolved, file, stack) {
 
         const normals = tags.has("Normals") ? reader.readNormals(tags.get("Normals"), positions.length / 3) : null;
         const uvs = tags.has("TexCoords0") ? reader.readTexCoords(tags.get("TexCoords0"), positions.length / 3) : null;
+        const bones = tags.has("Bones") ? reader.readBones(tags.get("Bones")) : null;
         const boneMapping = tags.has("BoneMapping") ? reader.readVector3IArray(tags.get("BoneMapping")) : null;
         const blendIndices = tags.has("BlendIndices") ? reader.readVector4IArray(tags.get("BlendIndices"), positions.length / 3) : null;
         const blendWeights = tags.has("BlendWeights") ? reader.readVector4Array(tags.get("BlendWeights"), positions.length / 3) : null;
@@ -148,6 +149,7 @@ async function parseResolvedModelUncached(resolved, file, stack) {
             groups,
             vertexCount: positions.length / 3,
             triangleCount: Math.floor(indexCount / 3),
+            bones,
             boneMapping,
             blendIndices,
             blendWeights,
@@ -367,6 +369,20 @@ class MwmReader {
             values[target + 2] = this.readInt32();
         }
         return values;
+    }
+
+    readBones(offset) {
+        this.seekTag(offset);
+        const count = this.readInt32();
+        if (count < 0 || count > 256) return null;
+        const bones = [];
+        for (let i = 0; i < count; i++) {
+            const name = this.readString(), parent = this.readInt32();
+            const transform = Array.from({ length: 16 }, () => this.readFloat32());
+            if (name.length > 256 || parent < -1 || parent >= i || !transform.every(Number.isFinite)) return null;
+            bones.push({ name, parent, transform });
+        }
+        return bones;
     }
 
     readVector4IArray(offset, expectedCount) {

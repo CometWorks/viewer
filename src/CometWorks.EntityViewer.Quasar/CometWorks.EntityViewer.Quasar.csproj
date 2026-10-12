@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ReplayChecks" />
     <ProjectReference Include="..\CometWorks.EntityViewer\CometWorks.EntityViewer.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

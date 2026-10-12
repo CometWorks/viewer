@@ -1,5 +1,8 @@
 import * as THREE from "three";
+import { createReplayCharacter } from "./replay-character.js";
 import { armorFallbackModelForDefinition } from "./armor-fallback-models.js";
+import { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, disposeReplayRenderContext } from "./entity-renderer.js";
+import { disposeTextureCache } from "./content-folder.js";
 import { resolveModelAsset, clearModelCache } from "./mwm-loader.js";
 
 // Reuse the live viewer's MWM parser and armor topology. Only changed layout pages rebuild.
@@ -16,11 +19,13 @@ export class ReplayGrids {
         this.queue = [];
         this.revision = 0;
         this.modelBytes = 0;
+        this.context = createReplayRenderContext();
     }
     clear() {
         this.epoch++; clearModelCache();
         this.queue.length = 0;
-        for (const entry of this.models.values()) entry.geometry?.dispose();
+        disposeReplayRenderContext(this.context); disposeTextureCache();
+        this.context = createReplayRenderContext();
         this.models.clear(); this.modelBytes = 0; this.revision++;
     }
     dispose() {
@@ -37,7 +42,7 @@ export class ReplayGrids {
             this.queue.push({ key, block, entry, epoch: this.epoch });
             this.pump();
         }
-        if (entry?.geometry) return { geometry: entry.geometry, kind: "model", key };
+        if (entry?.geometry) return { geometry: entry.geometry, materials: entry.materials, kind: "model", key, skin: entry.skin };
         const fallback = !block.mod && (block.build ?? 1) >= 0.999 ? armorFallbackModelForDefinition({ id: block.definition }) : null;
         if (fallback) {
             const key = fallback.description;
@@ -51,32 +56,44 @@ export class ReplayGrids {
         }
         return { geometry: this.box, kind: "proxy", key: "proxy" };
     }
+    preload(replay) {
+        // Start with player appearances, then all historical pages, including future destruction stages.
+        for (const record of replay.records) if (record.type === "player" && record.model) this.model(record);
+        for (const page of replay.geometry.values()) for (const block of page) this.model(block);
+    }
+    get status() {
+        const ready = [...this.models.values()].filter(entry => entry.geometry).length;
+        return `${ready}/${this.models.size} models ready (${[...this.models.values()].filter(entry => entry.error).length} unavailable) · ${this.active + this.queue.length} loading · ${[...this.context.preloadedTextures.values()].filter(Boolean).length}/${this.context.preloadedTextures.size} textures loaded (limits: 128 models, 256 textures)`;
+    }
     pump() {
         while (this.active < 4 && this.queue.length) {
-            const item = this.queue.shift(); this.active++;
+            const item = this.queue.shift(), context = this.context; this.active++;
             resolveModelAsset({ logicalPath: item.block.model, rootId: item.block.mod ? `mods-direct:${item.block.mod}` : "" })
-                .then(result => {
-                    if (item.epoch !== this.epoch || result.status !== "parsed") return;
+                .then(async result => {
+                    if (item.epoch !== this.epoch) return;
+                    if (result.status !== "parsed") { item.entry.error = result.message; return; }
                     const model = result.model;
-                    const bytes = model.positions.byteLength + model.indices.byteLength + (model.normals?.byteLength || 0);
-                    if (this.modelBytes + bytes > 64 * 1024 * 1024) return;
-                    const geometry = new THREE.BufferGeometry();
-                    geometry.setAttribute("position", new THREE.BufferAttribute(model.positions, 3));
-                    geometry.setIndex(new THREE.BufferAttribute(model.indices, 1));
-                    if (model.normals) geometry.setAttribute("normal", new THREE.BufferAttribute(model.normals, 3));
-                    else geometry.computeVertexNormals();
-                    item.entry.geometry = geometry; this.modelBytes += bytes; this.revision++;
-                    this.changed();
-                }).catch(() => { /* Missing assets remain explicit wireframe block proxies. */ })
-                .finally(() => { this.active--; this.pump(); });
+                    const bytes = (model.blendIndices?.byteLength || 0) + (model.blendWeights?.byteLength || 0) + model.positions.byteLength + model.indices.byteLength + (model.normals?.byteLength || 0) + (model.uvs?.byteLength || 0);
+                    if (this.modelBytes + bytes > 64 * 1024 * 1024) { item.entry.error = "Geometry budget exceeded"; return; }
+                    this.modelBytes += bytes;
+                    const renderable = await prepareReplayModel(model, context);
+                    if (item.epoch !== this.epoch || !renderable) return;
+                    Object.assign(item.entry, renderable, { skin: model.bones?.length ? { bones: model.bones, indices: model.blendIndices, weights: model.blendWeights } : null }); this.revision++;
+                }).catch(error => { item.entry.error = error.message; })
+                .finally(() => { this.active--; this.pump(); if (item.epoch === this.epoch) this.changed(); });
         }
+    }
+    character(sample) {
+        const model = this.model(sample);
+        if (model.kind !== "model") return null;
+        return createReplayCharacter(model, sample) || createReplayModelBatch(model, [{ matrix: new THREE.Matrix4(), colorMask: mask(sample.color), block: sample }]);
     }
     update(group, sample, pages) {
         group.userData.pages ||= new Map();
         const retained = new Set(sample.layout);
         for (const [id, child] of group.userData.pages) {
-            if (retained.has(id) && child.userData.revision === this.revision) continue;
-            child.traverse(object => { if (object.isInstancedMesh) object.dispose(); });
+            if (retained.has(id) && child.userData.epoch === this.epoch && !child.userData.pending.some(key => this.models.get(key)?.geometry)) continue;
+            releaseInstances(child);
             group.remove(child); group.userData.pages.delete(id);
         }
         for (const id of retained) {
@@ -91,7 +108,9 @@ export class ReplayGrids {
             }
             let proxies = 0, count = 0;
             for (const { model, blocks } of batches.values()) {
-                const mesh = new THREE.InstancedMesh(model.geometry, model.kind === "proxy" ? this.proxy : this.solid, blocks.length);
+                let mesh;
+                const instances = [];
+                if (model.kind !== "model") mesh = new THREE.InstancedMesh(model.geometry, model.kind === "proxy" ? this.proxy : this.solid, blocks.length);
                 const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), rotation = new THREE.Quaternion(), scale = new THREE.Vector3();
                 blocks.forEach((block, i) => {
                     rotation.fromArray(block.rotation || [0, 0, 0, 1]).normalize();
@@ -102,23 +121,44 @@ export class ReplayGrids {
                         scale.fromArray(block.min.map((v, axis) => (block.max[axis] - v + 1) * sample.gridSize));
                         rotation.identity(); proxies++;
                     }
-                    matrix.compose(position, rotation, scale); mesh.setMatrixAt(i, matrix);
+                    matrix.compose(position, rotation, scale);
+                    if (model.kind === "model") {
+                        instances.push({ matrix: matrix.clone(), colorMask: mask(block.color), block }); count++; return;
+                    }
+                    mesh.setMatrixAt(i, matrix);
                     // Integrity is observed state; red tint is an audit overlay, not reconstructed damage textures.
                     const hsv = block.color || [0, -1, 0];
                     const color = new THREE.Color().setHSL(hsv[0], Math.min(1, Math.max(0, hsv[1] + 0.8)), Math.min(0.8, Math.max(0.2, hsv[2] + 0.5)));
                     color.lerp(new THREE.Color(0xff4050), (1 - (block.integrity ?? 0)) * 0.7);
                     mesh.setColorAt(i, color); count++;
                 });
-                mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
+                if (model.kind === "model") mesh = createReplayModelBatch(model, instances);
+                mesh.userData.blocks = blocks;
+                mesh.userData.assetKind = model.kind;
+                mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
                 mesh.computeBoundingSphere(); page.add(mesh);
             }
-            page.userData = { revision: this.revision, proxies, count };
+            page.userData = { epoch: this.epoch, proxies, count,
+                pending: [...batches.values()].filter(batch => batch.model.kind !== "model")
+                    .flatMap(batch => batch.blocks.filter(block => block.model).map(block => `${block.mod || ""}/${block.model}`)) };
             group.userData.pages.set(id, page); group.add(page);
         }
         return [...group.userData.pages.values()].reduce((sum, page) => ({ blocks: sum.blocks + page.userData.count, proxies: sum.proxies + page.userData.proxies }), { blocks: 0, proxies: 0 });
     }
     release(group) {
-        group.traverse(object => { if (object.isInstancedMesh) object.dispose(); });
+        releaseInstances(group);
         group.clear(); group.userData.pages?.clear();
     }
+}
+
+function mask(color) { color ||= [0, -1, 0]; return { x: color[0], y: color[1], z: color[2] }; }
+function releaseInstances(group) {
+    group.traverse(object => {
+        if (object.isSkinnedMesh) {
+            object.skeleton.dispose(); object.geometry.dispose(); object.material.forEach(material => material.dispose()); return;
+        }
+        if (!object.isInstancedMesh) return;
+        if (object.userData.isModelBatch) object.geometry.dispose(); // Per-batch UV offsets; base geometry remains shared.
+        object.dispose();
+    });
 }

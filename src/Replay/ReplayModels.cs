@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 namespace CometWorks.EntityViewer.Replay;
 
@@ -16,11 +17,25 @@ public sealed class ReplayRecord
     public string Type { get; set; } = "grid";
     public string Source { get; set; } = "";
     public string Detail { get; set; } = "";
+    [DefaultValue("")]
+    public string Character { get; set; } = "";
+    [DefaultValue("")]
+    public string Weapon { get; set; } = "";
+    [DefaultValue("")]
+    public string Related { get; set; } = "";
+    // Optional compact character state: aim, primary, secondary, crouch, sprint, use, dead.
+    public int? Actions { get; set; }
+    public double[]? View { get; set; }
+    public int[]? Cell { get; set; }
     public double[]? Position { get; set; }
     public double[]? Rotation { get; set; }
     public double[]? Size { get; set; }
     public double[]? Velocity { get; set; }
     public double[]? AngularVelocity { get; set; }
+    public double[]? Gravity { get; set; }
+    public string Model { get; set; } = "";
+    public string Mod { get; set; } = "";
+    public double[]? Color { get; set; }
     public double Value { get; set; }
     public int Count { get; set; }
     public bool High { get; set; }

@@ -25,7 +25,8 @@
 .entity-viewer-icon { width: 18px; height: 18px; flex: 0 0 18px; }
 .entity-viewer-button, .entity-viewer-icon-button { display: inline-flex; gap: 6px; align-items: center; justify-content: center; font: inherit; cursor: pointer; background: var(--quasar-palette-surface, #181c21); color: var(--quasar-palette-primary, #56c8dc); border: 1px solid var(--quasar-palette-lines-default, #303740); border-radius: 4px; padding: 7px 10px; }
 .entity-viewer-icon-button { padding: 5px; background: transparent; border-color: transparent; }
-.entity-viewer-button:hover:not(:disabled), .entity-viewer-icon-button:hover:not(:disabled) { background: var(--quasar-palette-hover-background, #ffffff12); }
+/* Legacy Quasar table rows force descendant colors through this inherited token. */
+.entity-viewer-button:hover:not(:disabled), .entity-viewer-icon-button:hover:not(:disabled) { --quasar-table-hover-text: var(--quasar-palette-hover-contrast-text, var(--quasar-palette-text-primary, #e6e9ee)); background: var(--quasar-palette-hover-background, #ffffff12); color: var(--quasar-palette-hover-contrast-text, var(--quasar-palette-text-primary, #e6e9ee)); }
 .entity-viewer-button:disabled, .entity-viewer-icon-button:disabled { opacity: .45; cursor: default; }
 .entity-viewer-native-dialog :focus-visible, .entity-viewer-icon-button:focus-visible { outline: 2px solid var(--quasar-palette-primary, #56c8dc); outline-offset: 2px; }
 .entity-viewer-notice { border-left: 3px solid var(--quasar-palette-info, #56c8dc); padding: 10px 12px; background: var(--viewer-bg); margin: 0; }
