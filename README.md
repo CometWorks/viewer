@@ -111,8 +111,9 @@ acceptance with the matching installed plugin package.
 The companion continuously records coarse grid/player observations while a world
 is running. Damage and sustained abnormal motion automatically increase capture
 frequency around the incident. Quasar collects compressed records independently
-of open browser sessions and retains at most 24 hours. Open **Entity history** in
-Quasar's tools navigation, or **Open recording history** inside the live viewer.
+of open browser sessions and retains at most 24 hours. Select **Recording history** in the main Entity Viewer panel; **Scene** returns
+to the current entity. The server/entity context stays in the viewer URL. Quasar’s
+**Entity history** tools shortcut opens this same panel, including offline archives.
 History requires administrator access and works for removed entities and offline
 servers. See [Replay.md](Docs/Replay.md) for recording limits, storage, detection
 semantics, and validation.

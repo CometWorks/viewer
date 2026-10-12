@@ -16,6 +16,7 @@
         }
     </style>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="replay.css">
     <script type="importmap">
     {
         "imports": {
@@ -35,91 +36,96 @@
                 <p class="lede">Metadata comes from the server agent. Models and textures use server streaming when enabled, otherwise local Space Engineers <code>Content</code> and <code>Mods</code> folders.</p>
             </header>
 
-            <section class="card">
-                <h2>Scene</h2>
-                <dl id="sceneSummary" class="summary-list"></dl>
-                <a id="openHistory" href="replay.html">Open recording history</a>
-                <button id="reloadScene" type="button" class="wide">Reload Scene</button>
-            </section>
+            <nav class="viewer-modes" aria-label="Viewer mode">
+                <a id="sceneMode" href="index.html" aria-current="page">Scene</a>
+                <a id="historyMode" href="index.html?view=history">Recording history</a>
+            </nav>
+            <div id="modeControls" class="mode-controls">
+                <section class="card">
+                    <h2>Scene</h2>
+                    <dl id="sceneSummary" class="summary-list"></dl>
+                    <button id="reloadScene" type="button" class="wide">Reload Scene</button>
+                </section>
 
-            <section class="card">
-                <h2>Render</h2>
-                <label class="check-row">
-                    <input id="showGridHelper" type="checkbox" checked>
-                    Show floor grid
-                </label>
-                <label class="check-row">
-                    <input id="showVoxels" type="checkbox" checked>
-                    Show voxels
-                </label>
-                <label class="check-row">
-                    <input id="showContext" type="checkbox">
-                    Context mode
-                </label>
-                <label class="check-row">
-                    <input id="showLighting" type="checkbox" checked>
-                    Show lighting
-                </label>
-                <label class="check-row">
-                    <input id="showSun" type="checkbox">
-                    Show Sun Marker
-                </label>
-                <label class="check-row">
-                    <input id="showClipping" type="checkbox">
-                    Show Clipping
-                </label>
-                <label class="check-row">
-                    <input id="showLogistics" type="checkbox">
-                    Show logistics
-                </label>
-                <label class="check-row">
-                    <input id="showDamaged" type="checkbox">
-                    Show damaged
-                </label>
-                <label class="check-row">
-                    <input id="showFps" type="checkbox">
-                    Show FPS
-                </label>
-                <p class="hint">Relative grid view is always enabled; world positions are re-centered around the selected grid.</p>
-                <label>
-                    Camera mode
-                    <select id="cameraMode">
-                        <option value="orbit" selected>Orbit</option>
-                        <option value="fly">Free fly</option>
-                    </select>
-                </label>
-                <button id="resetCamera" type="button" class="wide">Reset Camera</button>
-            </section>
+                <section class="card">
+                    <h2>Render</h2>
+                    <label class="check-row">
+                        <input id="showGridHelper" type="checkbox" checked>
+                        Show floor grid
+                    </label>
+                    <label class="check-row">
+                        <input id="showVoxels" type="checkbox" checked>
+                        Show voxels
+                    </label>
+                    <label class="check-row">
+                        <input id="showContext" type="checkbox">
+                        Context mode
+                    </label>
+                    <label class="check-row">
+                        <input id="showLighting" type="checkbox" checked>
+                        Show lighting
+                    </label>
+                    <label class="check-row">
+                        <input id="showSun" type="checkbox">
+                        Show Sun Marker
+                    </label>
+                    <label class="check-row">
+                        <input id="showClipping" type="checkbox">
+                        Show Clipping
+                    </label>
+                    <label class="check-row">
+                        <input id="showLogistics" type="checkbox">
+                        Show logistics
+                    </label>
+                    <label class="check-row">
+                        <input id="showDamaged" type="checkbox">
+                        Show damaged
+                    </label>
+                    <label class="check-row">
+                        <input id="showFps" type="checkbox">
+                        Show FPS
+                    </label>
+                    <p class="hint">Relative grid view is always enabled; world positions are re-centered around the selected grid.</p>
+                    <label>
+                        Camera mode
+                        <select id="cameraMode">
+                            <option value="orbit" selected>Orbit</option>
+                            <option value="fly">Free fly</option>
+                        </select>
+                    </label>
+                    <button id="resetCamera" type="button" class="wide">Reset Camera</button>
+                </section>
 
-            <section class="card">
-                <h2>Assets</h2>
-                <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
-                <p class="hint">Use the Server Asset Streaming button in the Quasar viewer dialog title bar to accept consent, install or update SteamCMD assets, and configure server asset roots.</p>
-                <p class="hint">Streamed models and textures are cached in this browser and reused until the server files change.</p>
-                <button id="clearAssetCache" type="button" class="wide">Clear Streamed Asset Cache</button>
-                <div id="localAssetFallback" class="asset-folder-fallback">
-                    <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
-                        <strong>Persistent file access is not enabled.</strong>
-                        <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>
+                <section class="card">
+                    <h2>Assets</h2>
+                    <p id="assetStreamingStatus" class="status-text">Checking server asset streaming...</p>
+                    <p class="hint">Use the Server Asset Streaming button in the Quasar viewer dialog title bar to accept consent, install or update SteamCMD assets, and configure server asset roots.</p>
+                    <p class="hint">Streamed models and textures are cached in this browser and reused until the server files change.</p>
+                    <button id="clearAssetCache" type="button" class="wide">Clear Streamed Asset Cache</button>
+                    <div id="localAssetFallback" class="asset-folder-fallback">
+                        <div id="fileAccessWarning" class="file-access-warning" role="alert" hidden>
+                            <strong>Persistent file access is not enabled.</strong>
+                            <span id="fileAccessWarningDetail">Select the Content and Mods folders again after every browser reload.</span>
+                        </div>
+                        <p id="contentStatus" class="status-text">No Content folder selected.</p>
+                        <button id="pickContent" type="button" class="wide">Select Space Engineers Content Folder</button>
+                        <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
+                        <p id="modsStatus" class="status-text">No Mods folder selected.</p>
+                        <button id="pickMods" type="button" class="wide">Select Space Engineers Mods Folder</button>
+                        <input id="modsFolderPicker" type="file" webkitdirectory directory multiple hidden>
+                        <p class="hint">Pick the global Mods folder that contains mod directories and .sbm files. Quasar does not transmit .mwm files, texture files, or extracted geometry. Missing local files render as proxy boxes.</p>
                     </div>
-                    <p id="contentStatus" class="status-text">No Content folder selected.</p>
-                    <button id="pickContent" type="button" class="wide">Select Space Engineers Content Folder</button>
-                    <input id="folderPicker" type="file" webkitdirectory directory multiple hidden>
-                    <p id="modsStatus" class="status-text">No Mods folder selected.</p>
-                    <button id="pickMods" type="button" class="wide">Select Space Engineers Mods Folder</button>
-                    <input id="modsFolderPicker" type="file" webkitdirectory directory multiple hidden>
-                    <p class="hint">Pick the global Mods folder that contains mod directories and .sbm files. Quasar does not transmit .mwm files, texture files, or extracted geometry. Missing local files render as proxy boxes.</p>
-                </div>
-            </section>
+                </section>
 
-            <section class="card log-card">
-                <h2>Warnings</h2>
-                <button id="downloadLog" type="button" class="wide">Download Log</button>
-                <pre id="log" aria-live="polite"></pre>
-            </section>
+                <section class="card log-card">
+                    <h2>Warnings</h2>
+                    <button id="downloadLog" type="button" class="wide">Download Log</button>
+                    <pre id="log" aria-live="polite"></pre>
+                </section>
+            </div>
         </aside>
 
-        <section class="viewport-wrap" aria-label="3D viewport">
+        <section id="sceneWorkspace" class="viewport-wrap" aria-label="3D viewport">
             <div id="viewport" class="viewport"></div>
             <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite">
                 <div class="loading-card">
@@ -137,7 +143,42 @@
         </section>
     </main>
 
+    <template id="historyControls">
+        <form id="query" class="card replay-query">
+            <h2>Recording history</h2>
+            <p class="hint">Last 24 hours · 1 Hz baseline · 5 Hz incident detail</p>
+            <label>Server<select id="server" required></select></label>
+            <label>Start time<input id="from" type="datetime-local" step="1" required></label>
+            <label>Window<select id="minutes"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option></select></label>
+            <label>Incident windows (last 24 hours)<select id="incidents"><option value="">Choose an incident window</option></select></label>
+            <button id="load" type="submit">Load history</button>
+        </form>
+        <p id="status" role="status" aria-live="polite">Connecting to recording history…</p>
+        <section class="card replay-inspector">
+            <label>Focus entity<select id="entity"><option value="">All entities</option></select></label>
+            <p class="hint">Recorded block layouts, removals, and positions. Red tint = lower integrity; wireframe blocks = missing models; green = player. Samples are held until the next observation; missing coverage is hidden.</p>
+            <p id="geometryQuality" class="hint" role="status"></p>
+            <button id="contentFolder" type="button">Choose game Content folder</button>
+            <button id="modsFolder" type="button">Choose Mods folder</button>
+            <p class="hint">Uses recorded blocks with configured server assets or your local game folders. Asset versions, textures, debris, fine deformation, and animated subparts are not recorded.</p>
+            <label>Events<select id="eventFilter"><option value="">All events</option><option value="damage">Damage</option><option value="physics">Suspected physics instability</option><option value="gap">Recording gaps</option></select></label>
+            <div id="events" class="replay-events"></div>
+            <pre id="evidence" aria-label="Recorded evidence">Select an event to inspect its evidence.</pre>
+        </section>
+    </template>
+    <template id="historyWorkspace">
+        <section class="replay-workspace" aria-label="Recording history">
+            <div id="replayViewport" aria-label="Recorded grids, destruction, and player positions"></div>
+            <section class="replay-timeline" aria-label="Replay controls">
+                <div class="replay-transport"><button id="play" type="button" disabled>Play</button><label>Speed<select id="speed"><option value="1">1×</option><option value="5">5×</option><option value="15">15×</option></select></label><output id="clock"></output><span id="quality"></span></div>
+                <input id="scrub" type="range" min="0" max="1" value="0" step="100" aria-label="Replay time" disabled>
+                <canvas id="tracks" height="84" aria-label="Damage, physics, and simulation speed over time"></canvas>
+                <p class="hint">Timeline: damage (red), suspected physics instability (orange), gaps (gray), simulation speed (green).</p>
+            </section>
+        </section>
+    </template>
+
     <script src="startup-errors.js"></script>
-    <script type="module" src="main.js"></script>
+    <script type="module" src="viewer.js"></script>
 </body>
 </html>

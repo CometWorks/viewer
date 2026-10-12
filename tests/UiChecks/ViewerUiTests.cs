@@ -18,6 +18,12 @@ public sealed class ViewerUiTests
         var cell = context.Render<EntityViewerColumnCell>(p => p.Add(x => x.AgentId, "agent/one")
             .Add(x => x.EntityId, 42).Add(x => x.EntityType, "Grid").Add(x => x.EntityDisplayName, "Freighter")
             .Add(x => x.CanViewEntity, true).Add(x => x.AutoOpenAssetSetup, false));
+        Assert.Contains("mud-table-cell", cell.Find("td").ClassList);
+        Assert.Equal("", cell.Find("td").GetAttribute("data-label"));
+        Assert.Equal("0 0 24 24", cell.Find("button svg").GetAttribute("viewBox"));
+        Assert.NotEmpty(cell.FindAll("button svg path"));
+        var header = context.Render<EntityViewerColumnHeader>();
+        Assert.Contains("mud-table-cell", header.Find("th").ClassList);
         await cell.Find("button").ClickAsync();
         Assert.Contains("agentId=agent%2Fone&entityId=42&voxels=1&context=1", cell.Find("iframe").GetAttribute("src"));
         Assert.Contains("entity-viewer-fullscreen", cell.Find("dialog").ClassName);

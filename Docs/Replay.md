@@ -128,6 +128,14 @@ simulation. Disk failure is reported by collection status.
 
 ## Viewing
 
+Recording history is a mode of the main Entity Viewer: its query, focus, and
+incident controls live in the existing sidebar, with playback beneath the 3D
+viewport. Switch between **Scene** and **Recording history** without leaving the
+viewer dialog. Mode navigation retains the original server/entity context and
+unloads the previous renderer; only one WebGL context and asset session runs at a
+time. The tools shortcut opens the same viewer in history mode. Legacy
+`replay.html` links redirect there while preserving query parameters.
+
 **Entity history** is administrator-only, including API requests and player
 positions. Responses use `private, no-store`. Select a server and a window of
 up to 15 minutes anywhere within the last 24 hours; the incident-window selector
