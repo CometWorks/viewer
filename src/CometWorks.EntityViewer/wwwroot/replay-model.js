@@ -73,3 +73,34 @@ export function blockCountAt(replay, sample) {
     }
     return count;
 }
+
+export function describeEvent(record) {
+    const subject = record.name || record.entity || "server";
+    const detail = record.detail ? ` · ${record.detail}` : "";
+    if (record.kind === "damage") return `${subject}: ${Number(record.value || 0).toFixed(1)} damage in ${record.count || 1} hit(s) · source ${record.source || "unknown"}${detail}`;
+    if (record.kind === "physics") return `${subject}: suspected physics instability · speed ${speed(record).toFixed(2)} m/s${detail}`;
+    if (record.kind === "removed") return `${subject}: no longer observed (removal or departure; cause not inferred)`;
+    return `${subject}: ${record.kind}${detail}`;
+}
+
+export function replayJournal(replay) {
+    const entries = replay.records.filter(r => ["damage", "physics", "gap", "removed"].includes(r.kind));
+    for (const track of replay.tracks.values()) {
+        let previous;
+        for (const record of track) {
+            if (record.kind !== "sample") { previous = null; continue; }
+            const details = [];
+            if (!previous) details.push("First observation in loaded history");
+            else {
+                if (!!record.high !== !!previous.high) details.push(record.high ? "Incident detail started" : "Baseline recording resumed");
+                if (record.layoutId !== previous.layoutId || JSON.stringify(record.layout) !== JSON.stringify(previous.layout)) {
+                    const before = blockCountAt(replay, previous), after = blockCountAt(replay, record);
+                    details.push(`Block layout changed${before !== null && after !== null ? ` (${before} → ${after} blocks)` : " (incomplete layout)"}; damage, construction or edits may be involved`);
+                }
+            }
+            if (details.length) entries.push({ ...record, kind: "observation", detail: details.join(". ") });
+            previous = record;
+        }
+    }
+    return entries.sort((a, b) => a.at - b.at);
+}

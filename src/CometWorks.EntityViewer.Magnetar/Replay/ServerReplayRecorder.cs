@@ -115,12 +115,12 @@ internal sealed class ServerReplayRecorder : IDisposable
             if (!track.Schedule.Due(now)) continue;
             var position = grid.PositionComp.GetPosition();
             if (Nearby(position, now)) track.Schedule.Trigger(now);
-            var record = Sample(grid, now);
+            var record = Sample(grid, track, now);
             record.GeometryReady = track.Geometry.Ready;
             if (track.Schedule.Observe(record, now, out var anomaly)) _writer.Add(record);
             if (anomaly)
             {
-                var evidence = Sample(grid, now);
+                var evidence = Sample(grid, track, now);
                 evidence.Kind = "physics";
                 evidence.Detail = "Suspected instability: sustained angular speed >5 rad/s or acceleration >100 m/s². Correlation, not attribution.";
                 _writer.Add(evidence);
@@ -196,31 +196,61 @@ internal sealed class ServerReplayRecorder : IDisposable
             present.Add(id);
             if (!_players.TryGetValue(id, out var track)) { track = new Track(); _players.Add(id, track); }
             if (!track.Schedule.Due(now)) continue;
-            var p = controlled.PositionComp.GetPosition();
+            var character = player.Character;
+            var observed = (MyEntity)character ?? controlled;
+            var p = observed.PositionComp.GetPosition();
+            var matrix = observed.WorldMatrix;
+            var q = Quaternion.CreateFromRotationMatrix(matrix);
             if (Nearby(p, now)) track.Schedule.Trigger(now);
-            var sample = new ReplayRecord { At = Utc(), Elapsed = now, Kind = "sample", Type = "player", Entity = id, Name = (player.DisplayName ?? "").Substring(0, Math.Min(128, (player.DisplayName ?? "").Length)), Source = controlled.EntityId.ToString(CultureInfo.InvariantCulture), Position = V(p), Size = new[] { 2d, 2d, 2d } };
+            var sample = new ReplayRecord
+            {
+                At = Utc(), Elapsed = now, Tick = (long)MySandboxGame.Static.SimulationFrameCounter,
+                Kind = "sample", Type = "player", Entity = id,
+                Name = (player.DisplayName ?? "").Substring(0, Math.Min(128, (player.DisplayName ?? "").Length)),
+                Source = controlled.EntityId.ToString(CultureInfo.InvariantCulture), Position = V(p), Origin = V(p),
+                Rotation = Q(q), Size = V(observed.PositionComp.LocalAABB.Size),
+                Velocity = V(observed.Physics?.LinearVelocity ?? Vector3.Zero), Gravity = Gravity(track, p, now),
+                Model = character == null ? "" : ReplayGridCapture.LogicalModel(character.Model?.AssetName ?? character.Definition?.Model, character.Definition?.Context?.ModPath),
+                Mod = character?.Definition?.Context?.ModId ?? "", Color = character == null ? null : V(character.ColorMask),
+                Detail = character == null ? "Character unavailable; controlled entity position only." : "Character appearance and position; animation pose is not recorded."
+            };
             if (track.Schedule.Observe(sample, now, out _)) _writer.Add(sample);
         }
         if (!complete) { Interlocked.Increment(ref _lost); return; }
         foreach (var id in _players.Keys.Where(id => !present.Contains(id)).ToArray()) { Emit("removed", id, now); _players.Remove(id); }
     }
 
-    private ReplayRecord Sample(MyCubeGrid grid, double now)
+    private ReplayRecord Sample(MyCubeGrid grid, Track track, double now)
     {
         var matrix = grid.WorldMatrix;
         var q = Quaternion.CreateFromRotationMatrix(matrix);
         var size = grid.PositionComp.LocalAABB.Size;
-        var rotation = new[] { Math.Round(q.X, 4), Math.Round(q.Y, 4), Math.Round(q.Z, 4), Math.Round(q.W, 4) };
-        if (rotation.Any(v => double.IsNaN(v) || double.IsInfinity(v))) { rotation = null; Interlocked.Increment(ref _lost); }
+        var rotation = Q(q);
+        if (rotation == null) Interlocked.Increment(ref _lost);
         return new ReplayRecord
         {
             At = Utc(), Elapsed = now, Tick = (long)MySandboxGame.Static.SimulationFrameCounter, Entity = grid.EntityId.ToString(CultureInfo.InvariantCulture),
             Name = (grid.DisplayName ?? "").Substring(0, Math.Min(128, (grid.DisplayName ?? "").Length)), Position = V(grid.PositionComp.WorldAABB.Center),
-            Rotation = rotation, Origin = V(matrix.Translation), GridSize = grid.GridSize,
+            Rotation = rotation, Origin = V(matrix.Translation), GridSize = grid.GridSize, Gravity = Gravity(track, matrix.Translation, now),
             Size = V(size), Velocity = V(grid.Physics?.LinearVelocity ?? Vector3.Zero), AngularVelocity = V(grid.Physics?.AngularVelocity ?? Vector3.Zero)
         };
     }
+    // Natural gravity matches the live viewer. Reuse it throughout an incident's 5 Hz samples.
+    private static double[] Gravity(Track track, Vector3D position, double now)
+    {
+        if (track.NaturalGravity == null || now >= track.NextGravity)
+        {
+            track.NaturalGravity = V(MyGravityProviderSystem.CalculateNaturalGravityInPoint(position));
+            track.NextGravity = now + 1000;
+        }
+        return track.NaturalGravity;
+    }
     private void Emit(string kind, string entity, double now) => _writer.Add(new ReplayRecord { At = Utc(), Elapsed = now, Entity = entity, Kind = kind });
+    private static double[] Q(Quaternion q)
+    {
+        var rotation = new[] { Math.Round((double)q.X, 4), Math.Round((double)q.Y, 4), Math.Round((double)q.Z, 4), Math.Round((double)q.W, 4) };
+        return rotation.Any(v => double.IsNaN(v) || double.IsInfinity(v)) ? null : rotation;
+    }
     private static double[] V(Vector3D v) => v.IsValid() ? new[] { Math.Round(v.X, 2), Math.Round(v.Y, 2), Math.Round(v.Z, 2) } : null;
     private bool Nearby(Vector3D position, double now) => _hotspots.Values.Any(h => now < h.Until && Vector3D.DistanceSquared(position, h.Position) < 1000000);
     private void Hot(long id, Vector3D position, double now)
@@ -242,5 +272,5 @@ internal sealed class ServerReplayRecorder : IDisposable
         while (_damage.TryDequeue(out _)) Interlocked.Decrement(ref _damageCount);
     }
     public void Dispose() => Reset();
-    private sealed class Track { public MyCubeGrid Grid; public ReplayGridCapture Geometry; public ReplaySchedule Schedule = new ReplaySchedule(); }
+    private sealed class Track { public MyCubeGrid Grid; public ReplayGridCapture Geometry; public double[] NaturalGravity; public double NextGravity; public ReplaySchedule Schedule = new ReplaySchedule(); }
 }

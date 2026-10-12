@@ -191,6 +191,8 @@ public sealed class ReplayHistoryService : BackgroundService
             if (record == null || record.At < start || record.At > start + 60000 || record.Entity == null || record.Name == null || record.Detail == null || record.Source == null || record.Kind == null || record.Type == null
                 || record.Entity.Length > 128 || record.Name.Length > 256 || record.Detail.Length > 1024 || record.Source.Length > 128 || record.Kind.Length > 32 || record.Type.Length > 32
                 || !double.IsFinite(record.Value) || !double.IsFinite(record.Elapsed) || !ValidVector(record.Position, 3) || !ValidVector(record.Rotation, 4)
+                || !ValidVector(record.Gravity, 3) || !ValidVector(record.Color, 3) || !ValidAssetPath(record.Model)
+                || record.Mod == null || record.Mod.Length > 256 || record.Mod.IndexOfAny(['/', '\\', ':']) >= 0 || record.Mod == ".."
                 || !ValidVector(record.Origin, 3) || !double.IsFinite(record.GridSize) || record.GridSize < 0 || record.GridSize > 100
                 || record.LayoutId == null || record.LayoutId.Length != 0 && !ReplayChunkStore.ValidGeometryId(record.LayoutId)
                 || record.Block != null || record.Layout != null && (record.Kind != "sample" || record.Layout.Length > 256 || record.Layout.Any(id => !ReplayChunkStore.ValidGeometryId(id)))
@@ -201,11 +203,13 @@ public sealed class ReplayHistoryService : BackgroundService
     }
     private static bool ValidBlock(ReplayBlock b) => b != null && ValidCell(b.Cell) && ValidCell(b.Min) && ValidCell(b.Max)
         && b.Min.Zip(b.Max).All(p => p.First <= p.Second) && b.Definition != null && b.Definition.Length <= 256
-        && b.Model != null && b.Model.Length <= 1024 && !Path.IsPathRooted(b.Model) && !b.Model.Split('/', '\\').Contains("..")
+        && ValidAssetPath(b.Model)
         && b.Mod != null && b.Mod.Length <= 256 && b.Topology != null && b.Topology.Length <= 64
         && b.Translation != null && ValidVector(b.Translation, 3) && b.Rotation != null && ValidVector(b.Rotation, 4)
         && b.Color != null && ValidVector(b.Color, 3) && double.IsFinite(b.Integrity) && b.Integrity >= 0 && b.Integrity <= 1
         && double.IsFinite(b.Build) && b.Build >= 0 && b.Build <= 1;
+    private static bool ValidAssetPath(string? path) => path != null && path.Length <= 1024
+        && !Path.IsPathRooted(path) && !path.Contains(':') && !path.StartsWith('\\') && !path.Split('/', '\\').Contains("..");
     private static bool ValidCell(int[]? cell) => cell != null && cell.Length == 3 && cell.All(v => v >= -1000000 && v <= 1000000);
     private static bool ValidVector(double[]? vector, int length) => vector == null || vector.Length == length && vector.All(double.IsFinite);
 

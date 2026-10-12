@@ -146,7 +146,7 @@ internal sealed class ReplayGridCapture : IDisposable
             Integrity = Math.Round(block.MaxIntegrity > 0 ? block.Integrity / block.MaxIntegrity : 0, 3), Build = Math.Round(block.BuildLevelRatio, 3)
         };
     }
-    private static string LogicalModel(string model, string modPath)
+    internal static string LogicalModel(string model, string modPath)
     {
         var path = (model ?? "").Replace('\\', '/');
         foreach (var root in new[] { modPath, VRage.FileSystem.MyFileSystem.ContentPath })

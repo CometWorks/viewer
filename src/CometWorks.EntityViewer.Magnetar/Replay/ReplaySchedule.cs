@@ -39,6 +39,8 @@ internal sealed class ReplaySchedule
             && Distance(record.Velocity, _written.Velocity) < 0.1
             && Distance(record.AngularVelocity, _written.AngularVelocity) < 0.05
             && Distance(record.Rotation, _written.Rotation) < (record.High ? 0.001 : 0.01)
+            && Distance(record.Gravity, _written.Gravity) < 0.01 && Distance(record.Color, _written.Color) < 0.01
+            && record.Model == _written.Model && record.Mod == _written.Mod && record.Detail == _written.Detail
             && Distance(record.Size, _written.Size) < 0.01 && record.Source == _written.Source && record.Name == _written.Name)
             return false;
         _written = record;

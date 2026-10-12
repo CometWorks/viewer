@@ -18,3 +18,8 @@
 #status { margin: 0; min-height: 1.5em; font-size: .85rem; overflow-wrap: anywhere; }
 #load, #play { color: var(--button-text); }
 @media (max-width: 860px) { .replay-workspace { height: 85dvh; min-height: 540px; } }
+
+#replayViewport { position: relative; }
+#playerLabels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.replay-player-label { position: absolute; left: 0; top: 0; padding: 2px 5px; border-radius: 4px; background: #101820dd; color: #fff; font-size: 12px; white-space: nowrap; }
+#replayHover { position: absolute; z-index: 2; left: 12px; bottom: 12px; max-width: min(540px, calc(100% - 24px)); max-height: 60%; overflow: auto; margin: 0; padding: 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; pointer-events: none; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }

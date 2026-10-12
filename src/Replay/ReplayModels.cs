@@ -21,6 +21,10 @@ public sealed class ReplayRecord
     public double[]? Size { get; set; }
     public double[]? Velocity { get; set; }
     public double[]? AngularVelocity { get; set; }
+    public double[]? Gravity { get; set; }
+    public string Model { get; set; } = "";
+    public string Mod { get; set; } = "";
+    public double[]? Color { get; set; }
     public double Value { get; set; }
     public int Count { get; set; }
     public bool High { get; set; }

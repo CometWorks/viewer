@@ -156,19 +156,22 @@
         <p id="status" role="status" aria-live="polite">Connecting to recording history…</p>
         <section class="card replay-inspector">
             <label>Focus entity<select id="entity"><option value="">All entities</option></select></label>
-            <p class="hint">Recorded block layouts, removals, and positions. Red tint = lower integrity; wireframe blocks = missing models; green = player. Samples are held until the next observation; missing coverage is hidden.</p>
+            <p class="hint">Recorded block layouts, removals, and positions. Hover for block integrity, motion and source diagnostics. Wireframe blocks indicate missing models; player labels identify recorded characters. Samples are held until the next observation; missing coverage is hidden.</p>
             <p id="geometryQuality" class="hint" role="status"></p>
             <button id="contentFolder" type="button">Choose game Content folder</button>
             <button id="modsFolder" type="button">Choose Mods folder</button>
-            <p class="hint">Uses recorded blocks with configured server assets or your local game folders. Asset versions, textures, debris, fine deformation, and animated subparts are not recorded.</p>
+            <p class="hint">Uses recorded blocks with configured server assets or your local game folders. History preloads available models and textures. Asset versions, debris, fine deformation, animation poses and dynamic subparts are not recorded.</p>
             <label>Events<select id="eventFilter"><option value="">All events</option><option value="damage">Damage</option><option value="physics">Suspected physics instability</option><option value="gap">Recording gaps</option></select></label>
+            <button id="downloadHistory" type="button">Download event log</button>
             <div id="events" class="replay-events"></div>
             <pre id="evidence" aria-label="Recorded evidence">Select an event to inspect its evidence.</pre>
         </section>
     </template>
     <template id="historyWorkspace">
         <section class="replay-workspace" aria-label="Recording history">
-            <div id="replayViewport" aria-label="Recorded grids, destruction, and player positions"></div>
+            <div id="replayViewport" aria-label="Recorded grids, destruction, and player positions">
+                <div id="playerLabels"></div><pre id="replayHover" role="status" hidden></pre>
+            </div>
             <section class="replay-timeline" aria-label="Replay controls">
                 <div class="replay-transport"><button id="play" type="button" disabled>Play</button><label>Speed<select id="speed"><option value="1">1×</option><option value="5">5×</option><option value="15">15×</option></select></label><output id="clock"></output><span id="quality"></span></div>
                 <input id="scrub" type="range" min="0" max="1" value="0" step="100" aria-label="Replay time" disabled>

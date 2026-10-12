@@ -3745,6 +3745,8 @@ function applyTrackedTexture(selection, textureToken, options = {}, preloadedTex
         return;
     }
 
+    if (preloadedTextures?.has(preloadedTextureKey(selection, options))) return; // Explicitly unavailable or over the preload budget.
+
     loadTrackedTexture(selection, textureToken, options)
         .then(texture => {
             if (texture) apply(texture);
@@ -4980,4 +4982,48 @@ function addSummary(label, value) {
     dt.textContent = label;
     dd.textContent = value || "-";
     els.sceneSummary.append(dt, dd);
+}
+
+// History uses the same UVs, material groups, glass, normal maps and HSV paint shader.
+// Context ownership stays separate from the live scene so scrubbing only rebuilds changed pages.
+export function createReplayRenderContext() {
+    return { ...createRenderContext(textureStatsToken, new Map()), textureSlots: 0, textureLoads: new Map(), disposed: false };
+}
+
+export async function prepareReplayModel(model, context) {
+    if (context.disposed) return null;
+    await ensureTransparentMaterialDefinitionsLoaded();
+    if (context.disposed) return null;
+    const selections = new Map();
+    for (const group of model.groups) {
+        const technique = String(group.technique || "MESH").toUpperCase();
+        const textures = materialTexturesForGroup(group, null, transparentMaterialForGroup(group, technique));
+        addModelMaterialTextureSelections((selection, options) => addTextureSelection(selections, selection, options),
+            textures, technique, modelMaterialRenderMode(technique), isModelMaterialColorMaskable(group, technique, textures), model.rootId || "");
+    }
+    for (const [key, item] of selections) {
+        if (context.preloadedTextures.has(key)) continue;
+        context.preloadedTextures.set(key, null);
+        if (context.textureSlots++ >= 256) continue;
+        context.textureLoads.set(key, loadTrackedTexture(item.selection, context.textureToken, item.options)
+            .then(texture => { if (!context.disposed) context.preloadedTextures.set(key, texture); })
+            .catch(() => {})); // Missing assets remain visible in asset diagnostics.
+    }
+    await Promise.all([...selections.keys()].map(key => context.textureLoads.get(key)));
+    if (context.disposed) return null;
+    return {
+        geometry: sharedModelGeometry(model, null, context),
+        materials: model.groups.map(group => sharedModelMaterial(model, group, {}, context)),
+    };
+}
+
+export function createReplayModelBatch(renderable, instances) {
+    return createInstancedBatchMesh("history", { ...renderable, instances }, new THREE.Color());
+}
+
+export function disposeReplayRenderContext(context) {
+    context.disposed = true;
+    for (const geometry of context.geometries.values()) geometry.dispose();
+    for (const material of context.materials.values()) material.dispose();
+    context.geometries.clear(); context.materials.clear(); context.preloadedTextures.clear();
 }

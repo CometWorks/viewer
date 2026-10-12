@@ -44,9 +44,30 @@ try
     detector.Observe(spinning, 1000, out var second);
     Check(!first && second, "Physics detector must require consecutive abnormal observations");
 
+    var appearance = new ReplaySchedule();
+    appearance.Observe(Sample(0), 0, out _);
+    var character = Sample(1000); character.Model = "Models/Characters/Astronaut.mwm"; character.Color = [0.5, 0, 0]; character.Gravity = [0, -9.81, 0];
+    Check(appearance.Observe(character, 1000, out _), "New appearance and gravity must be recorded while stationary");
+    var unchanged = Sample(2000); unchanged.Model = character.Model; unchanged.Color = character.Color; unchanged.Gravity = character.Gravity;
+    Check(!appearance.Observe(unchanged, 2000, out _), "Unchanged appearance and gravity must retain idle suppression");
+    unchanged = Sample(3000); unchanged.Model = character.Model; unchanged.Color = character.Color; unchanged.Gravity = [0, -5, 0];
+    Check(appearance.Observe(unchanged, 3000, out _), "Gravity changes must survive suppression");
+
     var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var batch = new ReplayBatch { Session = Guid.NewGuid().ToString("N"), World = "world", Records = [new ReplayRecord { At = now - 2000, Kind = "health", Value = 1 }, new ReplayRecord { At = now - 2000, Kind = "sample", Entity = "9223372036854775807", Position = [1, 2, 3] }] };
     var chunk = new ReplayChunk { Id = ReplayChunkStore.NewId(now - 2000, 0), Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)) };
+    var appearanceRecord = batch.Records[1];
+    appearanceRecord.Model = "Models/Characters/Astronaut.mwm"; appearanceRecord.Color = [0, -1, 0]; appearanceRecord.Gravity = [0, -9.81, 0];
+    ReplayChunk AppearanceChunk() => new() { Id = chunk.Id, Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)) };
+    Check(ReplayHistoryService.Decode(AppearanceChunk()).Records[1].Gravity![1] == -9.81, "Appearance metadata must survive transport validation");
+    foreach (var path in new[] { "../escape.mwm", "C:\\escape.mwm", "\\server\\escape.mwm" })
+    {
+        appearanceRecord.Model = path;
+        Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Historical model paths must stay logical");
+    }
+    appearanceRecord.Model = ""; appearanceRecord.Gravity = [1, 2];
+    Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Malformed gravity must be rejected");
+    appearanceRecord.Gravity = null; appearanceRecord.Color = null;
     var spoolPath = Path.Combine(root, "spool");
     var spool = new ReplayChunkStore(spoolPath, 8192);
     spool.Put(chunk, now); spool.Put(chunk, now);

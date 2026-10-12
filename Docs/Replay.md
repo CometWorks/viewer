@@ -25,7 +25,12 @@ live agent. Cross-node incident stitching is not implemented. Matching Quasar an
 - Position is the world-space grid bounds center; rotation and size describe the
   oriented bounds. Positions/velocities are rounded to two decimal places,
   quaternions to four. IDs remain strings. Player source identifies their
-  controlled entity. Damage source is the attacker entity reported by the game;
+  controlled entity, while player position/orientation comes from the character when
+  available (including seated or remotely controlling players). Character model
+  path, mod ID and suit color are recorded; without a character, the controlled
+  entity location is explicitly marked approximate. Natural gravity matches the
+  live viewer and is cached for one second per track. These small fields use the
+  existing suppression/heartbeat and retention limits. Damage source is the attacker entity reported by the game;
   zero means unknown, and ownership/player attribution is not inferred.
 - Unchanged observations are suppressed with a 30-second heartbeat. Baseline
   changes under 25 cm and small rotation/velocity changes are suppressed relative
@@ -66,13 +71,26 @@ across the 24-hour cutoff, and the final reference's deletion removes the page.
 Movement samples also record the grid origin separately from its bounds center,
 so asymmetric grids and changing bounds do not displace the historical blocks.
 
-The replay renderer uses the live viewer's MWM parser and armor topology meshes,
-with instanced rendering per page/model. Configured server asset streaming and
-local Content/Mods folders supply models, never a current grid snapshot. Missing
-models use clearly reported wireframe block proxies; missing historical pages
-use bounds only. Assets are not version-pinned: a changed game/mod asset can alter
-the appearance of recorded geometry. Integrity is shown as a red audit tint;
-materials and damage deformation are not exact historical renderings.
+The replay renderer shares the live viewer's MWM parser, UVs, material groups,
+normal maps, glass and HSV paint shader, with instanced rendering per page/model.
+Configured server asset streaming and local Content/Mods folders supply models
+and textures, never a current grid snapshot. It actively preloads assets from all
+loaded historical pages and character appearances, including later observations,
+with four concurrent model jobs, 128 model admissions, 64 MiB of admitted model
+geometry, and 256 texture selections. The shared texture loader bounds file reads
+and GPU uploads. These browser limits do not add server recording work; unavailable
+assets or assets beyond the limits are reported. Only changed pages or pages whose
+missing models became available rebuild while scrubbing. Reloading cancels old
+asset generations and disposes their GPU resources.
+
+Missing models use wireframe block proxies (or generated armor topology); missing
+historical pages use bounds only. Characters use recorded model/paint and nametags
+in their asset's static pose. Missing character assets use a labelled approximate
+humanoid. Animation bones, equipment/skin overrides, LCD contents, runtime lights,
+emissive changes, terrain, debris and fine deformation are not reconstructed.
+Assets are not version-pinned: a changed game/mod asset can alter the appearance of
+recorded geometry. Integrity is available in block diagnostics; the fallback armor
+also uses a red integrity tint.
 
 ## Performance and limits
 
@@ -150,6 +168,14 @@ new recording session. Sessions are separate even if game entity IDs are reused.
 Queries include short pre-roll so unchanged entities are visible at the window
 start. Seeking backward restores the recorded layout directly, including blocks
 that were subsequently destroyed. Missing geometry is explicitly reported.
+The selected observation anchors the same natural-gravity reference frame as the
+live viewer; old recordings without gravity retain grid-relative orientation.
+Hover over a grid/block or player for observation age, capture cadence, motion,
+gravity, model availability, integrity, and source entity. Names/details are plain
+text. The event list describes damage, suspected instability, departures, cadence
+transitions and layout changes. Download the selected entity's event log (or all
+entities) as timestamped text. Layout changes are observations, not proof of damage
+or player responsibility.
 
 ## Checks
 

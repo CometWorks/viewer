@@ -164,3 +164,21 @@ test("snapshots without a gravity frame retain grid alignment and standalone vox
     configureRelativeView(asteroid);
     assertVector(new THREE.Vector3(15, 25, 35).applyMatrix4(state.viewTransform), new THREE.Vector3());
 });
+
+test('history models retain UVs, groups and the main viewer paint batch shader', async () => {
+    const { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, disposeReplayRenderContext } = await import(rendererUrl);
+    const context = createReplayRenderContext();
+    const model = {logicalPath:'history.mwm',positions:new Float32Array([0,0,0,1,0,0,0,1,0]),
+        uvs:new Float32Array([0,0,1,0,0,1]),indices:new Uint16Array([0,1,2]),
+        groups:[{start:0,count:3,materialIndex:0,materialName:'armor',technique:'MESH',textures:{}}]};
+    const prepared = await prepareReplayModel(model,context);
+    assert.equal(prepared.geometry.getAttribute('uv').count,3);
+    assert.equal(prepared.geometry.groups.length,1);
+    assert.ok(prepared.materials[0].isMeshStandardMaterial);
+    const mesh = createReplayModelBatch(prepared,[{matrix:new THREE.Matrix4(),colorMask:{x:.3,y:-.1,z:.2},block:{cell:[1,2,3]}}]);
+    assert.equal(mesh.count,1);
+    assert.ok(mesh.geometry.getAttribute('sePatternUvOffset'));
+    assert.deepEqual(mesh.userData.blocks[0].cell,[1,2,3]);
+    mesh.geometry.dispose();mesh.dispose();disposeReplayRenderContext(context);
+    assert.equal(await prepareReplayModel(model,context),null);
+});
