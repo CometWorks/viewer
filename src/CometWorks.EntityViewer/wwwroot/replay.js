@@ -73,6 +73,12 @@ async function start() {
             el("server").append(option);
         }
         if (!servers.length) { el("status").textContent = "No recordings yet. The server companion records automatically while a world is running."; return; }
+        if (initialServer && !servers.some(server => [server.serverId, server.agentId].includes(initialServer))) {
+            const missing = new Option("No recording for the selected server", "", true, true);
+            missing.disabled = true; el("server").prepend(missing); el("server").value = "";
+            el("status").textContent = "No recording is available for this server. Choose another server to inspect its history.";
+            return;
+        }
         await load();
     } catch (error) { el("status").textContent = error.message; }
 }
@@ -217,4 +223,5 @@ for (const [id, pick] of [["contentFolder", pickContentFolder], ["modsFolder", p
     try { await pick(); gridRenderer.clear(); draw(); } catch (error) { if (error.name !== "AbortError") el("status").textContent = error.message; }
 });
 window.addEventListener("pagehide", () => { abort?.abort(); resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose(); for (const group of grids.values()) gridRenderer.release(group); gridRenderer.dispose(); geometry.dispose(); eventGeometry.dispose(); eventMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose(); Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); }, { once: true });
+window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });
 start();

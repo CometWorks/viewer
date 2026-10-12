@@ -102,7 +102,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
     public IEnumerable<QuasarNavItem> GetNavItems()
     {
-        yield return new QuasarNavItem("Entity history", PluginRoutePrefix + "/replay.html", "history", QuasarNavZones.Tools, 100, QuasarPolicyNames.CanManageSecurity);
+        yield return new QuasarNavItem("Entity history", PluginRoutePrefix + "/index.html?view=history", ViewerIcons.History, QuasarNavZones.Tools, 100, QuasarPolicyNames.CanManageSecurity);
     }
 
     public IEnumerable<QuasarExtensionContribution> GetExtensions()

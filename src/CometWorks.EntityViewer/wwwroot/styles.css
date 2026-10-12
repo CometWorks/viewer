@@ -268,3 +268,11 @@ button.secondary:hover { background: color-mix(in srgb, var(--input-bg) 82%, var
     .panel { max-height: none; border-right: 0; border-bottom: 1px solid var(--border); }
     .viewport-wrap { min-height: 70vh; }
 }
+
+.mode-controls { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.viewer-modes { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.viewer-modes a { flex: 1; padding: 8px; color: var(--muted); text-align: center; text-decoration: none; border-radius: var(--radius-sm); font-size: .85rem; }
+.viewer-modes a[aria-current="page"] { background: var(--panel-2); color: var(--accent); }
+.viewer-modes a:hover { color: var(--text); }
+.viewer-modes a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.viewer-modes a[aria-disabled="true"] { opacity: .5; cursor: default; }
