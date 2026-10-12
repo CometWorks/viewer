@@ -1,6 +1,7 @@
 import { Quaternion } from "three";
+import { movementState } from "./replay-movement.js";
 
-export const eventKinds = new Set(["damage", "physics", "gap", "action", "death", "explosion", "block-added", "block-removed", "split", "merge"]);
+export const eventKinds = new Set(["damage", "physics", "gap", "action", "movement", "death", "explosion", "block-added", "block-removed", "split", "merge", "voxel-invalidated", "voxel-coverage"]);
 export function buildReplay(batches) {
     const records = batches.flatMap(batch => (batch.records || []).map(record => ({ ...record, session: batch.session, world: batch.world })))
         .sort((a, b) => a.at - b.at || (a.elapsed || 0) - (b.elapsed || 0));
@@ -11,7 +12,17 @@ export function buildReplay(batches) {
         if (!tracks.has(key)) tracks.set(key, []);
         tracks.get(key).push(record);
     }
+    const terrainTracks = new Map();
+    for (const record of records) {
+        if (!["voxel-sample", "voxel-invalidated"].includes(record.kind)) continue;
+        const key = `${record.session}/${record.entity}`;
+        if (!terrainTracks.has(key)) terrainTracks.set(key, []);
+        terrainTracks.get(key).push(record);
+    }
+    const modelParts = new Map(batches.flatMap(batch => Object.entries(batch.modelParts || {})));
+    const voxels = new Map(batches.flatMap(batch => Object.entries(batch.voxels || {})));
     const geometry = new Map(batches.flatMap(batch => Object.entries(batch.geometry || {})));
+    const movements = new Map();
     const actions = new Map(), gaps = new Map(), discontinuities = new Map();
     for (const record of records) {
         if (["split", "merge"].includes(record.kind)) for (const entity of [record.entity, record.related].filter(Boolean)) {
@@ -19,13 +30,13 @@ export function buildReplay(batches) {
             if (!discontinuities.has(key)) discontinuities.set(key, []);
             discontinuities.get(key).push(record);
         }
-        const map = record.kind === "gap" ? gaps : ["action", "death"].includes(record.kind) ? actions : null;
+        const map = record.kind === "movement" ? movements : record.kind === "gap" ? gaps : ["action", "death"].includes(record.kind) ? actions : null;
         if (!map) continue;
         const key = record.kind === "gap" ? record.session : `${record.session}/${record.entity}`;
         if (!map.has(key)) map.set(key, []);
         map.get(key).push(record);
     }
-    return { geometry, records, tracks, actions, gaps, discontinuities, events: records.filter(r => eventKinds.has(r.kind)), health: records.filter(r => r.kind === "health") };
+    return { modelParts, voxels, terrainTracks, geometry, records, tracks, actions, movements, gaps, discontinuities, events: records.filter(r => eventKinds.has(r.kind)), health: records.filter(r => r.kind === "health") };
 }
 
 export function lastAt(records, at) {
@@ -46,13 +57,16 @@ export function frameAt(replay, at, entity = "", interpolate = false) {
         if (gap && gap.at >= sample.at) continue;
         if (interpolate) sample = interpolateSample(replay, track, sample, at);
         if (sample.type === "player") {
+            const movement = lastAt(replay.movements.get(`${session}/${sample.character}`) || [], at);
+            if (movement && movement.at >= sample.at && (!gap || movement.at > gap.at)) sample = { ...sample, movement: movement.movement, movementAt: movement.at };
             const action = lastAt(replay.actions.get(`${session}/${sample.character}`) || [], at);
             if (action && action.at >= sample.at && (!gap || action.at > gap.at)) sample = { ...sample, actions: action.actions, weapon: action.weapon, actionAt: action.at };
         }
         samples.push(sample);
     }
-    const selected = entity ? samples.find(s => s.entity === entity) : null;
-    return { samples: selected ? samples.filter(s => s.entity === entity || distance(s.position, selected.position) <= 1000) : entity ? [] : samples, health, gap: !!gap && at - gap.at < 35000 };
+    const anchor = replay.contextEntity || entity;
+    const selected = anchor ? samples.find(s => s.entity === anchor) : null;
+    return { samples: selected ? samples.filter(s => distance(s.position, selected.position) <= 500) : anchor ? [] : samples, health, gap: !!gap && at - gap.at < 35000 };
 }
 
 export function distance(a, b) { return Math.hypot(...a.map((v, i) => v - b[i])); }
@@ -99,6 +113,7 @@ export function describeEvent(record) {
     const detail = record.detail ? ` · ${record.detail}` : "";
     if (record.kind === "damage") return `${subject}: ${Number(record.value || 0).toFixed(1)} damage in ${record.count || 1} hit(s) · source ${record.source || "unknown"}${detail}`;
     if (record.kind === "physics") return `${subject}: suspected physics instability · speed ${speed(record).toFixed(2)} m/s${detail}`;
+    if (record.kind === "movement") return `${subject}: ${movementState(record.movement)} (state ${record.movement})${detail}`;
     if (record.kind === "action") return `${subject}: ${actionLabels(record.actions)}${detail}`;
     if (["split", "merge"].includes(record.kind)) return `${subject}: ${record.kind} → ${record.related || "unknown"}${detail}`;
     if (record.kind === "removed") return `${subject}: no longer observed (removal or departure; cause not inferred)`;
@@ -114,6 +129,7 @@ export function replayJournal(replay) {
             const details = [];
             if (!previous) details.push("First observation in loaded history");
             else {
+                if (record.movement !== previous.movement) details.push(`Movement: ${movementState(record.movement)}`);
                 if (!!record.high !== !!previous.high) details.push(record.high ? "Incident detail started" : "Baseline recording resumed");
                 if (record.layoutId !== previous.layoutId || JSON.stringify(record.layout) !== JSON.stringify(previous.layout)) {
                     const before = blockCountAt(replay, previous), after = blockCountAt(replay, record);
@@ -157,12 +173,12 @@ export function eventMatches(replay, event, entity) {
 export function actionLabels(flags) {
     if (flags == null) return "actions not recorded";
     const labels = ["aiming", "firing / tool primary", "tool secondary", "crouching", "sprinting", "seated / using", "dead"];
-    return labels.filter((_, i) => flags & (1 << i)).join(", ") || "idle / moving";
+    return labels.filter((_, i) => flags & (1 << i)).join(", ") || "no active action";
 }
 
 export function eventLane(record) {
     if (["damage", "explosion", "death"].includes(record.kind)) return 0;
-    if (record.kind === "action") return 1;
+    if (["action", "movement"].includes(record.kind)) return 1;
     if (["block-added", "block-removed", "split", "merge", "removed", "observation"].includes(record.kind)) return 2;
     if (record.kind === "physics") return 3;
     if (record.kind === "health") return 4;
@@ -210,4 +226,54 @@ export function evidenceAt(replay, event) {
         lineage: replay.events.filter(e => e.session === event.session && e.at <= event.at && ["split", "merge"].includes(e.kind) && [e.entity, e.related].includes(event.entity)).slice(-16),
         attribution: "Reported source and observed control only. Ownership, proximity and correlation do not establish responsibility.",
         timing: "Event timestamps are observations; layouts change at the next captured layout sample. Animation and interpolated motion are reconstructed." };
+}
+
+export function terrainAt(replay, at, session) {
+    if (!session) return [];
+    const gap = lastAt(replay.gaps.get(session) || [], at);
+    return [...replay.terrainTracks.values()].map(track => {
+        const record = lastAt(track, at);
+        const invalid = lastAt(track.filter(r => r.kind === "voxel-invalidated"), at);
+        return invalid && record?.value <= invalid.at ? null : record;
+    }).filter(record =>
+        record?.session === session && record.kind === "voxel-sample" && at - record.at <= 15000
+        && (!gap || record.value > gap.at) && replay.voxels.has(record.terrainId));
+}
+
+// Keep the context anchored to the entity that opened history. Selecting another focus
+// must not progressively drag unrelated entities/assets into the replay.
+export function pruneReplayContext(replay, entity) {
+    const anchorEntity = entity || replay.records.find(r => r.kind === "sample")?.entity;
+    if (!anchorEntity) return replay;
+    const anchors = new Map([...replay.tracks].filter(([, track]) => track[0].entity === anchorEntity).map(([key, track]) => [track[0].session, track]));
+    const near = (record, anchor) => record?.kind === "sample" && anchor?.kind === "sample" && record.position && anchor.position && distance(record.position, anchor.position) <= 500;
+    const retained = new Set();
+    for (const [key, track] of replay.tracks) {
+        const anchor = anchors.get(track[0].session);
+        if (!anchor) continue;
+        if (track[0].entity === anchorEntity || track.some(r => { const a = lastAt(anchor, r.at); return a && r.at - a.at <= 35000 && near(r, a); })
+            || anchor.some(a => { const r = lastAt(track, a.at); return r && a.at - r.at <= 35000 && near(r, a); })) retained.add(key);
+    }
+    const nearbyTerrain = new Set();
+    for (const record of replay.records) if (record.kind === "voxel-sample") {
+        const page = replay.voxels.get(record.terrainId), anchor = lastAt(anchors.get(record.session) || [], record.at);
+        const radius = page ? Math.hypot(...page.size) * 2 ** page.lod / 2 : 0;
+        if (anchor?.position && record.position && distance(record.position, anchor.position) <= 500 + radius) nearbyTerrain.add(`${record.session}/${record.entity}`);
+    }
+    const records = replay.records.filter(r => {
+        if (["health", "gap"].includes(r.kind)) return true;
+        if (retained.has(`${r.session}/${r.entity}`) || retained.has(`${r.session}/${r.source}`) || nearbyTerrain.has(`${r.session}/${r.entity}`)) return true;
+        const a = lastAt(anchors.get(r.session) || [], r.at);
+        return r.kind !== "sample" && a?.position && r.position && distance(r.position, a.position) <= 500;
+    });
+    const pageIds = new Set(records.flatMap(r => r.layout || []));
+    const terrainIds = new Set(records.map(r => r.terrainId).filter(Boolean));
+    const partIds = new Set([...pageIds].flatMap(id => (replay.geometry.get(id) || []).map(block => block.partsId).filter(Boolean)));
+    const result = buildReplay([...new Set(records.map(r => r.session))].map(session => ({ session,
+        world: records.find(r => r.session === session)?.world, records: records.filter(r => r.session === session),
+        geometry: Object.fromEntries([...replay.geometry].filter(([id]) => pageIds.has(id))),
+        modelParts: Object.fromEntries([...replay.modelParts].filter(([id]) => partIds.has(id))),
+        voxels: Object.fromEntries([...replay.voxels].filter(([id]) => terrainIds.has(id))) })));
+    result.contextEntity = anchorEntity;
+    return result;
 }

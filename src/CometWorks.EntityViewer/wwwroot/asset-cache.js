@@ -19,6 +19,13 @@ function createCacheState() {
 export async function loadStreamedAsset(resolved, fetchBlob) {
     const key = /^[a-f0-9]{64}$/i.test(resolved.cacheKey || "") ? resolved.cacheKey : "";
     if (!key) return await fetchBlob(); // Compatibility with servers predating persistent caching.
+    // Web Crypto requires a secure context. Plain HTTP viewers can still stream,
+    // but must not persist unverified bytes under a content-addressed revision key.
+    if (resolved.contentHash && !globalThis.crypto?.subtle) {
+        const blob = await fetchBlob();
+        if (blob.size !== resolved.size) throw new Error("Asset changed during download. Reload to resolve the current revision.");
+        return blob;
+    }
     const context = current;
     const available = context.memory.get(key) || context.writes.get(key)?.blob;
     if (available && available.size === resolved.size) {
@@ -65,7 +72,7 @@ async function loadUncached(context, resolved, key, fetchBlob) {
             const cached = await store.cache.match(url);
             if (cached) {
                 const blob = await cached.blob();
-                if (blob.size === resolved.size) {
+                if (await validBytes(blob, resolved)) {
                     count("Streamed asset cache hits");
                     remember(context, key, blob);
                     return blob;
@@ -80,6 +87,7 @@ async function loadUncached(context, resolved, key, fetchBlob) {
 
     const blob = await fetchBlob();
     count("Streamed asset downloads");
+    if (!await validBytes(blob, resolved)) throw new Error("Asset changed during download or failed integrity verification. Reload to resolve the current revision.");
     if (blob.size === resolved.size) {
         remember(context, key, blob);
         if (store && !context.invalidated && !context.writesDisabled && blob.size <= MAX_CACHED_FILE_BYTES) {
@@ -172,4 +180,12 @@ function warnCacheUnavailable(error) {
     if (cacheWarningShown) return;
     cacheWarningShown = true;
     log(`Browser asset cache unavailable; assets will still stream from the server (${error.name || "storage error"}).`, true);
+}
+
+async function validBytes(blob, resolved) {
+    if (blob.size !== resolved.size) return false;
+    if (!resolved.contentHash) return true; // Older server protocol.
+    if (!/^[a-f0-9]{64}$/i.test(resolved.contentHash)) return false;
+    const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("") === resolved.contentHash.toLowerCase();
 }

@@ -327,6 +327,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                     Found = true,
                     AssetToken = token.Id,
                     CacheKey = asset.CacheKeyForUser(userId),
+                    ContentHash = asset.ContentHash,
                     ExpiresAtUtc = token.ExpiresAtUtc,
                     LogicalPath = asset.LogicalPath,
                     RootId = asset.RootId,

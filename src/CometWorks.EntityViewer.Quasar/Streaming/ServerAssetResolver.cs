@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -37,10 +38,20 @@ public sealed class ServerAssetResolver(
         {
             var modAsset = TryResolveModAsset(session, settings, rootId, normalized.ModName, normalized.Path);
             if (modAsset is not null)
-                return modAsset;
+                return await Fingerprint(modAsset, cancellationToken).ConfigureAwait(false);
         }
 
-        return TryResolveContentAsset(settings, normalized.Path);
+        return await Fingerprint(TryResolveContentAsset(settings, normalized.Path), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<ResolvedServerAsset?> Fingerprint(ResolvedServerAsset? asset, CancellationToken token)
+    {
+        if (asset == null) return null;
+        // Quasar I/O only, never the simulation thread. Hash the actual entry bytes: updates
+        // can preserve both file length and timestamps (especially Workshop ZIP entries).
+        await using var stream = asset.OpenRead();
+        asset.ContentHash = Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
+        return asset;
     }
 
     private ResolvedServerAsset? TryResolveContentAsset(

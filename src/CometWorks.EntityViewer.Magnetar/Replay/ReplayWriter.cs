@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 using CometWorks.EntityViewer.Replay;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -20,7 +21,7 @@ internal sealed class ReplayWriter : IDisposable
         NullValueHandling = NullValueHandling.Ignore,
         DefaultValueHandling = DefaultValueHandling.Ignore
     };
-    private readonly BlockingCollection<Tuple<ReplayRecord, long>> _queue = new BlockingCollection<Tuple<ReplayRecord, long>>(4096);
+    private readonly BlockingCollection<Tuple<ReplayRecord, long, Action<ReplayRecord>>> _queue = new BlockingCollection<Tuple<ReplayRecord, long, Action<ReplayRecord>>>(4096);
     private readonly Task _worker;
     private readonly string _session;
     private readonly string _world;
@@ -28,6 +29,7 @@ internal sealed class ReplayWriter : IDisposable
     private long _dropped;
     private long _lossVersion;
     public long LossVersion => Interlocked.Read(ref _lossVersion);
+    private readonly ConditionalWeakTable<ReplayVoxelPage, Tuple<string, byte[]>> _terrain = new ConditionalWeakTable<ReplayVoxelPage, Tuple<string, byte[]>>();
     private readonly ReplayLayoutBuilder _layouts = new ReplayLayoutBuilder();
     private ReplayChunkStore _store;
     private string _error = "Recorder starting.";
@@ -49,10 +51,10 @@ internal sealed class ReplayWriter : IDisposable
         });
     }
 
-    public void Add(ReplayRecord record)
+    public void Add(ReplayRecord record, Action<ReplayRecord> prepare = null)
     {
         if (_queue.IsAddingCompleted) return;
-        try { if (!_queue.TryAdd(Tuple.Create(record, LossVersion))) { Interlocked.Increment(ref _dropped); Interlocked.Increment(ref _lossVersion); } }
+        try { if (!_queue.TryAdd(Tuple.Create(record, LossVersion, prepare))) { Interlocked.Increment(ref _dropped); Interlocked.Increment(ref _lossVersion); } }
         catch (InvalidOperationException) { }
     }
 
@@ -75,7 +77,7 @@ internal sealed class ReplayWriter : IDisposable
             while (!_queue.IsCompleted)
             {
                 var records = new List<ReplayRecord>();
-                var captured = new List<Tuple<ReplayRecord, long>>();
+                var captured = new List<Tuple<ReplayRecord, long, Action<ReplayRecord>>>();
                 var until = DateTime.UtcNow.AddSeconds(5);
                 while (captured.Count < 512 && DateTime.UtcNow < until && !_queue.IsCompleted)
                     if (_queue.TryTake(out var item, 100)) captured.Add(item);
@@ -86,8 +88,20 @@ internal sealed class ReplayWriter : IDisposable
                 {
                     var record = item.Item1;
                     if (item.Item2 != version && record.Kind.StartsWith("layout-", StringComparison.Ordinal)) continue;
+                    try { item.Item3?.Invoke(record); }
+                    catch { /* Authored model metadata unavailable; recorded block topology remains a fallback. */ }
                     if (_layouts.Apply(record)) continue;
                     var parts = _layouts.Attach(record);
+                    if (record.Terrain != null)
+                    {
+                        var encoded = _terrain.GetValue(record.Terrain, page => {
+                            var data = ReplayChunkStore.Compress(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(page, Json)));
+                            return Tuple.Create(ReplayChunkStore.GeometryId(data), data);
+                        });
+                        record.TerrainId = encoded.Item1;
+                        parts[record.TerrainId] = encoded.Item2;
+                        record.Terrain = null;
+                    }
                     var extra = parts.Where(p => !geometry.ContainsKey(p.Key)).Sum(p => p.Value.Length);
                     if (records.Count > 0 && (records.Count >= 128 || Math.Max(record.At, records.Max(r => r.At)) - Math.Min(record.At, records.Min(r => r.At)) > 60000 || geometry.Sum(p => p.Value.Length) + extra > 2 * 1024 * 1024))
                     { Write(records, geometry); records.Clear(); geometry.Clear(); }
@@ -107,6 +121,7 @@ internal sealed class ReplayWriter : IDisposable
             }
         }
         catch (Exception e) { _error = "Replay storage unavailable: " + e.Message; }
+        finally { _layouts.Clear(); }
     }
 
     private void Write(List<ReplayRecord> records, Dictionary<string, byte[]> geometry)

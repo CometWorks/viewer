@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { createReplayCharacter } from "./replay-character.js";
 import { armorFallbackModelForDefinition } from "./armor-fallback-models.js";
-import { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, disposeReplayRenderContext } from "./entity-renderer.js";
+import { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, disposeReplayRenderContext, displayColorForBlock } from "./entity-renderer.js";
 import { disposeTextureCache } from "./content-folder.js";
 import { resolveModelAsset, clearModelCache } from "./mwm-loader.js";
 
@@ -11,6 +11,7 @@ export class ReplayGrids {
         this.changed = changed;
         this.models = new Map();
         this.armor = new Map();
+        this.parts = new Map();
         this.box = new THREE.BoxGeometry(1, 1, 1);
         this.solid = new THREE.MeshLambertMaterial({ vertexColors: false });
         this.proxy = new THREE.MeshBasicMaterial({ wireframe: true });
@@ -20,10 +21,11 @@ export class ReplayGrids {
         this.revision = 0;
         this.modelBytes = 0;
         this.context = createReplayRenderContext();
+        this.waiters = [];
     }
     clear() {
         this.epoch++; clearModelCache();
-        this.queue.length = 0;
+        this.queue.length = 0; this.waiters.splice(0).forEach(resolve => resolve());
         disposeReplayRenderContext(this.context); disposeTextureCache();
         this.context = createReplayRenderContext();
         this.models.clear(); this.modelBytes = 0; this.revision++;
@@ -36,7 +38,7 @@ export class ReplayGrids {
     model(block) {
         const key = `${block.mod || ""}/${block.model || ""}`;
         let entry = this.models.get(key);
-        if (!entry && block.model && this.models.size < 128) {
+        if (!entry && block.model) {
             entry = { pending: true };
             this.models.set(key, entry);
             this.queue.push({ key, block, entry, epoch: this.epoch });
@@ -59,11 +61,20 @@ export class ReplayGrids {
     preload(replay) {
         // Start with player appearances, then all historical pages, including future destruction stages.
         for (const record of replay.records) if (record.type === "player" && record.model) this.model(record);
-        for (const page of replay.geometry.values()) for (const block of page) this.model(block);
+        this.parts = replay.modelParts || new Map();
+        for (const page of replay.geometry.values()) for (const block of page) for (const source of this.sources(block)) this.model(source);
+        return this.active || this.queue.length ? new Promise(resolve => this.waiters.push(resolve)) : Promise.resolve();
+    }
+    sources(block) {
+        const parts = this.parts.get(block.partsId)?.parts;
+        if (!parts) return [block];
+        const patterns = typeof block.patterns === "string" ? Uint8Array.from(atob(block.patterns), c => c.charCodeAt(0)) : block.patterns;
+        return parts.map((part, index) => ({ ...block, model: part.model, partMatrix: part.matrix, recordedBlock: block,
+            patternOffset: { x: patterns?.[index * 4], y: patterns?.[index * 4 + 1], z: patterns?.[index * 4 + 2], w: patterns?.[index * 4 + 3] } }));
     }
     get status() {
         const ready = [...this.models.values()].filter(entry => entry.geometry).length;
-        return `${ready}/${this.models.size} models ready (${[...this.models.values()].filter(entry => entry.error).length} unavailable) · ${this.active + this.queue.length} loading · ${[...this.context.preloadedTextures.values()].filter(Boolean).length}/${this.context.preloadedTextures.size} textures loaded (limits: 128 models, 256 textures)`;
+        return `${ready}/${this.models.size} models ready (${[...this.models.values()].filter(entry => entry.error).length} unavailable) · ${this.active + this.queue.length} loading · ${[...this.context.preloadedTextures.values()].filter(Boolean).length}/${this.context.preloadedTextures.size} textures loaded`;
     }
     pump() {
         while (this.active < 4 && this.queue.length) {
@@ -74,13 +85,12 @@ export class ReplayGrids {
                     if (result.status !== "parsed") { item.entry.error = result.message; return; }
                     const model = result.model;
                     const bytes = (model.blendIndices?.byteLength || 0) + (model.blendWeights?.byteLength || 0) + model.positions.byteLength + model.indices.byteLength + (model.normals?.byteLength || 0) + (model.uvs?.byteLength || 0);
-                    if (this.modelBytes + bytes > 64 * 1024 * 1024) { item.entry.error = "Geometry budget exceeded"; return; }
                     this.modelBytes += bytes;
                     const renderable = await prepareReplayModel(model, context);
                     if (item.epoch !== this.epoch || !renderable) return;
                     Object.assign(item.entry, renderable, { skin: model.bones?.length ? { bones: model.bones, indices: model.blendIndices, weights: model.blendWeights } : null }); this.revision++;
                 }).catch(error => { item.entry.error = error.message; })
-                .finally(() => { this.active--; this.pump(); if (item.epoch === this.epoch) this.changed(); });
+                .finally(() => { this.active--; this.pump(); if (!this.active && !this.queue.length) this.waiters.splice(0).forEach(resolve => resolve()); if (item.epoch === this.epoch) this.changed(); });
         }
     }
     character(sample) {
@@ -100,7 +110,7 @@ export class ReplayGrids {
             if (group.userData.pages.has(id)) continue;
             const page = new THREE.Group();
             const batches = new Map();
-            for (const block of pages.get(id)) {
+            for (const source of pages.get(id)) for (const block of this.sources(source)) {
                 const model = this.model(block);
                 const key = `${model.kind}/${model.key}`;
                 if (!batches.has(key)) batches.set(key, { model, blocks: [] });
@@ -123,22 +133,21 @@ export class ReplayGrids {
                     }
                     matrix.compose(position, rotation, scale);
                     if (model.kind === "model") {
-                        instances.push({ matrix: matrix.clone(), colorMask: mask(block.color), block }); count++; return;
+                        if (block.partMatrix) matrix.makeTranslation(...block.translation).multiply(new THREE.Matrix4().fromArray(block.partMatrix));
+                        instances.push({ matrix: matrix.clone(), colorMask: mask(block.color), patternOffset: block.patternOffset, block: block.recordedBlock || block }); count++; return;
                     }
                     mesh.setMatrixAt(i, matrix);
-                    // Integrity is observed state; red tint is an audit overlay, not reconstructed damage textures.
-                    const hsv = block.color || [0, -1, 0];
-                    const color = new THREE.Color().setHSL(hsv[0], Math.min(1, Math.max(0, hsv[1] + 0.8)), Math.min(0.8, Math.max(0.2, hsv[2] + 0.5)));
-                    color.lerp(new THREE.Color(0xff4050), (1 - (block.integrity ?? 0)) * 0.7);
+                    const color = displayColorForBlock({ colorMaskHsv: mask(block.color) });
                     mesh.setColorAt(i, color); count++;
                 });
                 if (model.kind === "model") mesh = createReplayModelBatch(model, instances);
-                mesh.userData.blocks = blocks;
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                mesh.userData.blocks = blocks.map(block => block.recordedBlock || block);
                 mesh.userData.assetKind = model.kind;
                 mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
                 mesh.computeBoundingSphere(); page.add(mesh);
             }
-            page.userData = { epoch: this.epoch, proxies, count,
+            page.userData = { epoch: this.epoch, proxies, count: pages.get(id).length,
                 pending: [...batches.values()].filter(batch => batch.model.kind !== "model")
                     .flatMap(batch => batch.blocks.filter(block => block.model).map(block => `${block.mod || ""}/${block.model}`)) };
             group.userData.pages.set(id, page); group.add(page);

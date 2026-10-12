@@ -17,10 +17,10 @@ const FLY_MOUSE_SENSITIVITY = 0.0022;
 const FLY_BASE_SPEED = 18;
 const FLY_FAST_MULTIPLIER = 3;
 const FLY_PITCH_LIMIT = Math.PI / 2 - 0.01;
-const AMBIENT_WITH_LIGHTING = 0.16;
+export const AMBIENT_WITH_LIGHTING = 0.16;
 const AMBIENT_WITHOUT_LIGHTING = 1.0;
-const SUN_LIGHT_INTENSITY_SCALE = 2.7;
-const SUN_SHADOW_MAP_SIZE = 4096;
+export const SUN_LIGHT_INTENSITY_SCALE = 2.7;
+export const SUN_SHADOW_MAP_SIZE = 4096;
 const SUN_SHADOW_PADDING_SCALE = 0.08;
 const SUN_SHADOW_MIN_NORMAL_BIAS = 0.02;
 const SUN_SHADOW_TEXEL_NORMAL_BIAS = 2.0;
@@ -625,9 +625,9 @@ function floorGridShadowBounds() {
     return bounds && !bounds.isEmpty() ? bounds : null;
 }
 
-function configureSunShadow(bounds, lightPosition, target) {
-    if (!state.sunLight || !state.sunLight.shadow || !state.sunLight.shadow.camera) return;
-    const camera = state.sunLight.shadow.camera;
+export function configureSunShadow(bounds, lightPosition, target, light = state.sunLight, gridSize = state.currentGridSize || LARGE_GRID_CUBE_SIZE) {
+    if (!light?.shadow?.camera) return;
+    const camera = light.shadow.camera;
     const shadowBounds = bounds && !bounds.isEmpty()
         ? bounds
         : new THREE.Box3().setFromCenterAndSize(target, new THREE.Vector3(100, 100, 100));
@@ -655,7 +655,7 @@ function configureSunShadow(bounds, lightPosition, target) {
     }
 
     const size = shadowBounds.getSize(new THREE.Vector3()).length();
-    const padding = Math.max(state.currentGridSize || LARGE_GRID_CUBE_SIZE, size * SUN_SHADOW_PADDING_SCALE);
+    const padding = Math.max(gridSize, size * SUN_SHADOW_PADDING_SCALE);
     camera.up.copy(up);
     camera.left = minX - padding;
     camera.right = maxX + padding;
@@ -663,16 +663,16 @@ function configureSunShadow(bounds, lightPosition, target) {
     camera.top = maxY + padding;
     camera.near = Math.max(0.5, minDistance - padding);
     camera.far = Math.max(camera.near + 1, maxDistance + padding);
-    configureSunShadowBias(camera);
+    configureSunShadowBias(camera, light, gridSize);
     camera.updateProjectionMatrix();
 }
 
-function configureSunShadowBias(camera) {
+function configureSunShadowBias(camera, light, gridSize) {
     const shadowWidth = Math.max(camera.right - camera.left, camera.top - camera.bottom);
     const texelSize = shadowWidth / SUN_SHADOW_MAP_SIZE;
-    const maxNormalBias = Math.max(SUN_SHADOW_MIN_NORMAL_BIAS, (state.currentGridSize || LARGE_GRID_CUBE_SIZE) * 0.25);
-    state.sunLight.shadow.bias = 0;
-    state.sunLight.shadow.normalBias = clamp(texelSize * SUN_SHADOW_TEXEL_NORMAL_BIAS, SUN_SHADOW_MIN_NORMAL_BIAS, maxNormalBias);
+    const maxNormalBias = Math.max(SUN_SHADOW_MIN_NORMAL_BIAS, gridSize * 0.25);
+    light.shadow.bias = 0;
+    light.shadow.normalBias = clamp(texelSize * SUN_SHADOW_TEXEL_NORMAL_BIAS, SUN_SHADOW_MIN_NORMAL_BIAS, maxNormalBias);
 }
 
 function shadowCameraUp(lightPosition, target) {

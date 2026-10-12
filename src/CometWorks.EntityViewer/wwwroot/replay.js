@@ -1,12 +1,15 @@
 import * as THREE from "three";
+import { movementState } from "./replay-movement.js";
 import { animateReplayCharacter } from "./replay-character.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { buildReplay, frameAt, speed, trailAt, blockCountAt, describeEvent, replayJournal, incidentClips, observationStep, eventLane, evidenceAt, actionLabels, eventMatches } from "./replay-model.js";
+import { buildReplay, pruneReplayContext, frameAt, speed, trailAt, blockCountAt, describeEvent, replayJournal, incidentClips, observationStep, eventLane, evidenceAt, actionLabels, eventMatches } from "./replay-model.js";
 import { state } from "./state.js";
 import { replayViewRotation, diagnosticText } from "./replay-scene.js";
-import { startQuasarThemeSync } from "./theme.js";
+import { AMBIENT_WITH_LIGHTING, SUN_LIGHT_INTENSITY_SCALE, SUN_SHADOW_MAP_SIZE, configureSunShadow } from "./scene.js";
+import { startQuasarThemeSync, themeColor } from "./theme.js";
 
 import { fetchAssetStreamingStatus, prepareRemoteAssetSession } from "./asset-streaming.js";
+import { ReplayTerrain } from "./replay-terrain.js";
 import { ReplayGrids } from "./replay-grids.js";
 import { restoreContentFolder, restoreModsFolder, pickContentFolder, pickModsFolder, clearAssetFolderCaches, setSceneModRoots } from "./content-folder.js";
 
@@ -16,7 +19,7 @@ const params = new URLSearchParams(location.search);
 const initialServer = params.get("serverId") || params.get("agentId");
 let selected = params.get("entityId") || "";
 let replay = buildReplay([]), from = 0, to = 0, at = 0, playing = false, previous = 0;
-let abort, generation = 0;
+let abort, generation = 0, preparing = false;
 let origin = new THREE.Vector3();
 const meshes = new Map();
 const grids = new Map();
@@ -40,14 +43,21 @@ const trail = new THREE.Line(trailGeometry, trailMaterial);
 const viewport = el("replayViewport");
 const scene = new THREE.Scene();
 const world = new THREE.Group(); scene.add(world);
-scene.background = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#0c1320");
+const terrainRenderer = new ReplayTerrain(world);
+function applyTheme() { scene.background = new THREE.Color(themeColor("--bg", 0x070b12)); }
+applyTheme();
+window.addEventListener("quasar-entity-viewer-theme-changed", applyTheme);
 world.add(...markers, trail);
-scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-const sunlight = new THREE.DirectionalLight(0xffffff, 2); sunlight.position.set(1, 2, 3); scene.add(sunlight);
+scene.add(new THREE.AmbientLight(0xffffff, AMBIENT_WITH_LIGHTING));
+const sunlight = new THREE.DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY_SCALE);
+sunlight.castShadow = true; sunlight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
+scene.add(sunlight, sunlight.target);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 state.renderer = renderer; state.viewerDisposed = false;
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -74,9 +84,10 @@ function playerFor(key, sample) {
         const label = document.createElement("span"); label.className = "replay-player-label"; el("playerLabels").append(label);
         entry = { group, label, appearance, model: !!model, character: model }; players.set(key, entry); world.add(group);
     }
-    entry.label.textContent = `${sample.name || sample.entity}${entry.model ? "" : " · approximate"} · ${actionLabels(sample.actions)}`;
+    entry.label.textContent = `${sample.name || sample.entity}${entry.model ? "" : " · approximate"} · ${movementState(sample.movement)} · ${actionLabels(sample.actions)}`;
     entry.group.userData.sample = sample; entry.group.userData.assetKind = entry.character?.isSkinnedMesh ? "character model (GPU skinning; reconstructed animation)" : entry.model ? "character model (static pose; skeleton unavailable)" : "approximate character; asset not recorded or unavailable";
     entry.group.visible = true; entry.group.position.fromArray(sample.origin || sample.position).sub(origin);
+    entry.group.scale.setScalar(sample.modelScale || 1);
     entry.group.quaternion.fromArray(sample.rotation || [0, 0, 0, 1]).normalize();
     animateReplayCharacter(entry.character, sample, at, !el("observedOnly").checked);
     if (!entry.character?.isSkinnedMesh && sample.actions & 64 && !el("observedOnly").checked) entry.group.rotateZ(Math.PI / 2);
@@ -89,14 +100,21 @@ const resize = new ResizeObserver(() => {
 });
 resize.observe(viewport);
 
-async function request(path, signal) {
-    const response = await fetch(new URL(`./api/replay/${path}`, import.meta.url), { credentials: "same-origin", signal });
+async function request(path, signal, options = {}) {
+    const response = await fetch(new URL(`./api/replay/${path}`, import.meta.url), { credentials: "same-origin", signal, ...options });
     if (!response.ok) {
         if (response.status === 403 || response.status === 401) throw new Error("Administrator access is required to view recording history.");
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || `History request failed (${response.status}).`);
     }
     return response.json();
+}
+function recordingStatus(status) {
+    el("recordingEnabled").checked = !!status.recordingEnabled;
+    el("recordingEnabled").disabled = !el("server").value;
+    el("recordingStatus").textContent = status.recordingEnabled
+        ? `Recording enabled: 1 Hz baseline, up to 5 Hz during incidents.${status.error ? ` Server status: ${status.error}` : ""}`
+        : `Recording disabled. Existing history remains available until expiry.${status.error ? ` Stop pending: ${status.error}. Capture stops within 30 seconds without renewal.` : ""}`;
 }
 function localTime(date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19); }
 el("from").value = localTime(new Date(Date.now() - 5 * 60000));
@@ -113,7 +131,7 @@ async function start() {
             option.selected = [server.serverId, server.agentId].includes(initialServer);
             el("server").append(option);
         }
-        if (!servers.length) { el("status").textContent = "No recordings yet. The server companion records automatically while a world is running."; return; }
+        if (!servers.length) { el("status").textContent = "No servers available yet. Connect a server to enable recording here."; return; }
         if (initialServer && !servers.some(server => [server.serverId, server.agentId].includes(initialServer))) {
             const missing = new Option("No recording for the selected server", "", true, true);
             missing.disabled = true; el("server").prepend(missing); el("server").value = "";
@@ -125,23 +143,27 @@ async function start() {
 }
 async function load() {
     abort?.abort(); abort = new AbortController(); const current = ++generation;
-    playing = false; el("play").textContent = "Play"; el("load").disabled = true;
+    preparing = true; el("assetLoading").hidden = false;
+    el("assetLoadingText").textContent = "Loading recorded history…";
+    playing = false; el("play").disabled = true; el("scrub").disabled = true; el("play").textContent = "Play"; el("load").disabled = true;
     const requestedFrom = new Date(el("from").value).getTime();
     const requestedTo = Math.min(Date.now(), requestedFrom + Number(el("minutes").value) * 60000);
     try {
         if (!Number.isFinite(requestedFrom) || requestedTo <= requestedFrom) throw new Error("Choose a start time in the last 24 hours.");
         el("status").textContent = "Loading recorded observations…";
         const server = encodeURIComponent(el("server").value);
-        const [batches, overview] = await Promise.all([
-            request(`${server}?from=${requestedFrom}&to=${requestedTo}`, abort.signal), request(`${server}/overview`, abort.signal)
-        ]);
+        const overview = await request(`${server}/overview`, abort.signal);
+        if (current !== generation) return;
+        recordingStatus(overview);
+        const batches = await request(`${server}?from=${requestedFrom}&to=${requestedTo}`, abort.signal);
         if (current !== generation) return;
         for (const mesh of meshes.values()) world.remove(mesh); meshes.clear();
         for (const group of grids.values()) { gridRenderer.release(group); world.remove(group); } grids.clear();
         for (const entry of players.values()) releasePlayer(entry); players.clear();
-        gridRenderer.clear(); clearAssetFolderCaches();
-        const loaded = buildReplay(batches);
-        const mods = [...new Set([...loaded.geometry.values()].flatMap(page => page.map(block => block.mod)).concat(loaded.records.map(record => record.mod)).filter(Boolean))]
+        terrainRenderer.clear(); gridRenderer.clear(); clearAssetFolderCaches();
+        const originalServer = [el("server").value, el("server").selectedOptions[0]?.dataset.agentId].includes(initialServer);
+        const loaded = pruneReplayContext(buildReplay(batches), (originalServer ? params.get("entityId") : "") || selected);
+        const mods = [...new Set([...loaded.geometry.values()].flatMap(page => page.map(block => block.mod)).concat(loaded.records.map(record => record.mod), [...loaded.voxels.values()].flatMap(page => page.palette.map(material => material.mod))).filter(Boolean))]
             .map(name => ({ rootId: `mods-direct:${name}`, name, publishedFileId: /^\d+(?:\.sbm)?$/.test(name) ? Number(name.replace(/\.sbm$/, "")) : 0 }));
         await setSceneModRoots(mods);
         try { await prepareRemoteAssetSession({ mods }, { agentId: el("server").selectedOptions[0]?.dataset.agentId || "", entityId: selected }); } catch { /* Local assets and explicit proxies remain available. */ }
@@ -150,14 +172,26 @@ async function load() {
         clips = incidentClips(replay, from, to); activeClip = null; inspectedEvent = null; followPosition = null;
         el("clip").replaceChildren(new Option("Entire loaded range", ""));
         clips.forEach((clip, i) => el("clip").append(new Option(`${new Date(clip.events[0].at).toLocaleTimeString()} · ${clip.events.length} events${clip.incomplete ? " · incomplete" : ""}`, String(i))));
-        gridRenderer.preload(replay);
+        const progress = () => { if (current === generation) el("assetLoadingText").textContent = `${gridRenderer.status} · ${terrainRenderer.ready}/${replay.voxels.size} terrain chunks prepared`; };
+        const progressTimer = setInterval(progress, 150);
+        try { await Promise.all([gridRenderer.preload(replay), terrainRenderer.preload(replay, gridRenderer.context, progress)]); }
+        finally { clearInterval(progressTimer); }
+        if (current !== generation) return;
+        el("assetLoadingText").textContent = "Uploading replay textures to the GPU…";
+        let uploaded = 0;
+        for (const texture of new Set(gridRenderer.context.preloadedTextures.values())) {
+            if (current !== generation) return;
+            if (texture) renderer.initTexture(texture);
+            if (++uploaded % 8 === 0) await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+        preparing = false;
         const entities = new Map(replay.records.filter(r => r.kind === "sample").map(r => [r.entity, r]));
         el("entity").replaceChildren(new Option("All entities", ""));
         for (const record of entities.values()) el("entity").append(new Option(`${record.name || record.entity} (${record.type})`, record.entity));
         el("entity").value = entities.has(selected) ? selected : "";
         selected = el("entity").value;
         el("scrub").min = String(from); el("scrub").max = String(to); el("scrub").disabled = !replay.records.length;
-        el("play").disabled = !replay.records.length;
+        el("play").disabled = true;
         const first = frameAt(replay, at, selected).samples.find(r => !selected || r.entity === selected);
         origin.fromArray(first?.position || [0, 0, 0]);
         world.quaternion.copy(replayViewRotation(first));
@@ -172,11 +206,14 @@ async function load() {
         el("incidents").replaceChildren(new Option("Choose an incident window", ""));
         for (const [minute, count] of [...windows].sort((a, b) => b[0] - a[0])) el("incidents").append(new Option(`${new Date(minute).toLocaleString()} · ${count} events`, String(minute)));
         const unavailable = overview.error ? ` Collection status: ${overview.error}` : "";
-        el("status").textContent = `${replay.records.length.toLocaleString()} observations loaded. ${overview.lostChunks || 0} segments lost to storage limits.${unavailable}`;
+        el("status").textContent = `${replay.records.length.toLocaleString()} observations loaded within 500 m of ${replay.contextEntity || "the context anchor"}. ${replay.events.some(e => e.kind === "voxel-coverage") ? "Terrain capture budget reached in this window; context is incomplete. " : ""} ${overview.lostChunks || 0} segments lost to storage limits.${unavailable}`;
         events(); plot(); draw();
+        el("assetLoadingText").textContent = "Preparing replay shaders…";
+        await renderer.compileAsync(scene, camera);
+        if (current === generation) el("play").disabled = !replay.records.length;
     } catch (error) {
         if (error.name !== "AbortError") { el("status").textContent = error.message; replay = buildReplay([]); draw(); }
-    } finally { if (current === generation) el("load").disabled = false; }
+    } finally { if (current === generation) { el("load").disabled = false; preparing = false; el("assetLoading").hidden = true; } }
 }
 function events() {
     el("events").replaceChildren();
@@ -193,6 +230,7 @@ function events() {
     if (matches.length > 500) el("events").append(document.createTextNode("Showing 500 events. Narrow the time range for more detail."));
 }
 function draw() {
+    if (preparing) return;
     const frame = frameAt(replay, at, selected, !el("observedOnly").checked);
     for (const mesh of meshes.values()) mesh.visible = false;
     for (const group of grids.values()) group.visible = false;
@@ -203,7 +241,7 @@ function draw() {
         const key = `${sample.session}/${sample.entity}`;
         if (sample.type === "player") { playerFor(key, sample); continue; }
         const blockCount = sample.type !== "player" ? blockCountAt(replay, sample) : null;
-        if (blockCount !== null && sample.origin && drawnBlocks + blockCount <= 50000) {
+        if (blockCount !== null && sample.origin) {
             let group = grids.get(key);
             if (!group) { group = new THREE.Group(); grids.set(key, group); world.add(group); }
             group.userData.sample = sample;
@@ -227,6 +265,14 @@ function draw() {
     for (const [key, group] of grids) if (!group.visible) { gridRenderer.release(group); world.remove(group); grids.delete(key); }
     for (const [key, entry] of players) if (!entry.group.visible) { releasePlayer(entry); players.delete(key); }
     updateCamera(frame);
+    const focus = frame.samples.find(s => s.entity === selected) || frame.samples[0];
+    const target = new THREE.Vector3().fromArray(focus?.position || origin.toArray()).sub(origin).applyQuaternion(world.quaternion);
+    const extent = Math.max(50, Math.hypot(...(focus?.size || [100, 100, 100])));
+    const bounds = new THREE.Box3().setFromCenterAndSize(target, new THREE.Vector3().setScalar(extent * 2));
+    sunlight.position.copy(target).addScaledVector(new THREE.Vector3().fromArray(frame.health?.sun || [0.4, 0.7, 0.35]).applyQuaternion(world.quaternion).normalize(), extent * 3);
+    sunlight.target.position.copy(target); sunlight.target.updateMatrixWorld();
+    sunlight.intensity = Math.max(.15, frame.health?.sunIntensity || 1) * SUN_LIGHT_INTENSITY_SCALE;
+    configureSunShadow(bounds, sunlight.position, target, sunlight, focus?.gridSize || 2.5);
     const focused = frame.samples.find(s => s.entity === selected);
     trail.visible = !!focused;
     const nextTrailKey = focused ? `${focused.session}/${focused.entity}/${focused.at}/${origin.toArray()}` : "";
@@ -255,7 +301,8 @@ function draw() {
     el("clock").textContent = new Date(at || Date.now()).toLocaleString();
     const health = frame.health;
     el("quality").textContent = frame.gap ? "Missing or incomplete coverage" : `${frame.samples.length} entities · sim speed ${Number(health?.value || 0).toFixed(2)} · ${frame.samples.filter(s => s.high).length} in incident detail · ${el("observedOnly").checked ? "observations only" : "reconstructed motion"}`;
-    el("geometryQuality").textContent = `${drawnBlocks.toLocaleString()} recorded blocks · ${proxies.toLocaleString()} block proxies · ${missingLayouts} grids with bounds only · ${gridRenderer.status} · ${frame.samples.some(s => s.gravity) ? "recorded natural gravity" : "gravity not recorded"}`;
+    const terrainQuality = terrainRenderer.draw(replay, at, frame.samples[0]?.session, origin, frame.samples.find(s => s.entity === replay.contextEntity)?.position || focused?.position);
+    el("geometryQuality").textContent = `${drawnBlocks.toLocaleString()} recorded blocks · ${proxies.toLocaleString()} block proxies · ${missingLayouts} grids with bounds only · ${gridRenderer.status} · ${terrainQuality} · ${frame.samples.some(s => s.gravity) ? "recorded natural gravity" : "gravity not recorded"}`;
 }
 const laneNames = ["Damage", "Actions", "Grid changes", "Physics", "Sim speed", "Gaps"];
 const laneColors = ["#ff6b78", "#c6a0ff", "#68b7ff", "#ffb454", "#63e5a1", "#999"];
@@ -367,6 +414,21 @@ window.addEventListener("keydown", event => {
 window.addEventListener("keyup", event => keys.delete(event.code));
 window.addEventListener("blur", () => keys.clear());
 el("query").addEventListener("submit", event => { event.preventDefault(); load(); });
+el("server").addEventListener("change", () => { el("recordingEnabled").disabled = true; selected = ""; load(); });
+el("recordingEnabled").addEventListener("change", async () => {
+    const server = el("server").value, enabled = el("recordingEnabled").checked;
+    el("recordingEnabled").disabled = true;
+    el("recordingStatus").textContent = enabled ? "Enabling recording…" : "Stopping recording…";
+    try {
+        const result = await request(`${encodeURIComponent(server)}/recording`, undefined, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+        if (el("server").value === server) recordingStatus(result);
+    } catch (error) {
+        if (el("server").value === server) {
+            el("recordingStatus").textContent = `Could not confirm recording setting: ${error.message}. Reload history to check.`;
+            el("recordingEnabled").disabled = false;
+        }
+    }
+});
 el("incidents").addEventListener("change", () => {
     if (!el("incidents").value) return;
     el("from").value = localTime(new Date(Math.max(Date.now() - 24 * 3600000 + 1000, Number(el("incidents").value) - 30000)));
@@ -386,7 +448,7 @@ renderer.setAnimationLoop(time => {
     }
 });
 for (const [id, pick] of [["contentFolder", pickContentFolder], ["modsFolder", pickModsFolder]]) el(id).addEventListener("click", async () => {
-    try { await pick(); gridRenderer.clear(); gridRenderer.preload(replay); draw(); } catch (error) { if (error.name !== "AbortError") el("status").textContent = error.message; }
+    try { await pick(); await load(); } catch (error) { if (error.name !== "AbortError") el("status").textContent = error.message; }
 });
 
 const raycaster = new THREE.Raycaster();
@@ -409,7 +471,7 @@ renderer.domElement.addEventListener("pointerleave", () => { hovered = null; el(
 renderer.domElement.addEventListener("dblclick", () => {
     if (!hovered) return;
     const { sample, block } = hovered;
-    selected = sample.entity; el("entity").value = selected;
+    if (sample.type !== "voxel") { selected = sample.entity; el("entity").value = selected; }
     const relevant = replay.events.filter(e => e.at <= at && e.session === sample.session && eventMatches(replay, e, selected)
         && (!block || !e.cell || e.cell.every((value, axis) => value === block.cell[axis]))).slice(-12);
     el("evidence").textContent = JSON.stringify({ selectedEntity: sample.entity, observationAt: sample.at, block, events: relevant.map(e => evidenceAt(replay, e)) }, null, 2);
@@ -422,6 +484,6 @@ el("downloadHistory").addEventListener("click", () => {
     const link = document.createElement("a"); link.href = url; link.download = "recording-events.txt"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
-window.addEventListener("pagehide", () => { abort?.abort(); resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose(); for (const group of grids.values()) gridRenderer.release(group); for (const entry of players.values()) releasePlayer(entry); gridRenderer.dispose(); geometry.dispose(); headGeometry.dispose(); bodyMaterial.dispose(); eventGeometry.dispose(); eventMaterial.dispose(); damageGeometry.dispose(); damageMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose(); Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); state.viewerDisposed = true; state.renderer = null; }, { once: true });
+window.addEventListener("pagehide", () => { abort?.abort(); resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose(); for (const group of grids.values()) gridRenderer.release(group); for (const entry of players.values()) releasePlayer(entry); terrainRenderer.clear(); gridRenderer.dispose(); geometry.dispose(); headGeometry.dispose(); bodyMaterial.dispose(); eventGeometry.dispose(); eventMaterial.dispose(); damageGeometry.dispose(); damageMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose(); Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); state.viewerDisposed = true; state.renderer = null; }, { once: true });
 window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });
 start();

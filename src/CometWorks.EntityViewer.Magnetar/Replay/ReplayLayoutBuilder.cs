@@ -15,10 +15,12 @@ internal sealed class ReplayLayoutBuilder
     {
         public readonly Dictionary<int, Dictionary<string, ReplayBlock>> Pages = new Dictionary<int, Dictionary<string, ReplayBlock>>();
         public readonly Dictionary<int, KeyValuePair<string, byte[]>> Encoded = new Dictionary<int, KeyValuePair<string, byte[]>>();
+        public readonly Dictionary<string, byte[]> Templates = new Dictionary<string, byte[]>();
         public bool Ready;
         public int Count;
         public int Buckets = 1;
         public KeyValuePair<string, byte[]> Manifest;
+        public string[] RequiredTemplates = Array.Empty<string>();
     }
     private int _blocks;
     public void Clear() { _grids.Clear(); _blocks = 0; }
@@ -68,6 +70,13 @@ internal sealed class ReplayLayoutBuilder
                 grid.Count++; _blocks++;
             }
             // Capture objects are immutable after enqueue; serialize only dirty pages.
+            if (block.Parts != null)
+            {
+                var data = ReplayChunkStore.Compress(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(block.Parts, ReplayWriter.Json)));
+                var id = ReplayChunkStore.GeometryId(data);
+                block = block.StorageCopy(); block.PartsId = id; block.Parts = null;
+                grid.Templates[id] = data;
+            }
             page[key] = block; grid.Encoded.Remove(bucket); grid.Manifest = default;
         }
         return true;
@@ -96,7 +105,11 @@ internal sealed class ReplayLayoutBuilder
         {
             var bytes = ReplayChunkStore.Compress(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new ReplayLayoutPage { Pages = result.Keys.ToArray() }, ReplayWriter.Json)));
             grid.Manifest = new KeyValuePair<string, byte[]>(ReplayChunkStore.GeometryId(bytes), bytes);
+            var needed = new HashSet<string>(grid.Pages.Values.SelectMany(p => p.Values).Select(b => b.PartsId).Where(id => id.Length > 0));
+            grid.RequiredTemplates = needed.ToArray();
+            foreach (var id in grid.Templates.Keys.ToArray()) if (!needed.Contains(id)) grid.Templates.Remove(id);
         }
+        foreach (var id in grid.RequiredTemplates) result[id] = grid.Templates[id];
         record.LayoutId = grid.Manifest.Key;
         result[grid.Manifest.Key] = grid.Manifest.Value;
         return result;

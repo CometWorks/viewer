@@ -868,7 +868,7 @@ namespace CometWorks.EntityViewer.Magnetar
             return dto;
         }
 
-        private static List<ViewerVoxelMaterial> BuildVoxelMaterials(List<ViewerVoxelDataChunk> chunks, List<string> warnings)
+        internal static List<ViewerVoxelMaterial> BuildVoxelMaterials(List<ViewerVoxelDataChunk> chunks, List<string> warnings)
         {
             var materialIndexes = new HashSet<byte>();
             foreach (var chunk in chunks)
@@ -894,15 +894,16 @@ namespace CometWorks.EntityViewer.Magnetar
                         : default;
                     result.Add(new ViewerVoxelMaterial
                     {
+                        Mod = definition.Context?.ModId ?? "",
                         Index = definition.Index,
                         SubtypeId = definition.Id.SubtypeName ?? string.Empty,
                         MaterialTypeName = definition.MaterialTypeName ?? string.Empty,
-                        ColorMetalXZnY = textureSet.ColorMetalXZnY ?? string.Empty,
-                        ColorMetalY = textureSet.ColorMetalY ?? string.Empty,
-                        NormalGlossXZnY = textureSet.NormalGlossXZnY ?? string.Empty,
-                        NormalGlossY = textureSet.NormalGlossY ?? string.Empty,
-                        ExtXZnY = textureSet.ExtXZnY ?? string.Empty,
-                        ExtY = textureSet.ExtY ?? string.Empty,
+                        ColorMetalXZnY = Replay.ReplayGridCapture.LogicalModel(textureSet.ColorMetalXZnY, definition.Context?.ModPath),
+                        ColorMetalY = Replay.ReplayGridCapture.LogicalModel(textureSet.ColorMetalY, definition.Context?.ModPath),
+                        NormalGlossXZnY = Replay.ReplayGridCapture.LogicalModel(textureSet.NormalGlossXZnY, definition.Context?.ModPath),
+                        NormalGlossY = Replay.ReplayGridCapture.LogicalModel(textureSet.NormalGlossY, definition.Context?.ModPath),
+                        ExtXZnY = Replay.ReplayGridCapture.LogicalModel(textureSet.ExtXZnY, definition.Context?.ModPath),
+                        ExtY = Replay.ReplayGridCapture.LogicalModel(textureSet.ExtY, definition.Context?.ModPath),
                         TilingScale = definition.RenderParams.StandardTilingSetup.TilingScale,
                     });
                 }

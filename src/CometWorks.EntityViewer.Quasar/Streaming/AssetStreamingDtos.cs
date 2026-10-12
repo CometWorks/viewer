@@ -46,6 +46,8 @@ public sealed class AssetResolveResponse
 
     public string CacheKey { get; init; } = string.Empty;
 
+    public string ContentHash { get; init; } = string.Empty;
+
     public DateTimeOffset? ExpiresAtUtc { get; init; }
 
     public string LogicalPath { get; init; } = string.Empty;

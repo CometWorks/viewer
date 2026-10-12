@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using CometWorks.EntityViewer.Replay;
 using Sandbox.Game.Entities;
+using Sandbox.Definitions;
 using Sandbox.Game.Entities.Cube;
 using VRageMath;
 
@@ -139,7 +140,7 @@ internal sealed class ReplayGridCapture : IDisposable
             if (_budget.Count >= 262144) { Invalidate(now); _nextScan = now + 30000; return true; }
             _budget.Count++;
         }
-        _known[block.Position] = captured; Emit("layout-block", now, captured); return true;
+        _known[block.Position] = captured; Emit("layout-block", now, captured, PrepareParts(block)); return true;
     }
     private static bool Equal(ReplayBlock a, ReplayBlock b) => a.Definition == b.Definition && a.Model == b.Model && a.Mod == b.Mod && a.Topology == b.Topology
         && a.Integrity == b.Integrity && a.Build == b.Build && a.Min.SequenceEqual(b.Min) && a.Max.SequenceEqual(b.Max)
@@ -162,6 +163,35 @@ internal sealed class ReplayGridCapture : IDisposable
             Integrity = Math.Round(block.MaxIntegrity > 0 ? block.Integrity / block.MaxIntegrity : 0, 3), Build = Math.Round(block.BuildLevelRatio, 3)
         };
     }
+    private static Action<ReplayRecord> PrepareParts(MySlimBlock block)
+    {
+        if (!block.ShowParts || block.BlockDefinition.CubeDefinition == null) return null;
+        var definition = block.BlockDefinition; var position = block.Position; var gridSize = block.CubeGrid.GridSize;
+        block.Orientation.GetMatrix(out Matrix rotation);
+        // Immutable definition + value snapshots only: no live entity traversal or MWM load
+        // on the simulation thread, and no delayed reads of changing block state.
+        return record => { var copy = record.Block.StorageCopy(); CaptureParts(definition, position, rotation, gridSize, copy); record.Block = copy; };
+    }
+    private static void CaptureParts(MyCubeBlockDefinition definition, Vector3I position, Matrix rotation, float gridSize, ReplayBlock record)
+    {
+        var models = new List<string>(); var matrices = new List<MatrixD>();
+        var normals = new List<Vector3>(); var offsets = new List<Vector4UByte>();
+        MyCubeGrid.GetCubeParts(definition, position, rotation, gridSize,
+            models, matrices, normals, offsets, topologyCheck: true);
+        var parts = new List<ReplayModelPart>(); var patterns = new List<byte>();
+        for (var i = 0; i < models.Count && i < 32; i++)
+        {
+            var m = matrices[i];
+            // Cube-part matrices already contain orientation and grid scale. Store translation
+            // once per block so identical authored surfaces deduplicate across the entire grid.
+            m.Translation = Vector3D.Zero;
+            parts.Add(new ReplayModelPart { Model = LogicalModel(models[i], definition.Context?.ModPath),
+                Matrix = new[] { m.M11,m.M12,m.M13,m.M14,m.M21,m.M22,m.M23,m.M24,m.M31,m.M32,m.M33,m.M34,m.M41,m.M42,m.M43,m.M44 } });
+            var p = offsets[i]; patterns.AddRange(new[] { p.X, p.Y, p.Z, p.W });
+        }
+        if (parts.Count > 0) { record.Parts = new ReplayModelParts { Parts = parts.ToArray() }; record.Patterns = patterns.ToArray(); }
+    }
+
     internal static string LogicalModel(string model, string modPath)
     {
         var path = (model ?? "").Replace('\\', '/');
@@ -173,7 +203,7 @@ internal sealed class ReplayGridCapture : IDisposable
         }
         return System.IO.Path.IsPathRooted(path) || path.Contains(":") ? "" : path;
     }
-    private void Emit(string kind, double now, ReplayBlock block = null) => _writer.Add(new ReplayRecord { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Elapsed = now, Entity = _id, Kind = kind, Block = block, Count = kind == "layout-reset" ? _grid.BlocksCount : 0 });
+    private void Emit(string kind, double now, ReplayBlock block = null, Action<ReplayRecord> prepare = null) => _writer.Add(new ReplayRecord { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Elapsed = now, Entity = _id, Kind = kind, Block = block, Count = kind == "layout-reset" ? _grid.BlocksCount : 0 }, prepare);
     private double[] WorldCell(Vector3I cell) { var p = _grid.GridIntegerToWorld(cell); return p.IsValid() ? new[] { p.X, p.Y, p.Z } : null; }
     private static int[] C(Vector3I v) => new[] { v.X, v.Y, v.Z };
     private static double[] V(Vector3 v) => new[] { Math.Round((double)v.X, 4), Math.Round((double)v.Y, 4), Math.Round((double)v.Z, 4) };

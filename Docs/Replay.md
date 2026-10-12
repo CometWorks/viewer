@@ -1,12 +1,25 @@
 # Contextual replay
 
-The recorder runs in the Entity Viewer Magnetar companion, without an open
-browser. Quasar's viewer plugin collects and archives data through the existing
+Recording is **disabled by default**, including upgrades from automatic recording.
+An administrator can opt in per server using **Enable recording on this server**
+in the Entity Viewer history sidebar. The setting persists in Quasar. Once enabled,
+the recorder runs in the Entity Viewer Magnetar companion without an open browser. Quasar's viewer plugin collects and archives data through the existing
 companion channel. Magnetar core requires no new runtime service or physics patch.
 The Quasar abstraction adds connected-server discovery for background companion
 consumers. Standalone history uses the stable server name; clustered nodes use
 the existing telemetry identity (node/slot/epoch), and requests address the exact
 live agent. Cross-node incident stitching is not implemented. Matching Quasar and viewer revisions must be installed.
+
+Disabled companions do not construct a recorder, discover entities, attach recording
+hooks, start recording workers or sample the world. Quasar sends no collection
+requests to disabled servers. Disabling detaches all recording hooks immediately
+on the simulation thread, cancels terrain work and drains already captured data
+in the background. An in-flight terrain read can finish; disabling never blocks
+the simulation thread waiting for it. Existing history remains readable until its
+24-hour expiry. A 30-second renewable capture lease stops recording if Quasar loses
+contact, including when a disable request cannot reach the companion. Reconnecting
+resumes capture only for servers with a persisted enabled setting. The game plugin's
+normal update callback retains only a null/disabled check while recording is off.
 
 ## Capture and escalation
 
@@ -37,16 +50,20 @@ live agent. Cross-node incident stitching is not implemented. Matching Quasar an
   to the last written sample; incident position tolerance is 1 cm. Cadence
   transitions are written even if the entity is stationary. Continuous low-rate
   history supplies pre-incident context; high-rate detail begins after detection.
-- Damage hooks observe `MyDamageSystem` after-damage callbacks for slim blocks and characters.
+- A removable postfix observes `MyDamageSystem.RaiseAfterDamageApplied` for slim blocks and characters.
+  Both handheld and ship grinders use this path with damage type `Grind` and the
+  grinder entity as source; grinding triggers incident detail. No duplicate grinder
+  patch is needed. Welding is captured as build/integrity changes and character
+  tool-use state, not damage or a claim of who welded a block.
   Amount is the callback's damage amount, **not a claimed integrity delta**. The
   game can accumulate damage and apply it later. Matching target block, source,
   damage type/deformation flag and 250 ms bucket are coalesced into a total/count.
   Other game damage paths and exact block destruction attribution still require
   live scenario coverage. Entity disappearance is recorded separately.
 - Every five seconds a health record includes simulation speed and tracked-grid
-  count. Compact block layouts record definition/model path, cell extents,
-  orientation, color, build progress and integrity. Inventories, voxel/terrain
-  changes, textures, fine deformation, debris and animated subparts are omitted.
+  count and sun direction/intensity. Compact block layouts record definition/model path, cell extents,
+  orientation, color, build progress and integrity. Character world scale is retained.
+  Inventories, texture bytes, fine deformation, debris and animated subparts are omitted.
 
 ## Historical grids and destruction
 
@@ -74,23 +91,65 @@ normal maps, glass and HSV paint shader, with instanced rendering per page/model
 Configured server asset streaming and local Content/Mods folders supply models
 and textures, never a current grid snapshot. It actively preloads assets from all
 loaded historical pages and character appearances, including later observations,
-with four concurrent model jobs, 128 model admissions, 64 MiB of admitted model
-geometry, and 256 texture selections. The shared texture loader bounds file reads
-and GPU uploads. These browser limits do not add server recording work; unavailable
-assets or assets beyond the limits are reported. Only changed pages or pages whose
-missing models became available rebuild while scrubbing. Reloading cancels old
-asset generations and disposes their GPU resources.
+with four concurrent model jobs. The previous 128-model, 64 MiB model and
+256-texture admission limits are removed: all assets in the retained 500 m context
+are prepared, including future layouts. Playback waits behind a progress overlay
+while assets, terrain meshes, texture uploads and initial shaders are prepared.
+Missing assets remain explicitly reported. Only changed layout pages rebuild.
+Reloading invalidates old work and disposes its GPU resources.
 
-Missing models use wireframe block proxies (or generated armor topology); missing
-historical pages use bounds only. Characters use recorded model/paint and nametags
-with GPU-skinned procedural animation when the asset provides a valid skeleton.
-Missing skeletons retain the static asset pose; missing character assets use a
-labelled approximate humanoid. Bone frames are never recorded. Equipment meshes,
-skin overrides, LCD contents, runtime lights, emissive changes, terrain, debris and
-fine deformation are not reconstructed.
-Assets are not version-pinned: a changed game/mod asset can alter the appearance of
-recorded geometry. Integrity is available in block diagnostics; the fallback armor
-also uses a red integrity tint.
+Generated armor records the same authored cube-part models, transforms and UV
+pattern offsets used by the main scene. A worker derives these from immutable
+block-definition/value snapshots; it never loads an MWM on the simulation thread.
+Content-addressed templates deduplicate the surfaces across blocks; per-block
+pattern offsets remain compact. Earlier recordings retain their topology fallback.
+Replay shares the main scene's theme color parsing, HSV paint conversion, ambient
+and sun intensities, shadow sizing, model materials and voxel mesher. Integrity
+is a diagnostic rather than a permanent red paint overlay.
+
+Missing models use wireframe proxies or armor topology; missing historical layouts
+use bounds only. Characters retain their authored metre scale and any recorded
+world scale, with nametags and reconstructed GPU skinning. Their material clones
+share loaded textures directly; they do not JSON-serialize texture uniforms.
+Equipment meshes, skin overrides, LCD contents, runtime lights, emissive changes,
+debris, fine deformation and animated subparts are not reconstructed.
+
+Live and history modes share the persistent streamed-byte cache. Fresh authorized
+resolves now hash actual asset contents on Quasar, including archive entries;
+cache keys change even when updates preserve size and timestamps. The browser
+verifies SHA-256 before accepting downloaded or persisted bytes. On insecure HTTP
+origins without Web Crypto, streaming remains available but persistent reuse is
+bypassed. Use HTTPS for verified cache reuse. Historical asset
+binaries are not archived: an installed game/mod update can change the appearance
+of older recorded geometry, although stale cached bytes will not masquerade as
+that updated revision. Local folders have their existing file metadata semantics.
+
+## Historical terrain
+
+Terrain requests are gathered from already-visited grids/players every ten seconds,
+covering a 500 m context (up to 1,024 m half-extent for large grids). Discovery uses
+entity lifecycle events and at most 64 voxel roots. A single background worker
+reads one fixed shared-border chunk at most every 100 ms, pins storage during reads,
+and adapts LOD to at most 27 tiles per request. Pending requests are capped at 64,
+tracked chunks at 128, and each chunk at 33³ samples. Resolution is reported in
+the viewer; this is bounded sampled terrain, not lossless planet storage.
+
+Storage-change callbacks only increment a revision and enqueue dirty bounds.
+Affected chunks become unknown at the edit notification timestamp; replacement
+snapshots use read-completion timestamps, never backdated edit times. Reads
+concurrent with an edit are discarded. Failed chunks back off without starving
+others. Unchanged terrain is read once, with deduplicated ten-second reference
+checkpoints; a region expires after 60 seconds without a nearby recording request.
+Chunk content, materials, transforms and texture definitions share the existing
+content-addressed archive, quotas and 24-hour reference cleanup. Each segment
+carries its own dependencies, so retention cannot leave dangling references.
+
+The browser preloads every distinct terrain revision and material texture in the
+chosen history, reuses the main viewer's meshing/material pipeline, and switches
+cached meshes while scrubbing. Edits, missing observations and capture gaps hide
+unknown coverage. Old recordings without terrain stay explicitly terrain-less;
+current terrain is never substituted. Background voxel reads still contend with
+storage writes; live server overhead must be measured before claiming a cost bound.
 
 ## Performance and limits
 
@@ -118,8 +177,9 @@ cross-segment delta chains and baseline dependencies at retention boundaries.
 Timeline compressed segments are capped at 512 KiB and expansion at 4 MiB;
 individual block pages are capped at 256 KiB expanded, and collection responses
 at 4 MiB including geometry. Queries cap unique expanded data at 32 MiB and
-40,000 records, sharing repeated page data within each response. The browser
-renders at most 50,000 blocks and 128 different external models at once.
+40,000 records, sharing repeated page data within each response. The recording
+limit remains 50,000 blocks per grid; the browser renders all recorded grids within
+the 500 m context without a separate 50,000-block total limit.
 Archive file metadata is indexed in memory rather than rescanning the directory
 for every collection. Allocation-accounted storage limits (4 KiB minimum/file):
 
@@ -130,12 +190,11 @@ for every collection. Allocation-accounted storage limits (4 KiB minimum/file):
 
 Both stores expire segments after 24 hours while running; expired data is excluded
 from all reads. Quasar also expires data for disconnected servers. A stopped
-process cannot delete files: expired spool files are pruned when that world next
-runs. Storage pressure can shorten history; the archive reports lost segments
+process cannot delete files: expired spool files are pruned when recording next opens that world’s spool. Storage pressure can shorten history; the archive reports lost segments
 and persists its loss counter. These are protective caps, not expected daily
 volume. Detailed live overhead and active-server bytes/day remain unmeasured.
 
-Quasar polls independently of browser sessions, with bounded concurrency and
+For enabled servers, Quasar polls independently of browser sessions, with bounded concurrency and
 backoff for unavailable companions. Acknowledgements follow durable atomic segment
 writes; retries are idempotent. Unacknowledged segments survive reconnects and
 server restarts. Quasar records survive its restart. A process crash can lose
@@ -158,7 +217,10 @@ time. The tools shortcut opens the same viewer in history mode. Legacy
 positions. Responses use `private, no-store`. Select a server and a window of
 up to 15 minutes anywhere within the last 24 hours; the incident-window selector
 uses small segment metadata rather than loading a day's samples. Select an entity
-to focus its recorded surroundings and motion trail. Damage events mark world
+to focus its recorded surroundings and motion trail. The entity that opened history
+anchors a 500 m context: unrelated tracks and assets are pruned before browser
+preparation, and changing camera focus does not expand that context. Selecting an
+incident window automatically loads history and prepares its assets. Damage events mark world
 positions and can be selected to inspect their recorded evidence. The timeline
 aligns damage, suspected physics incidents and simulation speed.
 
@@ -206,14 +268,20 @@ sprint, using/seated and death. Four transition-only Harmony hooks observe
 `OnBeginShoot`, `StopShooting`, `ZoomMode` and `UsingEntity`; no per-shot, physics
 step or per-frame patch runs. Hook failures produce a gap and budgeted player
 samples remain available. Native character-death and explosion events enqueue
-compact observations; sampled action changes cover remaining movement state.
+compact observations. Native `MovementStateChanged` events and baseline samples
+record `MyCharacterMovementEnum` as a small optional integer. Flight, falling,
+jumping, walking/running/sprinting, crouching, seating and ladder movement remain
+distinct. Movement-only events do not escalate recording. Character subscriptions
+are removed on replacement, departure or recorder shutdown.
 Brief firing pulses between transform samples survive as timestamped transitions.
 All new event types share the existing bounded event queue and capture drain.
 Head angles and weapon/character IDs are small optional player fields; old data
 continues to decode. Empty new identifiers are omitted from recorded JSON.
 
 The browser reconstructs poses deterministically from time, movement and action
-state using the MWM bind skeleton and Three.js GPU skinning. Animation is illustrative,
+state using the MWM bind skeleton and Three.js GPU skinning. World velocity is never
+used to infer walking: flying and standing aboard moving ships have no walking
+gait. Old recordings without movement state show it as unknown. Animation is illustrative,
 including firing recoil, crouch, seating and death; it does not reconstruct exact
 server hitboxes or projectile trajectories. Real recorded layouts remain authoritative.
 Recent damaged cells have a bounded wireframe highlight and recorded explosion
@@ -241,11 +309,15 @@ npm run check
 
 ReplayChecks covers idle suppression/heartbeats, cadence transitions and quiet
 tails, sustained-motion detection, compression, idempotent writes, spool restart,
-acknowledgements, storage quota/retention, collection without a browser, admin-only
+acknowledgements, storage quota/retention, default-disabled silence, admin recording
+control, persistent opt-out, collection without a browser, admin-only
 HTTP access, lossless IDs and offline querying after Quasar restart. Geometry
 checks cover partial captures, destruction/rebuilding, integrity changes, page
 deduplication, corrupt hashes, retention dependency survival and real writer
-materialization. Its synthetic
+materialization. Context checks cover terrain checkpoints, malformed data, dependency
+validation and shared armor templates. Browser checks include texture-safe material
+cloning, uncapped model preparation, 500 m filtering, reverse terrain seeks and stale
+checkpoint rejection. Streaming checks include same-size/same-timestamp replacements. Its synthetic
 size/timing sample measures scheduling and compression only, not live server cost.
 Browser tests cover replay seeking, destruction/rebuilding in both directions,
 missing layout pages, removal, missing coverage, session changes and trail gaps. Live acceptance must still compare recorder enabled/disabled during
