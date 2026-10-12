@@ -145,6 +145,13 @@ try
     await File.WriteAllBytesAsync(Path.Combine(content, "Models", "block.mwm"), [9, 8, 7, 6, 5]);
     Check((await Resolve(alice, aliceSession, "Models/block.mwm", "")).CacheKey != plain.CacheKey, "Changed file invalidates the browser cache");
 
+    var revision = await Resolve(alice, aliceSession, "Models/block.mwm", "");
+    var source = Path.Combine(content, "Models", "block.mwm");
+    var stamp = File.GetLastWriteTimeUtc(source);
+    await File.WriteAllBytesAsync(source, [5, 6, 7, 8, 9]); File.SetLastWriteTimeUtc(source, stamp);
+    var replacedSameMetadata = await Resolve(alice, aliceSession, "Models/block.mwm", "");
+    Check(replacedSameMetadata.ContentHash.Length == 64 && replacedSameMetadata.CacheKey != revision.CacheKey, "Same-size/same-timestamp replacements must have a different content revision");
+
     await settingsStore.UpdateAsync(settings => { settings.StreamingEnabled = false; return settings; }, default);
     Check((await alice.GetAsync(api + "files/" + aliceAsset.AssetToken)).StatusCode == HttpStatusCode.Conflict, "Revoked streaming rejects existing file tokens");
     var disabled = await alice.PostAsJsonAsync(api + "sessions/" + aliceSession + "/resolve", new AssetResolveRequest { LogicalPath = "Models/block.mwm" });

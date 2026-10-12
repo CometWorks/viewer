@@ -557,28 +557,7 @@ public class ViewerVoxelBody
     public ViewerPlanetInfo? Planet { get; set; }
 }
 
-public class ViewerVoxelMaterial
-{
-    public int Index { get; set; }
-
-    public string SubtypeId { get; set; } = string.Empty;
-
-    public string MaterialTypeName { get; set; } = string.Empty;
-
-    public string ColorMetalXZnY { get; set; } = string.Empty;
-
-    public string ColorMetalY { get; set; } = string.Empty;
-
-    public string NormalGlossXZnY { get; set; } = string.Empty;
-
-    public string NormalGlossY { get; set; } = string.Empty;
-
-    public string ExtXZnY { get; set; } = string.Empty;
-
-    public string ExtY { get; set; } = string.Empty;
-
-    public float TilingScale { get; set; }
-}
+public class ViewerVoxelMaterial : CometWorks.EntityViewer.Replay.ReplayVoxelMaterial { }
 
 public class ViewerVoxelDataChunk
 {

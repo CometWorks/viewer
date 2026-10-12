@@ -61,6 +61,11 @@ try
     var aimed = Sample(2000); aimed.Actions = 2; aimed.Character = "character"; aimed.View = [5, 0];
     Check(actions.Observe(aimed, 2000, out _), "Changed recorded view direction must survive suppression");
 
+    var movementSchedule = new ReplaySchedule();
+    var standing = Sample(0); standing.Movement = 0; movementSchedule.Observe(standing, 0, out _);
+    var flying = Sample(1000); flying.Movement = 3;
+    Check(movementSchedule.Observe(flying, 1000, out _), "Movement state changes survive stationary sample suppression");
+
     var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var batch = new ReplayBatch { Session = Guid.NewGuid().ToString("N"), World = "world", Records = [new ReplayRecord { At = now - 2000, Kind = "health", Value = 1 }, new ReplayRecord { At = now - 2000, Kind = "sample", Entity = "9223372036854775807", Position = [1, 2, 3] }] };
     var chunk = new ReplayChunk { Id = ReplayChunkStore.NewId(now - 2000, 0), Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)) };
@@ -84,6 +89,11 @@ try
     Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Malformed block event cell must be rejected");
     appearanceRecord.Cell = [1, 2, 3]; appearanceRecord.Character = "character";
     Check(ReplayHistoryService.Decode(AppearanceChunk()).Records[1].Actions == 2, "Compact actions must survive transport");
+    appearanceRecord.Movement = 3;
+    Check(ReplayHistoryService.Decode(AppearanceChunk()).Records[1].Movement == 3, "Recorded flying state survives transport");
+    appearanceRecord.Movement = 65536;
+    Throws(() => ReplayHistoryService.Decode(AppearanceChunk()), "Out-of-range movement rejected");
+    appearanceRecord.Movement = null;
     appearanceRecord.Actions = null; appearanceRecord.View = null; appearanceRecord.Cell = null; appearanceRecord.Character = "";
     var spoolPath = Path.Combine(root, "spool");
     var spool = new ReplayChunkStore(spoolPath, 8192);
@@ -123,6 +133,7 @@ try
     foreach (var segment in delayedWriter.Read(new ReplayReadRequest()).Chunks) ReplayHistoryService.Decode(segment);
 
     await GeometryChecks.Run(root, now);
+    await ContextChecks.Run(root, now);
     var page = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new[] { GeometryChecks.Block(0) }, json));
     var pageId = ReplayChunkStore.GeometryId(page);
     var manifest = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new ReplayLayoutPage { Pages = [pageId] }, json));
@@ -152,27 +163,39 @@ try
     var history = app.Services.GetRequiredService<ReplayHistoryService>();
     await history.StartAsync(default);
     var deadline = DateTime.UtcNow.AddSeconds(10);
-    while (!channel.Acknowledged && DateTime.UtcNow < deadline) await Task.Delay(50);
-    Check(channel.Acknowledged, "Background collector must durably ingest and acknowledge without a browser");
+    while (history.Servers().Length == 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+    await Task.Delay(2200);
+    Check(channel.Calls == 0, "Default-disabled recorder must not receive collection or control requests");
     var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
     using var client = new HttpClient { BaseAddress = new Uri(address) };
     const string api = "/_quasar/plugins/cometworks.entityviewer/api/replay/";
     Check((await client.GetAsync(api + "servers")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous history denied");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).StatusCode == HttpStatusCode.Unauthorized, "Anonymous recording control denied");
     client.DefaultRequestHeaders.Add("X-Test-User", "viewer");
     Check((await client.GetAsync(api + "server?from=" + (now - 3000) + "&to=" + now)).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot access player history directly");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot enable server recording");
     client.DefaultRequestHeaders.Remove("X-Test-User"); client.DefaultRequestHeaders.Add("X-Test-User", "admin");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).IsSuccessStatusCode, "Admin can enable recording");
+    deadline = DateTime.UtcNow.AddSeconds(10);
+    while (!channel.Acknowledged && DateTime.UtcNow < deadline) await Task.Delay(50);
+    Check(channel.Acknowledged && channel.Recording, "Enabled background collector ingests and acknowledges without browser polling");
     var response = await client.GetAsync(api + "agent?from=" + (now - 3000) + "&to=" + now);
     Check(response.IsSuccessStatusCode && response.Headers.CacheControl!.NoStore, "Admin history works through current agent id and cannot be cached");
     var stored = await response.Content.ReadFromJsonAsync<List<ReplayBatch>>(json);
     Check(stored!.SelectMany(b => b.Geometry).Single().Value.Single().Definition.EndsWith("LargeBlockArmorBlock"), "Admin queries must include historical geometry dependencies");
     Check(stored!.SelectMany(b => b.Records).Single(r => r.Kind == "sample").Entity == "9223372036854775807", "Entity IDs remain lossless");
     Check((await client.GetAsync(api + "server?from=" + (now - 16 * 60000) + "&to=" + now)).StatusCode == HttpStatusCode.BadRequest, "Large queries must be bounded");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = false })).IsSuccessStatusCode && !channel.Recording, "Admin disable stops capture");
+    var stoppedCalls = channel.Calls;
+    await Task.Delay(2200);
+    Check(channel.Calls == stoppedCalls, "Disabled collector sends no periodic requests after final drain");
     await history.StopAsync(default);
     channel.Connected = false;
     using var restarted = new ReplayHistoryService(context, channel, app.Services.GetRequiredService<ILogger<ReplayHistoryService>>());
     await restarted.StartAsync(default);
     deadline = DateTime.UtcNow.AddSeconds(5);
     while (restarted.Servers().Length == 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
+    Check(!JsonSerializer.SerializeToElement(restarted.Servers(), json)[0].GetProperty("recordingEnabled").GetBoolean(), "Recording opt-out persists across Quasar restart");
     Check((await restarted.Query("server", now - 3000, now, default)).Count == 1, "Retained history survives Quasar restart and server disconnect");
     await restarted.StopAsync(default); await app.StopAsync();
 
@@ -199,13 +222,17 @@ static void Throws(Action action, string message) { try { action(); } catch (Inv
 
 sealed class TestChannel(ReplayChunk chunk) : IQuasarCompanionChannel
 {
+    public int Calls;
+    public bool Recording;
     public bool Acknowledged;
     public bool Connected = true;
     public IReadOnlyList<QuasarCompanionServer> GetConnectedServers() => Connected ? [new("server", "agent", "Test server")] : [];
     public Task<TResponse> SendAsync<TRequest, TResponse>(string serverId, string companionPluginId, string operation, TRequest request, CancellationToken token)
     {
         if (serverId != "agent") throw new Exception("Collection must target the exact live agent, not a shared cluster name");
+        Calls++;
         var read = (ReplayReadRequest)(object)request!;
+        Recording = read.Record;
         if (read.Acknowledge.Contains(chunk.Id)) Acknowledged = true;
         return Task.FromResult((TResponse)(object)new ReplayPage { Chunks = Acknowledged ? [] : [chunk] });
     }

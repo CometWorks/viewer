@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Quasar.Plugin.Abstractions.Security;
+using CometWorks.EntityViewer.Replay;
 
 namespace CometWorks.EntityViewer.Quasar.Replay;
 
@@ -20,6 +21,7 @@ internal static class ReplayEndpoints
         });
         group.MapGet("/servers", (ReplayHistoryService history) => Results.Json(history.Servers()));
         group.MapGet("/{serverId}/overview", (string serverId, ReplayHistoryService history) => Results.Json(history.Overview(serverId)));
+        group.MapPut("/{serverId}/recording", async (string serverId, ReplayRecordingSettings settings, ReplayHistoryService history, CancellationToken token) => Results.Json(await history.SetRecording(serverId, settings, token)));
         group.MapGet("/{serverId}", async (string serverId, long from, long to, ReplayHistoryService history, CancellationToken token) => Results.Json(await history.Query(serverId, from, to, token)));
     }
 }

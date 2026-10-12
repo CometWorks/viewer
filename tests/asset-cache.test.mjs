@@ -110,7 +110,7 @@ test("failed and truncated downloads are not cached", async t => {
     const entries = installCache(t);
     const c = await client();
     await assert.rejects(c.loadStreamedAsset(resolved, async () => { throw new Error("network"); }), /network/);
-    await c.loadStreamedAsset(resolved, async () => new Blob(["bad"]));
+    await assert.rejects(c.loadStreamedAsset(resolved, async () => new Blob(["bad"])), /integrity verification/);
     assert.equal(entries.size, 0);
     await c.loadStreamedAsset(resolved, async () => new Blob(["asset"]));
     await waitFor(() => entries.size === 1);
@@ -193,4 +193,31 @@ test("a full store stops retrying writes for every asset in the load", async t =
         await c.loadStreamedAsset({ ...resolved, cacheKey: i.toString(16).padStart(64, "0") }, async () => new Blob(["asset"]));
     await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(entries.metrics.writes, 1);
+});
+
+test("same-size replacement cannot poison a revision cache and corrupt cached bytes are repaired", async t => {
+    const entries = installCache(t);
+    const hash = async text => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))), b => b.toString(16).padStart(2,"0")).join("");
+    const revision = { ...resolved, contentHash: await hash("asset") };
+    const c = await client();
+    await assert.rejects(c.loadStreamedAsset(revision, async () => new Blob(["other"])), /integrity verification/);
+    await c.loadStreamedAsset(revision, async () => new Blob(["asset"]));
+    await waitFor(() => entries.size === 1);
+    entries.set([...entries.keys()][0], new Response(new Blob(["other"])));
+    const reopened = await client();
+    let repairs = 0;
+    assert.equal(await (await reopened.loadStreamedAsset(revision, async () => { repairs++; return new Blob(["asset"]); })).text(), "asset");
+    assert.equal(repairs, 1);
+});
+
+
+test("insecure contexts stream without persisting unverified content revisions", async t => {
+    const entries = installCache(t);
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { configurable: true, value: undefined });
+    t.after(() => { if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor); else delete globalThis.crypto; });
+    const { loadStreamedAsset } = await import(`../src/CometWorks.EntityViewer/wwwroot/asset-cache.js?http=${moduleId++}`);
+    let downloads = 0;
+    for (let i = 0; i < 2; i++) await loadStreamedAsset({ ...resolved, contentHash: key }, async () => { downloads++; return new Blob(["hello"]); });
+    assert.equal(downloads, 2); assert.equal(entries.metrics.opens, 0);
 });

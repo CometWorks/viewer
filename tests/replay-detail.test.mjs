@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { replayViewRotation, diagnosticText } from '../src/CometWorks.EntityViewer/wwwroot/replay-scene.js';
-import { buildReplay, replayJournal, describeEvent } from '../src/CometWorks.EntityViewer/wwwroot/replay-model.js';
+import { buildReplay, replayJournal, describeEvent, pruneReplayContext, frameAt, terrainAt } from '../src/CometWorks.EntityViewer/wwwroot/replay-model.js';
 
 test('gravity view matches projected forward, including vertical and zero gravity', () => {
     for (const gravity of [[0,-9.81,0],[-9,0,0],[0,0,9]]) {
@@ -37,4 +37,30 @@ test('hover reports missing historical fields explicitly and retains names as pl
     assert.match(text,/Natural gravity: not recorded/);
     assert.match(text,/age 1s/);
     assert.match(text,/approximate/);
+});
+
+test("500m context prunes unrelated assets and stays anchored when focus changes", () => {
+    const replay = buildReplay([{session:"s", geometry:{near:[{model:"near"}],far:[{model:"far"}]}, records:[
+        {at:1000,kind:"health"},
+        ...[["anchor",0],["edge",500],["outside",501]].map(([entity,x]) => ({at:1000,kind:"sample",entity,position:[x,0,0],layout:[entity==="outside"?"far":"near"]})),
+    ]}]);
+    const pruned = pruneReplayContext(replay,"anchor");
+    assert.deepEqual([...pruned.tracks.keys()],["s/anchor","s/edge"]);
+    assert.deepEqual([...pruned.geometry.keys()],["near"]);
+    assert.equal(frameAt(pruned,1000,"edge").samples.length,2);
+});
+test("terrain never borrows future observations or stale checkpoints after an edit or gap", () => {
+    const replay = buildReplay([{session:"s",voxels:{before:{},after:{}},records:[
+        {at:1000,kind:"voxel-sample",entity:"v",terrainId:"before",value:1000},
+        {at:1500,kind:"voxel-invalidated",entity:"v"},
+        {at:1600,kind:"voxel-sample",entity:"v",terrainId:"before",value:1000},
+        {at:2000,kind:"voxel-sample",entity:"v",terrainId:"after",value:2000},
+        {at:3000,kind:"gap"},
+    ]}]);
+    assert.equal(terrainAt(replay,999,"s").length,0);
+    assert.equal(terrainAt(replay,1499,"s")[0].terrainId,"before");
+    assert.equal(terrainAt(replay,1700,"s").length,0);
+    assert.equal(terrainAt(replay,2000,"s")[0].terrainId,"after");
+    assert.equal(terrainAt(replay,3001,"s").length,0);
+    assert.equal(terrainAt(replay,2000,"other").length,0);
 });

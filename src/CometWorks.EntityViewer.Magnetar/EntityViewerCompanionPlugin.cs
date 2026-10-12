@@ -28,7 +28,8 @@ namespace CometWorks.EntityViewer.Magnetar
         };
 
         private readonly SemaphoreSlim _sceneBuildGate = new SemaphoreSlim(1, 1);
-        private readonly ServerReplayRecorder _replay = new ServerReplayRecorder();
+        private ServerReplayRecorder _replay; // Construct only after explicit recording opt-in.
+        private volatile bool _disposed;
         private string _pluginVersion = string.Empty;
 
         public string PluginId => "cometworks.entityviewer";
@@ -41,12 +42,13 @@ namespace CometWorks.EntityViewer.Magnetar
 
         public void Update()
         {
-            _replay.Update();
+            _replay?.Update();
         }
 
         public void Dispose()
         {
-            _replay.Dispose();
+            _disposed = true;
+            _replay?.Dispose();
             EmissivePartCapturePatches.Dispose();
             _sceneBuildGate.Dispose();
         }
@@ -56,13 +58,38 @@ namespace CometWorks.EntityViewer.Magnetar
             CancellationToken cancellationToken)
         {
             if (string.Equals(request.Operation, "read-replay", StringComparison.Ordinal))
-                return Task.Run(() => Ok(request, _replay.Read(JsonConvert.DeserializeObject<ReplayReadRequest>(request.PayloadJson ?? "{}") ?? new ReplayReadRequest())), cancellationToken);
+                return ReadReplayAsync(request, cancellationToken);
             if (!string.Equals(request.Operation, GetEntitySceneOperation, StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(Fail(request, $"Unsupported Entity Viewer operation '{request.Operation}'."));
             }
 
             return CaptureSceneAsync(request, cancellationToken);
+        }
+
+        private async Task<CompanionPluginResponse> ReadReplayAsync(CompanionPluginRequest request, CancellationToken token)
+        {
+            var read = JsonConvert.DeserializeObject<ReplayReadRequest>(request.PayloadJson ?? "{}") ?? new ReplayReadRequest();
+            var game = MySandboxGame.Static;
+            if (game == null) return Fail(request, "Game server not available.");
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (token.Register(() => completion.TrySetCanceled()))
+            {
+                game.Invoke(() =>
+                {
+                    if (token.IsCancellationRequested) return;
+                    try
+                    {
+                        if (_disposed) throw new ObjectDisposedException(nameof(EntityViewerCompanionPlugin));
+                        if (read.Record && _replay == null) _replay = new ServerReplayRecorder();
+                        _replay?.Configure(read.Record);
+                        completion.TrySetResult(true);
+                    }
+                    catch (Exception e) { completion.TrySetException(e); }
+                }, "EntityViewer:Recording");
+                await completion.Task.ConfigureAwait(false);
+            }
+            return await Task.Run(() => Ok(request, _replay?.Read(read) ?? new ReplayPage()), token).ConfigureAwait(false);
         }
 
         private async Task<CompanionPluginResponse> CaptureSceneAsync(

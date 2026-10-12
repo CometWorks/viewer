@@ -90,6 +90,7 @@ export async function resolveRemoteAssetFile(logicalPath, options = {}) {
         rootId: resolved.rootId || "",
         rootKind: resolved.rootKind || "remote",
         canonicalPath: resolved.logicalPath || logicalPath,
+        cacheKey: resolved.cacheKey || "",
         getFile: async () => fetchResolvedRemoteFile(resolved),
     };
 }

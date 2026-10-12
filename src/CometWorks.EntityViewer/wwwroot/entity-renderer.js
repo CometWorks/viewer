@@ -1518,7 +1518,7 @@ function renderVoxelBodies(voxels, voxelChunks, voxelMaterials, preloadedTexture
     if (proxyGroup.children.length) group.add(proxyGroup);
 }
 
-function createVoxelDataChunkMesh(chunk, voxel, voxelMaterialsByIndex, options = {}) {
+export function createVoxelDataChunkMesh(chunk, voxel, voxelMaterialsByIndex, options = {}) {
     const content = voxelByteArray(chunk.content);
     const materials = voxelByteArray(chunk.materials);
     const modified = options.modifiedOnly ? voxelByteArray(chunk.modified) : null;
@@ -1537,13 +1537,13 @@ function createVoxelDataChunkMesh(chunk, voxel, voxelMaterialsByIndex, options =
         positionLeftBottomCorner.x + num(storageMin.x, 0) * lodScale,
         positionLeftBottomCorner.y + num(storageMin.y, 0) * lodScale,
         positionLeftBottomCorner.z + num(storageMin.z, 0) * lodScale);
-    const viewTransform = state.viewTransform || new THREE.Matrix4();
+    const viewTransform = options.viewTransform || state.viewTransform || new THREE.Matrix4();
     const positions = [];
     const normals = [];
     const uvs = [];
     const indicesByVoxelPart = new Map();
     const cube = createVoxelCubeScratch();
-    const clipBounds = voxelFloorClipBounds();
+    const clipBounds = options.clipBounds === null ? null : voxelFloorClipBounds();
 
     for (let z = 0; z < sz - 1; z++) {
         for (let y = 0; y < sy - 1; y++) {
@@ -2066,7 +2066,7 @@ function applyVoxelTextures(material, materialIndex, projection, definition, pre
         applyTrackedTexture(
             { slot: "ColorMetalTexture", path: colorTexture },
             textureToken,
-            {},
+            { rootId: definition?.mod ? `mods-direct:${definition.mod}` : "" },
             preloadedTextures,
             texture => {
                 material.map = texture;
@@ -2084,7 +2084,7 @@ function applyVoxelTextures(material, materialIndex, projection, definition, pre
         applyTrackedTexture(
             { slot: "NormalGlossTexture", path: normalTexture },
             textureToken,
-            {},
+            { rootId: definition?.mod ? `mods-direct:${definition.mod}` : "" },
             preloadedTextures,
             texture => {
                 material.normalMap = texture;
@@ -3803,8 +3803,8 @@ function applySpaceEngineersColorMasking(material, metalnessColorable, colorMask
         seTransparentSpecularFactor: { value: 1 },
     };
     if (transparentParameters) Object.assign(material.userData.seColorMaskUniforms, transparentParameters.uniforms);
-    material.onBeforeCompile = shader => {
-        Object.assign(shader.uniforms, material.userData.seColorMaskUniforms);
+    material.onBeforeCompile = function(shader) {
+        Object.assign(shader.uniforms, this.userData.seColorMaskUniforms);
         shader.vertexShader = shader.vertexShader.replace("#include <uv_pars_vertex>", `#include <uv_pars_vertex>
 #ifdef USE_INSTANCING
 attribute vec2 sePatternUvOffset;
@@ -4008,7 +4008,7 @@ function colorMaskForBlock(block) {
     return { x: 0, y: -1, z: 0 };
 }
 
-function displayColorForBlock(block) {
+export function displayColorForBlock(block) {
     const hsv = colorMaskForBlock(block);
     return hsvToRgbColor(positiveModulo(hsv.x, 1), clamp(hsv.y + 0.8, 0, 1), clamp(hsv.z + 0.45, 0, 1));
 }
@@ -4587,8 +4587,9 @@ function collectSceneTextureSelections(scene, definitions) {
     }
 
     for (const material of scene.voxelMaterials || []) {
-        for (const path of [material.colorMetalY, material.colorMetalXZnY]) add({ slot: "ColorMetalTexture", path });
-        for (const path of [material.normalGlossY, material.normalGlossXZnY]) add({ slot: "NormalGlossTexture", path });
+        const options = { rootId: material.mod ? `mods-direct:${material.mod}` : "" };
+        for (const path of [material.colorMetalY, material.colorMetalXZnY]) add({ slot: "ColorMetalTexture", path }, options);
+        for (const path of [material.normalGlossY, material.normalGlossXZnY]) add({ slot: "NormalGlossTexture", path }, options);
     }
 
     for (const block of scene.blockInstances || []) {
@@ -4987,7 +4988,7 @@ function addSummary(label, value) {
 // History uses the same UVs, material groups, glass, normal maps and HSV paint shader.
 // Context ownership stays separate from the live scene so scrubbing only rebuilds changed pages.
 export function createReplayRenderContext() {
-    return { ...createRenderContext(textureStatsToken, new Map()), textureSlots: 0, textureLoads: new Map(), disposed: false };
+    return { ...createRenderContext(textureStatsToken, new Map()), textureLoads: new Map(), disposed: false };
 }
 
 export async function prepareReplayModel(model, context) {
@@ -5004,7 +5005,6 @@ export async function prepareReplayModel(model, context) {
     for (const [key, item] of selections) {
         if (context.preloadedTextures.has(key)) continue;
         context.preloadedTextures.set(key, null);
-        if (context.textureSlots++ >= 256) continue;
         context.textureLoads.set(key, loadTrackedTexture(item.selection, context.textureToken, item.options)
             .then(texture => { if (!context.disposed) context.preloadedTextures.set(key, texture); })
             .catch(() => {})); // Missing assets remain visible in asset diagnostics.
@@ -5026,4 +5026,16 @@ export function disposeReplayRenderContext(context) {
     for (const geometry of context.geometries.values()) geometry.dispose();
     for (const material of context.materials.values()) material.dispose();
     context.geometries.clear(); context.materials.clear(); context.preloadedTextures.clear();
+}
+
+
+export async function prepareReplayTerrain(palette, context) {
+    const selections = collectSceneTextureSelections({ voxelMaterials: palette });
+    for (const [key, item] of selections) {
+        if (context.preloadedTextures.has(key)) continue;
+        context.preloadedTextures.set(key, null);
+        context.textureLoads.set(key, loadTrackedTexture(item.selection, context.textureToken, item.options)
+            .then(texture => { if (!context.disposed) context.preloadedTextures.set(key, texture); }).catch(() => {}));
+    }
+    await Promise.all([...selections.keys()].map(key => context.textureLoads.get(key)));
 }

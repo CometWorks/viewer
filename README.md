@@ -108,8 +108,9 @@ acceptance with the matching installed plugin package.
 
 ## Recording history
 
-The companion continuously records coarse grid/player observations while a world
-is running. Damage and sustained abnormal motion automatically increase capture
+Recording is off by default. Administrators enable it per server in the Entity
+Viewer history sidebar. While enabled, the companion records coarse grid/player
+observations while a world is running. Damage and sustained abnormal motion increase capture
 frequency around the incident. Quasar collects compressed records independently
 of open browser sessions and retains at most 24 hours. Select **Recording history** in the main Entity Viewer panel; **Scene** returns
 to the current entity. The server/entity context stays in the viewer URL. Quasar’s
@@ -134,3 +135,13 @@ includes slow motion, observed-frame stepping, camera follow/free modes, clickab
 event tracks and source/control evidence. Observations-only mode disables visual
 reconstruction. Compact transition recording preserves the existing game-thread
 budget, sampling targets, 50,000-block grid cap and 24-hour retention.
+
+Replay now prepares the selected 500 m context before playback, including recorded
+terrain revisions and authored armor surfaces. It shares the main viewer's rendering
+and persistent asset cache, with content hashes to distinguish updated assets.
+Terrain recording remains bounded and deduplicated; older recordings cannot acquire
+terrain or asset versions that were never recorded. See [replay limits](Docs/Replay.md).
+
+Disabling detaches recording hooks and stops capture. Enabled recording uses
+bounded 1 Hz baseline / 5 Hz incident sampling, with compact movement-state
+transitions and browser-side character animation.

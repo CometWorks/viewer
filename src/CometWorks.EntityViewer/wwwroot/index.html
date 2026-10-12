@@ -148,6 +148,8 @@
             <h2>Recording history</h2>
             <p class="hint">Last 24 hours · 1 Hz baseline · 5 Hz incident detail</p>
             <label>Server<select id="server" required></select></label>
+            <label><span><input id="recordingEnabled" type="checkbox" disabled> Enable recording on this server</span></label>
+            <p id="recordingStatus" class="hint" role="status">Recording is off by default. Enabling records a low-detail baseline and raises detail around incidents. History expires after 24 hours.</p>
             <label>Start time<input id="from" type="datetime-local" step="1" required></label>
             <label>Window<select id="minutes"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option></select></label>
             <label>Incident windows (last 24 hours)<select id="incidents"><option value="">Choose an incident window</option></select></label>
@@ -155,7 +157,7 @@
         </form>
         <p id="status" role="status" aria-live="polite">Connecting to recording history…</p>
         <section class="card replay-inspector">
-            <label>Focus entity<select id="entity"><option value="">All entities</option></select></label>
+            <label>Focus entity (500 m context)<select id="entity"><option value="">All entities</option></select></label>
             <label>Incident clip<select id="clip"><option value="">Entire loaded range</option></select></label>
             <label>Camera<select id="cameraMode"><option value="orbit">Orbit</option><option value="grid">Follow grid</option><option value="player">Follow player</option><option value="perspective">Player perspective (reconstructed)</option><option value="free">Free camera</option></select></label>
             <label><span><input id="observedOnly" type="checkbox"> Observations only</span></label>
@@ -163,8 +165,8 @@
             <p id="geometryQuality" class="hint" role="status"></p>
             <button id="contentFolder" type="button">Choose game Content folder</button>
             <button id="modsFolder" type="button">Choose Mods folder</button>
-            <p class="hint">Uses recorded blocks with configured server assets or your local game folders. History preloads available models and textures. Asset versions, debris, fine deformation, animation poses and dynamic subparts are not recorded. Character animation and player perspective are reconstructed from compact action state.</p>
-            <label>Events<select id="eventFilter"><option value="">All events</option><option value="damage">Damage</option><option value="physics">Suspected physics instability</option><option value="action">Player actions</option><option value="explosion">Explosions</option><option value="death">Deaths</option><option value="split">Grid splits</option><option value="merge">Grid merges</option><option value="block-removed">Block removals</option><option value="gap">Recording gaps</option></select></label>
+            <p class="hint">Uses recorded blocks with configured server assets or your local game folders. Playback waits for every available model, texture and recorded terrain revision in this context. Streamed asset contents are verified against the installed revision. Asset versions, debris, fine deformation, animation poses and dynamic subparts are not recorded. Character animation and player perspective are reconstructed from recorded movement and action state.</p>
+            <label>Events<select id="eventFilter"><option value="">All events</option><option value="damage">Damage</option><option value="physics">Suspected physics instability</option><option value="action">Player actions</option><option value="movement">Movement state</option><option value="explosion">Explosions</option><option value="death">Deaths</option><option value="split">Grid splits</option><option value="merge">Grid merges</option><option value="block-removed">Block removals</option><option value="gap">Recording gaps</option></select></label>
             <button id="downloadHistory" type="button">Download event log</button>
             <div id="events" class="replay-events"></div>
             <pre id="evidence" aria-label="Recorded evidence">Select an event to inspect its evidence.</pre>
@@ -173,6 +175,7 @@
     <template id="historyWorkspace">
         <section class="replay-workspace" aria-label="Recording history">
             <div id="replayViewport" aria-label="Recorded grids, destruction, and player positions">
+                <div id="assetLoading" class="replay-loading" role="status" aria-live="polite" hidden><strong>Preparing replay</strong><span id="assetLoadingText"></span></div>
                 <div id="playerLabels"></div><pre id="replayHover" role="status" hidden></pre>
             </div>
             <section class="replay-timeline" aria-label="Replay controls">

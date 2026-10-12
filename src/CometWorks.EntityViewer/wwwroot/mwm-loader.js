@@ -63,7 +63,7 @@ export async function resolveModelAsset(asset) {
 }
 
 async function parseResolvedModel(resolved, file, stack) {
-    const cacheKey = `${resolved.rootId || "content"}|${resolved.logicalPath.toLowerCase()}|${file.size}|${file.lastModified || 0}`;
+    const cacheKey = `${resolved.cacheKey || ""}|${resolved.rootId || "content"}|${resolved.logicalPath.toLowerCase()}|${file.size}|${file.lastModified || 0}`;
     if (modelCache.has(cacheKey)) return modelCache.get(cacheKey);
     const stackKey = `${resolved.rootId || "content"}|${resolved.logicalPath.toLowerCase()}`;
     if (stack.has(stackKey)) throw new Error(`recursive GeometryDataAsset reference: ${resolved.logicalPath}`);

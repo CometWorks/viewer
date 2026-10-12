@@ -40,8 +40,9 @@ internal sealed class ReplaySchedule
             && Distance(record.AngularVelocity, _written.AngularVelocity) < 0.05
             && Distance(record.Rotation, _written.Rotation) < (record.High ? 0.001 : 0.01)
             && Distance(record.Gravity, _written.Gravity) < 0.01 && Distance(record.Color, _written.Color) < 0.01
-            && record.Actions == _written.Actions && record.Character == _written.Character && record.Weapon == _written.Weapon && record.Related == _written.Related
+            && record.Movement == _written.Movement && record.Actions == _written.Actions && record.Character == _written.Character && record.Weapon == _written.Weapon && record.Related == _written.Related
             && Distance(record.View, _written.View) < 1
+            && Math.Abs(record.ModelScale - _written.ModelScale) < 0.001
             && record.Model == _written.Model && record.Mod == _written.Mod && record.Detail == _written.Detail
             && Distance(record.Size, _written.Size) < 0.01 && record.Source == _written.Source && record.Name == _written.Name)
             return false;

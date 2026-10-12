@@ -6,6 +6,8 @@ namespace CometWorks.EntityViewer.Quasar.Streaming;
 
 public sealed class ResolvedServerAsset
 {
+    public string ContentHash { get; internal set; } = string.Empty;
+
     public string LogicalPath { get; init; } = string.Empty;
 
     public string RootId { get; init; } = string.Empty;
@@ -29,7 +31,7 @@ public sealed class ResolvedServerAsset
     public bool IsArchiveEntry => !string.IsNullOrWhiteSpace(ArchiveEntryName);
 
     public string CacheKeyForUser(string userId) => Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes(string.Join('\n', userId, FilePath, ArchiveEntryName,
+        Encoding.UTF8.GetBytes(string.Join('\n', "asset-v2", userId, FilePath, ArchiveEntryName, ContentHash,
             Size.ToString(System.Globalization.CultureInfo.InvariantCulture),
             SourceSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
             (SourceLastModifiedUtc ?? LastModifiedUtc)?.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
