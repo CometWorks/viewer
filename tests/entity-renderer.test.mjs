@@ -58,6 +58,9 @@ function frames(t, onFrame = () => {}) {
 test("model construction yields while preserving instancing, proxies and camera-driven LOD", async t => {
     const countFrames = frames(t);
     const { scene, definitions, context } = fixture();
+    const previousRenderer = state.renderer;
+    state.renderer = { shadowMap: { needsUpdate: false } };
+    t.after(() => { state.renderer = previousRenderer; });
     const result = await buildModelLayer(scene, definitions, context, new Map(), 0);
     assert.ok(countFrames() > 1, "Large model builds must allow browser frames between work slices");
     assert.equal(result.stats.modelMeshes, 160);
@@ -78,6 +81,16 @@ test("model construction yields while preserving instancing, proxies and camera-
     state.camera.updateMatrixWorld(true);
     lods[0].update(state.camera);
     assert.equal(lods[0].getCurrentLevel(), 1, "Framing the camera must not need a second model build");
+    assert.equal(state.renderer.shadowMap.needsUpdate, true, "A new LOD must refresh its shadow silhouette");
+    state.renderer.shadowMap.needsUpdate = false;
+    state.camera.position.z = 900;
+    state.camera.updateMatrixWorld(true);
+    lods[0].update(state.camera);
+    assert.equal(state.renderer.shadowMap.needsUpdate, false, "Camera motion within a LOD must reuse shadows");
+    state.camera.position.z = 1;
+    state.camera.updateMatrixWorld(true);
+    lods[0].update(state.camera);
+    assert.equal(state.renderer.shadowMap.needsUpdate, true, "Returning to a detailed LOD must refresh shadows");
     disposeObjectTree(result.layer);
 });
 

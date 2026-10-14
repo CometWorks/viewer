@@ -68,6 +68,10 @@ export function initScene() {
     state.renderer.outputColorSpace = THREE.SRGBColorSpace;
     state.renderer.shadowMap.enabled = true;
     state.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // The main viewer is a snapshot. Rebuild shadows only when their inputs change.
+    state.renderer.shadowMap.autoUpdate = false;
+    invalidateShadows();
+    state.renderer.domElement.addEventListener("webglcontextrestored", invalidateShadows);
     els.viewport.appendChild(state.renderer.domElement);
 
     state.controls = new OrbitControls(state.camera, state.renderer.domElement);
@@ -134,6 +138,7 @@ export function disposeViewer() {
     state.resizeObserver = null;
 
     const canvas = state.renderer?.domElement;
+    canvas?.removeEventListener("webglcontextrestored", invalidateShadows);
     canvas?.removeEventListener("pointerdown", onHoverPointerDown);
     canvas?.removeEventListener("pointermove", onPointerMove);
     canvas?.removeEventListener("pointerup", onHoverPointerUp);
@@ -431,6 +436,7 @@ function floorGridBounds(contentBounds, fallbackBounds, selectedBounds = null) {
 }
 
 export function updateLighting() {
+    invalidateShadows();
     const lightingEnabled = !els.showLighting || els.showLighting.checked;
     if (state.ambientLight) state.ambientLight.intensity = lightingEnabled ? AMBIENT_WITH_LIGHTING : AMBIENT_WITHOUT_LIGHTING;
     if (state.sunLight) {
@@ -449,6 +455,7 @@ export function updateLighting() {
 
 export function updateSunLightPosition() {
     if (!state.sunLight) return;
+    invalidateShadows();
     const targetBounds = (state.contextBounds && selectedGridContentBounds()) || sceneContentBounds() || state.currentBounds;
     const shadowBounds = sunShadowBounds(targetBounds);
     const target = targetBounds ? targetBounds.getCenter(new THREE.Vector3()) : new THREE.Vector3();
@@ -466,6 +473,10 @@ export function updateSunLightPosition() {
     configureSunShadow(shadowBounds, lightPosition, target);
     state.sunLight.updateMatrixWorld();
     updateSunMarker(markerPosition, target);
+}
+
+export function invalidateShadows() {
+    if (state.renderer) state.renderer.shadowMap.needsUpdate = true;
 }
 
 export function disposeObjectTree(root) {
@@ -767,9 +778,14 @@ function onPointerMove(event) {
     state.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     state.raycaster.setFromCamera(state.pointer, state.camera);
     const targets = [];
-    if (state.gridGroup) targets.push(state.gridGroup);
-    if (state.voxelGroup && state.voxelGroup.visible) targets.push(state.voxelGroup);
-    const hits = state.raycaster.intersectObjects(targets, true);
+    // Recursive Raycaster picking includes invisible children and every LOD level.
+    // Match the rendered geometry, including visible diagnostic lines.
+    for (const root of [state.gridGroup, state.voxelGroup]) {
+        root?.traverseVisible(object => {
+            if (object.isMesh || object.isLine) targets.push(object);
+        });
+    }
+    const hits = state.raycaster.intersectObjects(targets, false);
     const logisticsHit = state.logisticsGroup && state.logisticsGroup.visible ? hits.find(item => logisticsFromIntersection(item)) : null;
     if (logisticsHit) {
         const logistics = logisticsFromIntersection(logisticsHit);

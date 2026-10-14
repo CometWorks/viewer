@@ -5,7 +5,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { els, state } from "./state.js";
 import { blockBox, boundsToBox3, createBoxMesh } from "./geometry.js";
 import { colorFromHash, matrixDtoToThree, num, vec3 } from "./math.js";
-import { ASTEROID_GRID_CUBE_SIZE, LARGE_GRID_CUBE_SIZE, collectObjectTreeTextures, disposeObjectTree, fitCameraToScene, floorGridLayout, updateLighting, updateSceneBounds, updateSunLightPosition } from "./scene.js";
+import { ASTEROID_GRID_CUBE_SIZE, LARGE_GRID_CUBE_SIZE, collectObjectTreeTextures, disposeObjectTree, fitCameraToScene, floorGridLayout, invalidateShadows, updateLighting, updateSceneBounds, updateSunLightPosition } from "./scene.js";
 import { resolveModelAsset } from "./mwm-loader.js";
 import { armorFallbackModelCount, armorFallbackModelForDefinition } from "./armor-fallback-models.js";
 import { loadTexture, textureToCanvas } from "./texture-loader.js";
@@ -194,6 +194,7 @@ export async function renderEntityScene(scene, options = {}) {
     group.matrix.identity();
     state.gridGroup = group;
     state.scene.add(group);
+    invalidateShadows();
     const gridGroups = buildGridGroups(scene, group);
     state.currentGridSize = floorGridMajorStep(scene);
     state.currentFloorGridAlignment = floorGridAlignment(scene);
@@ -366,6 +367,7 @@ function createProgressiveModelRender(scene, definitions, gridGroups, textureTok
             }
             renderLogisticsOverlay(scene, gridGroups, definitions);
             renderDamagedOverlay(scene, gridGroups, definitions, scene.voxelDamageDeformations || []);
+            invalidateShadows();
             progress.lastRenderStats = nextLayer.stats;
             state.sceneRenderCounts.modelMeshes = nextLayer.stats.modelMeshes;
             state.sceneRenderCounts.proxyMeshes = nextLayer.stats.proxyMeshes;
@@ -1516,6 +1518,7 @@ function renderVoxelBodies(voxels, voxelChunks, voxelMaterials, preloadedTexture
     }
 
     if (proxyGroup.children.length) group.add(proxyGroup);
+    invalidateShadows();
 }
 
 export function createVoxelDataChunkMesh(chunk, voxel, voxelMaterialsByIndex, options = {}) {
@@ -2567,12 +2570,20 @@ function flushThreeLodModelBatches(group, renderContext) {
         lod.name = `ModelBatchesLOD${lodIndex++}`;
         lod.matrixAutoUpdate = false;
         lod.autoUpdate = true;
+        lod.update = updateShadowLod;
         for (const level of [...lodGroup.groupsByLevel.keys()].sort((a, b) => a - b)) {
             lod.addLevel(lodGroup.groupsByLevel.get(level), lodGroup.distancesByLevel.get(level) || 0, MODEL_LOD_HYSTERESIS_RATIO);
         }
         if (lod.levels.length) group.add(lod);
     }
     return meshCount;
+}
+
+function updateShadowLod(camera) {
+    const previousLevel = this.getCurrentLevel();
+    THREE.LOD.prototype.update.call(this, camera);
+    // Three updates LODs before its shadow pass, so the new caster is used this frame.
+    if (this.getCurrentLevel() !== previousLevel) invalidateShadows();
 }
 
 function createInstancedBatchMesh(key, batch, color) {
@@ -3749,7 +3760,10 @@ function applyTrackedTexture(selection, textureToken, options = {}, preloadedTex
 
     loadTrackedTexture(selection, textureToken, options)
         .then(texture => {
-            if (texture) apply(texture);
+            if (texture) {
+                apply(texture);
+                invalidateShadows(); // Late alpha maps can change a caster's silhouette.
+            }
         })
         .catch(error => {
             if (error && error.isTextureLoadInvalidated) return;
