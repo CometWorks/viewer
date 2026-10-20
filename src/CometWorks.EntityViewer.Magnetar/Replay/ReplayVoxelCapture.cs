@@ -20,6 +20,8 @@ internal sealed class ReplayVoxelCapture : IDisposable
     private const int MaxChunks = 128;
     private readonly ReplayWriter _writer;
     private readonly Dictionary<long, Body> _bodies = new Dictionary<long, Body>(); // simulation thread
+    private readonly List<Body> _bodyScan = new List<Body>();
+    private readonly List<string> _expired = new List<string>(); // worker only
     private readonly BlockingCollection<Request> _requests = new BlockingCollection<Request>(64);
     private readonly ConcurrentQueue<Change> _changes = new ConcurrentQueue<Change>();
     private readonly Dictionary<string, Chunk> _chunks = new Dictionary<string, Chunk>(); // worker only
@@ -80,21 +82,22 @@ internal sealed class ReplayVoxelCapture : IDisposable
             _changes.Enqueue(new Change { Body = body, Min = min, Max = max, At = at });
         };
         body.Storage.RangeChanged += body.Handler;
-        _bodies.Add(voxel.EntityId, body);
+        _bodies.Add(voxel.EntityId, body); _bodyScan.Add(body);
     }
     public void Observe(Vector3D position, Vector3D size)
     {
         // Covers the selected grid and surrounding context; large areas use coarser samples.
         var half = Math.Min(1024, Math.Max(500, size.AbsMax() + 125));
         var area = new BoundingBoxD(position - half, position + half);
-        foreach (var body in _bodies.Values.ToArray())
+        for (var i = _bodyScan.Count - 1; i >= 0; i--)
         {
+            var body = _bodyScan[i];
             var voxel = body.Voxel;
             if (!body.Active) continue;
             if (voxel.Closed || voxel.MarkedForClose || !ReferenceEquals(voxel.Storage, body.Storage))
             {
                 body.Active = false; body.Storage.RangeChanged -= body.Handler;
-                _bodies.Remove(voxel.EntityId);
+                _bodies.Remove(voxel.EntityId); _bodyScan.RemoveAt(i);
                 if (!voxel.Closed && !voxel.MarkedForClose) Add(voxel);
                 continue;
             }
@@ -123,16 +126,19 @@ internal sealed class ReplayVoxelCapture : IDisposable
                 DrainChanges();
                 // Bound pending work and keep recent nearby context in preference to old areas.
                 for (var i = 0; i < 4 && _requests.TryTake(out var request); i++) RequestChunks(request);
-                foreach (var pair in _chunks.ToArray())
+                _expired.Clear();
+                KeyValuePair<string, Chunk> pending = default;
+                foreach (var pair in _chunks)
                 {
                     var chunk = pair.Value;
                     if (!chunk.Body.Active || now - chunk.LastWanted > 60000)
                     {
-                        Invalidate(pair.Key, chunk, now); _chunks.Remove(pair.Key); continue;
+                        Invalidate(pair.Key, chunk, now); _expired.Add(pair.Key); continue;
                     }
                     if (chunk.Page != null && now - chunk.Checkpoint >= 10000) Publish(pair.Key, chunk, now);
+                    if (chunk.Page == null && chunk.RetryAt <= now && (pending.Value == null || chunk.RetryAt < pending.Value.RetryAt)) pending = pair;
                 }
-                var pending = _chunks.Where(p => p.Value.Page == null && p.Value.RetryAt <= now).OrderBy(p => p.Value.RetryAt).FirstOrDefault();
+                foreach (var key in _expired) _chunks.Remove(key);
                 if (pending.Value != null) Read(pending.Key, pending.Value);
                 await Task.Delay(100, _stop.Token).ConfigureAwait(false);
             }
@@ -241,6 +247,6 @@ internal sealed class ReplayVoxelCapture : IDisposable
     public void Dispose()
     {
         foreach (var body in _bodies.Values) { body.Active = false; body.Storage.RangeChanged -= body.Handler; }
-        _bodies.Clear(); _stop.Cancel(); // No simulation-thread wait for storage/disk locks.
+        _bodies.Clear(); _bodyScan.Clear(); _stop.Cancel(); // No simulation-thread wait for storage/disk locks.
     }
 }

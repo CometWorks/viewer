@@ -53,7 +53,7 @@ internal static class ContextChecks
         layout.Apply(new ReplayRecord { Kind = "layout-ready", Entity = "grid" });
         var sample = new ReplayRecord { At = now, Entity = "grid", GeometryReady = true };
         var blobs = layout.Attach(sample);
-        var segment = new ReplayChunk { Id = ReplayChunkStore.NewId(now, 0), Geometry = blobs, Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(
+        var segment = new ReplayChunk { Id = ReplayChunkStore.NewId(now, 0), Geometry = new(blobs), Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(
             new ReplayBatch { Session = Guid.NewGuid().ToString("N"), Records = [sample] }, json)) };
         var result = ReplayHistoryService.Decode(segment);
         Check(result.ModelParts.Count == 1 && result.Geometry.Values.SelectMany(b => b).All(b => b.PartsId == result.ModelParts.Keys.Single()), "Armor surfaces deduplicate independently of per-block UV patterns");

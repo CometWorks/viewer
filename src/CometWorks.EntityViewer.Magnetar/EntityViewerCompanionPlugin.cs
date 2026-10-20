@@ -82,7 +82,7 @@ namespace CometWorks.EntityViewer.Magnetar
                     {
                         if (_disposed) throw new ObjectDisposedException(nameof(EntityViewerCompanionPlugin));
                         if (read.Record && _replay == null) _replay = new ServerReplayRecorder();
-                        _replay?.Configure(read.Record);
+                        _replay?.Configure(read.Record, read.Settings);
                         completion.TrySetResult(true);
                     }
                     catch (Exception e) { completion.TrySetException(e); }

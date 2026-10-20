@@ -126,7 +126,7 @@ public sealed class ReplayChunkStore
             PruneLocked(now);
             var page = new ReplayPage { LostChunks = LostChunks };
             var bytes = 0;
-            foreach (var file in Files())
+            foreach (var file in _files.Values)
             {
                 var chunk = Read(file);
                 var cost = chunk.Data.Length + chunk.Geometry.Sum(p => p.Value.Length);
@@ -143,7 +143,7 @@ public sealed class ReplayChunkStore
         lock (_gate)
         {
             PruneLocked(now);
-            var files = Files().Where(f => Timestamp(f.Name) >= Math.Max(now - RetentionMs, from - 60000) && Timestamp(f.Name) <= to).ToList();
+            var files = _files.Values.Where(f => Timestamp(f.Name) >= Math.Max(now - RetentionMs, from - 60000) && Timestamp(f.Name) <= to).ToList();
             if (files.Sum(f => f.Length) > 8 * 1024 * 1024 || files.Count > 512)
                 throw new InvalidDataException("Too much replay data. Select a shorter time range.");
             var result = new List<ReplayChunk>();
@@ -163,19 +163,21 @@ public sealed class ReplayChunkStore
 
     public string[] List(long now)
     {
-        lock (_gate) { PruneLocked(now); return Files().Select(f => Path.GetFileNameWithoutExtension(f.Name)).ToArray(); }
+        lock (_gate) { PruneLocked(now); return _files.Values.Select(f => Path.GetFileNameWithoutExtension(f.Name)).ToArray(); }
     }
 
     public void Prune(long now) { lock (_gate) PruneLocked(now); }
 
-    private FileInfo[] Files() => _files.Values.ToArray();
     private static long Cost(FileInfo file) => Math.Max(4096, ((file.Length + 4095) / 4096) * 4096);
 
     private void PruneLocked(long now)
     {
         var previousLoss = LostChunks;
-        foreach (var file in Files())
+        while (_files.Count > 0)
         {
+            FileInfo file;
+            // Inspect the oldest entry only. Dispose the cursor before removing it.
+            using (var cursor = _files.GetEnumerator()) { cursor.MoveNext(); file = cursor.Current.Value; }
             if (Timestamp(file.Name) >= now - RetentionMs && _bytes <= _quota) break;
             Remove(file);
             if (Timestamp(file.Name) >= now - RetentionMs) LostChunks++;

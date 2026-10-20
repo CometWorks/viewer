@@ -21,7 +21,8 @@ internal sealed class ReplayWriter : IDisposable
         NullValueHandling = NullValueHandling.Ignore,
         DefaultValueHandling = DefaultValueHandling.Ignore
     };
-    private readonly BlockingCollection<Tuple<ReplayRecord, long, Action<ReplayRecord>>> _queue = new BlockingCollection<Tuple<ReplayRecord, long, Action<ReplayRecord>>>(4096);
+    private readonly BlockingCollection<Pending> _queue = new BlockingCollection<Pending>(4096);
+    private struct Pending { public ReplayRecord Record; public long Version; public Action<ReplayRecord> Prepare; }
     private readonly Task _worker;
     private readonly string _session;
     private readonly string _world;
@@ -54,7 +55,7 @@ internal sealed class ReplayWriter : IDisposable
     public void Add(ReplayRecord record, Action<ReplayRecord> prepare = null)
     {
         if (_queue.IsAddingCompleted) return;
-        try { if (!_queue.TryAdd(Tuple.Create(record, LossVersion, prepare))) { Interlocked.Increment(ref _dropped); Interlocked.Increment(ref _lossVersion); } }
+        try { if (!_queue.TryAdd(new Pending { Record = record, Version = LossVersion, Prepare = prepare })) { Interlocked.Increment(ref _dropped); Interlocked.Increment(ref _lossVersion); } }
         catch (InvalidOperationException) { }
     }
 
@@ -74,45 +75,56 @@ internal sealed class ReplayWriter : IDisposable
             _store = _store ?? new ReplayChunkStore(_path, 64L * 1024 * 1024);
             _error = "";
             var layoutVersion = LossVersion;
+            var records = new List<ReplayRecord>(128);
+            var captured = new List<Pending>(512);
+            var geometry = new Dictionary<string, byte[]>();
             while (!_queue.IsCompleted)
             {
-                var records = new List<ReplayRecord>();
-                var captured = new List<Tuple<ReplayRecord, long, Action<ReplayRecord>>>();
+                records.Clear(); captured.Clear(); geometry.Clear();
+                long minAt = long.MaxValue, maxAt = long.MinValue;
+                var geometryBytes = 0;
                 var until = DateTime.UtcNow.AddSeconds(5);
                 while (captured.Count < 512 && DateTime.UtcNow < until && !_queue.IsCompleted)
                     if (_queue.TryTake(out var item, 100)) captured.Add(item);
                 var version = LossVersion;
                 if (version != layoutVersion) { _layouts.Clear(); layoutVersion = version; }
-                var geometry = new Dictionary<string, byte[]>();
                 foreach (var item in captured)
                 {
-                    var record = item.Item1;
-                    if (item.Item2 != version && record.Kind.StartsWith("layout-", StringComparison.Ordinal)) continue;
-                    try { item.Item3?.Invoke(record); }
+                    var record = item.Record;
+                    if (item.Version != version && record.Kind.StartsWith("layout-", StringComparison.Ordinal)) continue;
+                    try { item.Prepare?.Invoke(record); }
                     catch { /* Authored model metadata unavailable; recorded block topology remains a fallback. */ }
                     if (_layouts.Apply(record)) continue;
                     var parts = _layouts.Attach(record);
+                    Tuple<string, byte[]> terrain = null;
                     if (record.Terrain != null)
                     {
-                        var encoded = _terrain.GetValue(record.Terrain, page => {
+                        terrain = _terrain.GetValue(record.Terrain, page => {
                             var data = ReplayChunkStore.Compress(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(page, Json)));
                             return Tuple.Create(ReplayChunkStore.GeometryId(data), data);
                         });
-                        record.TerrainId = encoded.Item1;
-                        parts[record.TerrainId] = encoded.Item2;
+                        record.TerrainId = terrain.Item1;
                         record.Terrain = null;
                     }
-                    var extra = parts.Where(p => !geometry.ContainsKey(p.Key)).Sum(p => p.Value.Length);
-                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(record.At, records.Max(r => r.At)) - Math.Min(record.At, records.Min(r => r.At)) > 60000 || geometry.Sum(p => p.Value.Length) + extra > 2 * 1024 * 1024))
-                    { Write(records, geometry); records.Clear(); geometry.Clear(); }
-                    foreach (var part in parts) geometry[part.Key] = part.Value;
+                    var needsParts = record.LayoutId.Length == 0 || !geometry.ContainsKey(record.LayoutId);
+                    var extra = 0;
+                    if (needsParts) foreach (var part in parts) if (!geometry.ContainsKey(part.Key)) extra += part.Value.Length;
+                    if (terrain != null && !geometry.ContainsKey(terrain.Item1)) extra += terrain.Item2.Length;
+                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(record.At, maxAt) - Math.Min(record.At, minAt) > 60000 || geometryBytes + extra > 2 * 1024 * 1024))
+                    {
+                        Write(records, geometry); records.Clear(); geometry.Clear();
+                        minAt = long.MaxValue; maxAt = long.MinValue; geometryBytes = 0; needsParts = true;
+                    }
+                    if (needsParts) foreach (var part in parts) if (!geometry.ContainsKey(part.Key)) { geometry.Add(part.Key, part.Value); geometryBytes += part.Value.Length; }
+                    if (terrain != null && !geometry.ContainsKey(terrain.Item1)) { geometry.Add(terrain.Item1, terrain.Item2); geometryBytes += terrain.Item2.Length; }
+                    minAt = Math.Min(minAt, record.At); maxAt = Math.Max(maxAt, record.At);
                     records.Add(record);
                 }
                 var dropped = Interlocked.Exchange(ref _dropped, 0);
                 if (dropped != 0)
                 {
                     var gapAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(gapAt, records.Max(r => r.At)) - Math.Min(gapAt, records.Min(r => r.At)) > 60000))
+                    if (records.Count > 0 && (records.Count >= 128 || Math.Max(gapAt, maxAt) - Math.Min(gapAt, minAt) > 60000))
                     { Write(records, geometry); records.Clear(); geometry.Clear(); }
                     records.Add(new ReplayRecord { Kind = "gap", At = gapAt, Value = dropped, Detail = "Recorder queue overflow" });
                 }
@@ -134,7 +146,7 @@ internal sealed class ReplayWriter : IDisposable
             foreach (var record in records)
             {
                 if (record.Kind != "damage") { compact.Add(record); continue; }
-                var key = record.Entity + "/" + record.Source + "/" + record.Detail + "/" + record.At / 250;
+                var key = record.IncidentId + "/" + record.Entity + "/" + record.Source + "/" + record.Detail + "/" + record.At / 250;
                 if (!damage.TryGetValue(key, out var prior)) { damage.Add(key, record); compact.Add(record); }
                 else { prior.Value += record.Value; prior.Count += record.Count; }
             }

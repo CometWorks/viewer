@@ -12,6 +12,9 @@ public sealed class ReplayRecord
     public long Tick { get; set; }
     public double Elapsed { get; set; }
     public string Kind { get; set; } = "sample";
+    [DefaultValue("")]
+    public string IncidentId { get; set; } = "";
+    public ReplayIncident? Incident { get; set; }
     public string Entity { get; set; } = "";
     public string Name { get; set; } = "";
     public string Type { get; set; } = "grid";
@@ -97,12 +100,38 @@ public sealed class ReplayChunk
 public sealed class ReplayReadRequest
 {
     public bool Record { get; set; } // Explicit opt-in; renewed only by the enabled collector.
+    public ReplayRecordingSettings Settings { get; set; } = new ReplayRecordingSettings();
     public List<string> Acknowledge { get; set; } = new List<string>();
 }
 
 public sealed class ReplayRecordingSettings
 {
     public bool Enabled { get; set; }
+    public int MaxIncidentMinutes { get; set; } = 15;
+    public int MaxContextRadius { get; set; } = 10000;
+    public void Validate()
+    {
+        if (MaxIncidentMinutes < 1 || MaxIncidentMinutes > 60) throw new ArgumentException("Incident duration must be between 1 and 60 minutes.");
+        if (MaxContextRadius < 500 || MaxContextRadius > 10000) throw new ArgumentException("Context radius must be between 500 and 10000 metres.");
+    }
+}
+
+// Checkpoints make a partial range self-contained; Until is the current quiet/hard deadline.
+public sealed class ReplayIncident
+{
+    public string Id { get; set; } = "";
+    public long StartedAt { get; set; }
+    public long LastActivityAt { get; set; }
+    public long Until { get; set; }
+    public long Deadline { get; set; }
+    public double[] Seed { get; set; } = Array.Empty<double>();
+    public double Radius { get; set; }
+    public int MaxRadius { get; set; }
+    public bool Ended { get; set; }
+    public string Reason { get; set; } = "";
+    public string MergedInto { get; set; } = "";
+    public string[] MergedIds { get; set; } = Array.Empty<string>();
+    public bool Incomplete { get; set; }
 }
 
 public sealed class ReplayPage

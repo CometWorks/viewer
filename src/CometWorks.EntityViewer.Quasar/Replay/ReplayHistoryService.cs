@@ -38,11 +38,12 @@ public sealed class ReplayHistoryService : BackgroundService
     {
         var server = Find(serverId);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return new { server.Info, server.Error, server.LostChunks, server.LastCollectedAt, server.RecordingEnabled, segments = server.Store.List(now).Select(id => new { at = ReplayChunkStore.Timestamp(id), events = int.Parse(id.Split('-')[1]) }) };
+        return new { server.Info, server.Error, server.LostChunks, server.LastCollectedAt, server.RecordingEnabled, settings = server.Settings, incidents = server.Incidents.Values.Where(r => r.Incident!.Until >= now - ReplayChunkStore.RetentionMs).OrderByDescending(r => r.Incident!.StartedAt).Select(r => r.Incident), segments = server.Store.List(now).Select(id => new { at = ReplayChunkStore.Timestamp(id), events = int.Parse(id.Split('-')[1]) }) };
     }
 
     public async Task<object> SetRecording(string serverId, ReplayRecordingSettings settings, CancellationToken token)
     {
+        settings.Validate();
         var server = Find(serverId);
         await server.Gate.WaitAsync(token);
         try
@@ -51,11 +52,11 @@ public sealed class ReplayHistoryService : BackgroundService
             var path = Path.Combine(server.Directory, "recording.json");
             await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(settings, Json), token);
             File.Move(path + ".tmp", path, true);
-            server.RecordingEnabled = settings.Enabled;
+            server.Settings = settings;
             server.Draining = !settings.Enabled;
             server.RetryAt = default;
             await CollectLocked(server, token);
-            return new { server.RecordingEnabled, server.Error };
+            return new { server.RecordingEnabled, settings = server.Settings, server.Error };
         }
         finally { server.Gate.Release(); }
     }
@@ -63,8 +64,8 @@ public sealed class ReplayHistoryService : BackgroundService
     public async Task<List<ReplayBatch>> Query(string serverId, long from, long to, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (from < now - ReplayChunkStore.RetentionMs || to <= from || to - from > 15 * 60 * 1000 || to > now + 60000)
-            throw new ArgumentException("Select up to 15 minutes within the last 24 hours.");
+        if (from < now - ReplayChunkStore.RetentionMs || to <= from || to - from > 60 * 60 * 1000 || to > now + 60000)
+            throw new ArgumentException("Select up to 60 minutes within the last 24 hours.");
         var server = Find(serverId);
         await _queries.WaitAsync(cancellationToken);
         try
@@ -153,7 +154,7 @@ public sealed class ReplayHistoryService : BackgroundService
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
-            var page = await _channel.SendAsync<ReplayReadRequest, ReplayPage>(server.Info.AgentId, "cometworks.entityviewer", "read-replay", new ReplayReadRequest { Record = server.RecordingEnabled, Acknowledge = server.Acknowledge }, timeout.Token);
+            var page = await _channel.SendAsync<ReplayReadRequest, ReplayPage>(server.Info.AgentId, "cometworks.entityviewer", "read-replay", new ReplayReadRequest { Record = server.RecordingEnabled, Settings = server.Settings, Acknowledge = server.Acknowledge }, timeout.Token);
             server.Acknowledge = [];
             if (page.Chunks.Count > 8 || page.Chunks.Sum(c => (long)c.Data.Length + c.Geometry.Sum(p => (long)p.Value.Length)) > ReplayChunkStore.MaxTransferBytes)
                 throw new InvalidDataException("Replay response exceeds collection budget.");
@@ -163,7 +164,20 @@ public sealed class ReplayHistoryService : BackgroundService
                 if (decoded.Records.Any(r => r.LayoutId.Length > 0 && r.Layout == null) || decoded.Records.Where(r => r.Layout != null).SelectMany(r => r.Layout!).Any(id => !decoded.Geometry.ContainsKey(id)))
                     throw new InvalidDataException("Missing replay geometry dependency.");
                 server.Store.Put(chunk, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                foreach (var record in decoded.Records.Where(r => r.Incident != null))
+                    server.Incidents.AddOrUpdate(record.IncidentId, record, (_, previous) => record.Elapsed >= previous.Elapsed ? record : previous);
                 server.Acknowledge.Add(chunk.Id);
+            }
+            if (page.Chunks.Count > 0)
+            {
+                var retained = server.Incidents.Values.Where(r => r.Incident!.Until >= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - ReplayChunkStore.RetentionMs)
+                    .OrderByDescending(r => r.Incident!.StartedAt).Take(4096).ToArray();
+                var ids = retained.Select(r => r.IncidentId).ToHashSet();
+                foreach (var id in server.Incidents.Keys) if (!ids.Contains(id)) server.Incidents.TryRemove(id, out _);
+                // A rebuildable navigation index; timeline checkpoints remain authoritative.
+                var indexPath = Path.Combine(server.Directory, "incidents.json");
+                await File.WriteAllTextAsync(indexPath + ".tmp", JsonSerializer.Serialize(retained, Json), token);
+                File.Move(indexPath + ".tmp", indexPath, true);
             }
             server.LostChunks = page.LostChunks + server.Store.LostChunks;
             server.Error = page.Error;
@@ -183,11 +197,24 @@ public sealed class ReplayHistoryService : BackgroundService
         var directory = Path.Combine(_root, hash);
         var store = new ReplayChunkStore(directory, 256L * 1024 * 1024);
         File.WriteAllText(Path.Combine(directory, "server.json"), JsonSerializer.Serialize(info, Json));
-        var enabled = false;
+        var settings = new ReplayRecordingSettings();
         var settingsPath = Path.Combine(directory, "recording.json");
-        try { if (File.Exists(settingsPath)) enabled = JsonSerializer.Deserialize<ReplayRecordingSettings>(File.ReadAllText(settingsPath), Json)?.Enabled == true; }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { _logger.LogWarning(e, "Recording settings unreadable; recording disabled for {Server}", info.ServerId); }
-        return new ServerHistory(info, store, directory) { RecordingEnabled = enabled };
+        try
+        {
+            if (File.Exists(settingsPath)) settings = JsonSerializer.Deserialize<ReplayRecordingSettings>(File.ReadAllText(settingsPath), Json) ?? new ReplayRecordingSettings();
+            settings.Validate();
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException or ArgumentException) { settings = new ReplayRecordingSettings(); _logger.LogWarning(e, "Recording settings unreadable; recording disabled for {Server}", info.ServerId); }
+        var server = new ServerHistory(info, store, directory) { Settings = settings };
+        try
+        {
+            var indexPath = Path.Combine(directory, "incidents.json");
+            if (File.Exists(indexPath) && new FileInfo(indexPath).Length <= 16 * 1024 * 1024)
+                foreach (var record in (JsonSerializer.Deserialize<ReplayRecord[]>(File.ReadAllText(indexPath), Json) ?? []).Take(4096))
+                    if (record != null && ValidIncident(record)) server.Incidents[record.IncidentId] = record;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { _logger.LogWarning(e, "Incident index unreadable for {Server}", info.ServerId); }
+        return server;
     }
 
     private ServerHistory Find(string id) => _servers.TryGetValue(Resolve(id), out var server) ? server : throw new KeyNotFoundException("No replay history for this server.");
@@ -257,6 +284,8 @@ public sealed class ReplayHistoryService : BackgroundService
             if (record == null || record.At < start || record.At > start + 60000 || record.Entity == null || record.Name == null || record.Detail == null || record.Source == null || record.Kind == null || record.Type == null
                 || record.Entity.Length > 128 || record.Name.Length > 256 || record.Detail.Length > 1024 || record.Source.Length > 128 || record.Kind.Length > 32 || record.Type.Length > 32
                 || record.Character == null || record.Character.Length > 128 || record.Weapon == null || record.Weapon.Length > 128
+                || record.IncidentId == null || record.IncidentId.Length > 0 && !Guid.TryParseExact(record.IncidentId, "N", out _)
+                || (record.Kind == "incident" || record.Incident != null) && !ValidIncident(record)
                 || record.Related == null || record.Related.Length > 128 || record.Actions is < 0 or > 127 || record.Movement is < 0 or > 65535 || !ValidVector(record.View, 2)
                 || record.Cell != null && !ValidCell(record.Cell)
                 || !double.IsFinite(record.Value) || !double.IsFinite(record.Elapsed) || !ValidVector(record.Position, 3) || !ValidVector(record.Rotation, 4)
@@ -275,6 +304,17 @@ public sealed class ReplayHistoryService : BackgroundService
         if (batch.Geometry.Values.SelectMany(p => p).Any(b => b.PartsId.Length > 0 && (!batch.ModelParts.TryGetValue(b.PartsId, out var parts) || b.Patterns?.Length != parts.Parts.Length * 4)))
             throw new InvalidDataException("Missing replay model parts dependency.");
         return batch;
+    }
+    private static bool ValidIncident(ReplayRecord record)
+    {
+        var i = record.Incident;
+        return record.Kind == "incident" && i != null && Guid.TryParseExact(i.Id, "N", out _) && record.IncidentId == i.Id
+            && i.StartedAt > 0 && i.LastActivityAt >= i.StartedAt && i.Until >= i.LastActivityAt && i.Deadline >= i.Until
+            && i.Deadline - i.StartedAt <= 3600000 && i.Seed != null && ValidVector(i.Seed, 3)
+            && double.IsFinite(i.Radius) && i.Radius >= 500 && i.Radius <= i.MaxRadius && i.MaxRadius is >= 500 and <= 10000
+            && i.Reason is "" or "quiet" or "duration" or "merged" or "stopped"
+            && i.MergedInto != null && (i.MergedInto.Length == 0 || Guid.TryParseExact(i.MergedInto, "N", out _))
+            && i.MergedIds != null && i.MergedIds.Length <= 31 && i.MergedIds.All(id => Guid.TryParseExact(id, "N", out _));
     }
     private static bool ValidVoxel(ReplayVoxelPage? v) => v != null && v.Kind == "voxel" && v.Body != null && v.Body.Length <= 128
         && v.Origin != null && ValidVector(v.Origin, 3) && v.Rotation != null && ValidVector(v.Rotation, 4)
@@ -305,7 +345,9 @@ public sealed class ReplayHistoryService : BackgroundService
     {
         public readonly string Directory = directory;
         public readonly SemaphoreSlim Gate = new(1, 1);
-        public bool RecordingEnabled;
+        public ReplayRecordingSettings Settings = new();
+        public bool RecordingEnabled => Settings.Enabled;
+        public readonly ConcurrentDictionary<string, ReplayRecord> Incidents = new();
         public bool Draining;
         public QuasarCompanionServer Info = info;
         public readonly ReplayChunkStore Store = store;
