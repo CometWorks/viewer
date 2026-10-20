@@ -96,16 +96,18 @@ with four concurrent model jobs. The previous 128-model, 64 MiB model and
 are prepared, including future layouts. Playback waits behind a progress overlay
 while assets, terrain meshes, texture uploads and initial shaders are prepared.
 Missing assets remain explicitly reported. Only changed layout pages rebuild.
-Reloading invalidates old work and disposes its GPU resources.
+Loading another range releases its scene instances while retaining reusable assets
+for the history window's lifetime.
 
 Generated armor records the same authored cube-part models, transforms and UV
 pattern offsets used by the main scene. A worker derives these from immutable
 block-definition/value snapshots; it never loads an MWM on the simulation thread.
 Content-addressed templates deduplicate the surfaces across blocks; per-block
 pattern offsets remain compact. Earlier recordings retain their topology fallback.
-Replay shares the main scene's theme color parsing, HSV paint conversion, ambient
-and sun intensities, shadow sizing, model materials and voxel mesher. Integrity
-is a diagnostic rather than a permanent red paint overlay.
+Replay shares the main scene's theme color parsing, HSV paint conversion, model
+materials and voxel mesher. It uses uniform ambient illumination without a
+directional light or shadow maps. Integrity is a diagnostic rather than a
+permanent red paint overlay.
 
 Missing models use wireframe proxies or armor topology; missing historical layouts
 use bounds only. Characters retain their authored metre scale and any recorded

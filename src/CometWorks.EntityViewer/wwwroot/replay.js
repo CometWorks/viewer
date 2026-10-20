@@ -5,7 +5,6 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { buildReplay, pruneReplayContext, frameAt, speed, trailAt, blockCountAt, describeEvent, replayJournal, incidentClips, observationStep, eventLane, evidenceAt, actionLabels, eventMatches } from "./replay-model.js";
 import { state } from "./state.js";
 import { replayViewRotation, diagnosticText } from "./replay-scene.js";
-import { AMBIENT_WITH_LIGHTING, SUN_LIGHT_INTENSITY_SCALE, SUN_SHADOW_MAP_SIZE, configureSunShadow } from "./scene.js";
 import { startQuasarThemeSync, themeColor } from "./theme.js";
 
 import { fetchAssetStreamingStatus, prepareRemoteAssetSession, getRemoteAssetSessionKey } from "./asset-streaming.js";
@@ -50,16 +49,12 @@ function applyTheme() { scene.background = new THREE.Color(themeColor("--bg", 0x
 applyTheme();
 window.addEventListener("quasar-entity-viewer-theme-changed", applyTheme);
 world.add(...markers, trail);
-scene.add(new THREE.AmbientLight(0xffffff, AMBIENT_WITH_LIGHTING));
-const sunlight = new THREE.DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY_SCALE);
-sunlight.castShadow = true; sunlight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
-scene.add(sunlight, sunlight.target);
+scene.add(new THREE.AmbientLight(0xffffff, 1));
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 state.renderer = renderer; state.viewerDisposed = false;
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -283,14 +278,6 @@ function draw() {
     for (const [key, group] of grids) if (!group.visible) { gridRenderer.release(group); world.remove(group); grids.delete(key); }
     for (const [key, entry] of players) if (!entry.group.visible) { releasePlayer(entry); players.delete(key); }
     updateCamera(frame);
-    const focus = frame.samples.find(s => s.entity === selected) || frame.samples[0];
-    const target = new THREE.Vector3().fromArray(focus?.position || origin.toArray()).sub(origin).applyQuaternion(world.quaternion);
-    const extent = Math.max(50, Math.hypot(...(focus?.size || [100, 100, 100])));
-    const bounds = new THREE.Box3().setFromCenterAndSize(target, new THREE.Vector3().setScalar(extent * 2));
-    sunlight.position.copy(target).addScaledVector(new THREE.Vector3().fromArray(frame.health?.sun || [0.4, 0.7, 0.35]).applyQuaternion(world.quaternion).normalize(), extent * 3);
-    sunlight.target.position.copy(target); sunlight.target.updateMatrixWorld();
-    sunlight.intensity = Math.max(.15, frame.health?.sunIntensity || 1) * SUN_LIGHT_INTENSITY_SCALE;
-    configureSunShadow(bounds, sunlight.position, target, sunlight, focus?.gridSize || 2.5);
     const focused = frame.samples.find(s => s.entity === selected);
     trail.visible = !!focused;
     const nextTrailKey = focused ? `${focused.session}/${focused.entity}/${focused.at}/${origin.toArray()}` : "";
