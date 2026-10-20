@@ -17,7 +17,8 @@ const el = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const initialServer = params.get("serverId") || params.get("agentId");
 let selected = params.get("entityId") || "";
-let replay = buildReplay([]), from = 0, to = 0, at = 0, playing = false, previous = 0;
+let replay = buildReplay([]), from = 0, to = 0, at = 0, playing = false, previous = null;
+let renderFrame = null;
 let abort, generation = 0, preparing = false;
 let assetServer = "", assetFolderGeneration = -1, remoteAssetsActive = false;
 const assetMods = new Map(), uploadedTextures = new WeakSet();
@@ -45,7 +46,7 @@ const viewport = el("replayViewport");
 const scene = new THREE.Scene();
 const world = new THREE.Group(); scene.add(world);
 const terrainRenderer = new ReplayTerrain(world);
-function applyTheme() { scene.background = new THREE.Color(themeColor("--bg", 0x070b12)); }
+function applyTheme() { scene.background = new THREE.Color(themeColor("--bg", 0x070b12)); requestRender(); }
 applyTheme();
 window.addEventListener("quasar-entity-viewer-theme-changed", applyTheme);
 world.add(...markers, trail);
@@ -56,8 +57,10 @@ state.renderer = renderer; state.viewerDisposed = false;
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 viewport.appendChild(renderer.domElement);
+renderer.domElement.addEventListener("webglcontextrestored", requestRender);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.addEventListener("change", requestRender);
 camera.position.set(200, 200, 200);
 const geometry = new THREE.BoxGeometry(1, 1, 1);
 const headGeometry = new THREE.SphereGeometry(0.16, 12, 8);
@@ -93,7 +96,7 @@ function playerFor(key, sample) {
 const materials = Object.fromEntries([["player", 0x63e5a1], ["high", 0xffb454], ["low", 0x68b7ff]].map(([key, color]) => [key, new THREE.MeshBasicMaterial({ color, wireframe: true })]));
 const resize = new ResizeObserver(() => {
     renderer.setSize(viewport.clientWidth, viewport.clientHeight);
-    camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix(); plot();
+    camera.aspect = viewport.clientWidth / viewport.clientHeight; camera.updateProjectionMatrix(); plot(); requestRender();
 });
 resize.observe(viewport);
 
@@ -308,6 +311,7 @@ function draw() {
     el("quality").textContent = frame.gap ? "Missing or incomplete coverage" : `${frame.samples.length} entities · sim speed ${Number(health?.value || 0).toFixed(2)} · ${frame.samples.filter(s => s.high).length} in incident detail · ${el("observedOnly").checked ? "observations only" : "reconstructed motion"}`;
     const terrainQuality = terrainRenderer.draw(replay, at, frame.samples[0]?.session, origin, frame.samples.find(s => s.entity === replay.contextEntity)?.position || focused?.position);
     el("geometryQuality").textContent = `${drawnBlocks.toLocaleString()} recorded blocks · ${proxies.toLocaleString()} block proxies · ${missingLayouts} grids with bounds only · ${gridRenderer.status} · ${terrainQuality} · ${frame.samples.some(s => s.gravity) ? "recorded natural gravity" : "gravity not recorded"}`;
+    requestRender();
 }
 const laneNames = ["Damage", "Actions", "Grid changes", "Physics", "Sim speed", "Gaps"];
 const laneColors = ["#ff6b78", "#c6a0ff", "#68b7ff", "#ffb454", "#63e5a1", "#999"];
@@ -381,6 +385,7 @@ function moveFreeCamera(dt) {
     if (!movement.lengthSq()) return;
     movement.normalize().applyQuaternion(camera.quaternion).multiplyScalar(dt / 1000 * ((keys.has("ShiftLeft") || keys.has("ShiftRight")) ? 200 : 20));
     camera.position.add(movement); controls.target.add(movement);
+    return true;
 }
 el("clip").addEventListener("change", () => {
     activeClip = el("clip").value === "" ? null : clips[Number(el("clip").value)];
@@ -413,6 +418,7 @@ el("tracks").addEventListener("click", event => {
 window.addEventListener("keydown", event => {
     if (event.target.matches("input, select, textarea, button") || event.target.isContentEditable) return;
     keys.add(event.code);
+    if (el("cameraMode").value === "free") requestRender();
     if (event.code === "Space") { event.preventDefault(); el("play").click(); }
     if (event.code === "ArrowLeft" || event.code === "ArrowRight") { event.preventDefault(); step(event.code === "ArrowLeft" ? -1 : 1); }
 });
@@ -440,18 +446,30 @@ el("incidents").addEventListener("change", () => {
     el("minutes").value = "5"; load();
 });
 el("scrub").addEventListener("input", () => { seek(Number(el("scrub").value)); });
-el("play").addEventListener("click", () => { playing = !playing; if (at >= (activeClip?.end ?? to) || at < (activeClip?.start ?? from)) at = activeClip?.start ?? from; el("play").textContent = playing ? "Pause" : "Play"; });
+el("play").addEventListener("click", () => { playing = !playing; if (at >= (activeClip?.end ?? to) || at < (activeClip?.start ?? from)) at = activeClip?.start ?? from; el("play").textContent = playing ? "Pause" : "Play"; requestRender(); });
 el("entity").addEventListener("change", () => { selected = el("entity").value; const sample = frameAt(replay, at).samples.find(r => r.entity === selected); focusCamera(sample); events(); draw(); });
 el("eventFilter").addEventListener("change", events);
-renderer.setAnimationLoop(time => {
-    if (playing && previous) { at = Math.min(activeClip?.end ?? to, at + Math.min(time - previous, 200) * Number(el("speed").value)); draw(); if (at >= (activeClip?.end ?? to)) { playing = false; el("play").textContent = "Play"; } }
-    moveFreeCamera(Math.min(time - previous, 100)); previous = time; if (controls.enabled) controls.update(); renderer.render(scene, camera);
+function requestRender() {
+    if (!state.viewerDisposed && renderFrame === null) renderFrame = requestAnimationFrame(render);
+}
+function render(time) {
+    renderFrame = null;
+    if (state.viewerDisposed) return;
+    const dt = previous === null ? 0 : time - previous;
+    previous = time;
+    if (playing) { at = Math.min(activeClip?.end ?? to, at + Math.min(dt, 200) * Number(el("speed").value)); draw(); if (at >= (activeClip?.end ?? to)) pause(); }
+    const moving = moveFreeCamera(Math.min(dt, 100));
+    // OrbitControls emits change while damping settles, scheduling the next frame.
+    if (controls.enabled) controls.update();
+    renderer.render(scene, camera);
     for (const entry of players.values()) {
         const point = new THREE.Vector3(0, 2.15, 0).applyMatrix4(entry.group.matrixWorld).project(camera);
         entry.label.hidden = !entry.group.visible || point.z < -1 || point.z > 1;
         entry.label.style.transform = `translate(${(point.x + 1) * viewport.clientWidth / 2}px, ${(1 - point.y) * viewport.clientHeight / 2}px) translate(-50%, -100%)`;
     }
-});
+    if (playing || moving) requestRender();
+    if (renderFrame === null) previous = null; // Resuming after idle must not advance playback by idle time.
+}
 for (const [id, pick] of [["contentFolder", pickContentFolder], ["modsFolder", pickModsFolder]]) el(id).addEventListener("click", async () => {
     try { await pick(); await load(); } catch (error) { if (error.name !== "AbortError") el("status").textContent = error.message; }
 });
@@ -491,7 +509,7 @@ el("downloadHistory").addEventListener("click", () => {
 
 window.addEventListener("pagehide", () => {
     state.viewerDisposed = true; generation++; abort?.abort();
-    resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose();
+    resize.disconnect(); cancelAnimationFrame(renderFrame); controls.dispose();
     for (const group of grids.values()) gridRenderer.release(group);
     for (const entry of players.values()) releasePlayer(entry);
     terrainRenderer.clear(); gridRenderer.dispose(); clearAssetFolderCaches(); assetMods.clear();

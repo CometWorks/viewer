@@ -5000,7 +5000,7 @@ function addSummary(label, value) {
 }
 
 // History uses the same UVs, material groups, glass, normal maps and HSV paint shader.
-// Context ownership stays separate from the live scene so scrubbing only rebuilds changed pages.
+// History owns its asset context; changing layouts only replaces affected instance batches.
 export function createReplayRenderContext() {
     return { ...createRenderContext(textureStatsToken, new Map()), textureLoads: new Map(), disposed: false };
 }
