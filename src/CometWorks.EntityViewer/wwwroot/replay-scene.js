@@ -1,6 +1,27 @@
 import * as THREE from "three";
 import { movementState } from "./replay-movement.js";
 import { actionLabels } from "./replay-model.js";
+import { AMBIENT_WITH_LIGHTING, SUN_LIGHT_INTENSITY_SCALE, configureSunShadow } from "./scene.js";
+
+export function updateReplaySun(sunlight, ambient, frame, origin, viewRotation, selected, enabled) {
+    const sun = frame.health?.sun;
+    const recorded = Array.isArray(sun) && sun.length === 3 && sun.every(Number.isFinite) && Math.hypot(...sun) > 0;
+    sunlight.visible = enabled && recorded && frame.samples.length > 0;
+    ambient.intensity = sunlight.visible ? AMBIENT_WITH_LIGHTING : 1;
+    if (!sunlight.visible) return enabled ? "Sun direction unavailable · ambient lighting" : "Ambient lighting";
+
+    const focus = frame.samples.find(sample => sample.entity === selected) || frame.samples[0];
+    const target = new THREE.Vector3().fromArray(focus.position).sub(origin).applyQuaternion(viewRotation);
+    const extent = Math.max(50, Math.hypot(...(focus.size || [100, 100, 100])));
+    const bounds = new THREE.Box3().setFromCenterAndSize(target, new THREE.Vector3().setScalar(extent * 2));
+    const direction = new THREE.Vector3().fromArray(sun).normalize().applyQuaternion(viewRotation);
+    sunlight.position.copy(target).addScaledVector(direction, extent * 3);
+    sunlight.target.position.copy(target); sunlight.target.updateMatrixWorld();
+    sunlight.intensity = (Number.isFinite(frame.health.sunIntensity) ? Math.max(0, frame.health.sunIntensity) : 1) * SUN_LIGHT_INTENSITY_SCALE;
+    configureSunShadow(bounds, sunlight.position, target, sunlight, focus.gridSize || 2.5);
+    sunlight.updateMatrixWorld();
+    return "Recorded sunlight and time-of-day shadows";
+}
 
 // Same basis as ViewerReferenceFrame.GravityAligned: preserve projected grid forward.
 export function replayViewRotation(sample) {

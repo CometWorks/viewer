@@ -161,6 +161,8 @@
             <label>Incident clip<select id="clip"><option value="">Entire loaded range</option></select></label>
             <label>Camera<select id="cameraMode"><option value="orbit">Orbit</option><option value="grid">Follow grid</option><option value="player">Follow player</option><option value="perspective">Player perspective (reconstructed)</option><option value="free">Free camera</option></select></label>
             <label><span><input id="observedOnly" type="checkbox"> Observations only</span></label>
+            <label><span><input id="replayLighting" type="checkbox" checked> Recorded sun and shadows</span></label>
+            <p id="lightingQuality" class="hint" role="status"></p>
             <p class="hint">Recorded block layouts, removals, and positions. Hover for block integrity, motion and source diagnostics. Wireframe blocks indicate missing models; player labels identify recorded characters. Motion is interpolated only between nearby, continuous observations. Missing coverage is hidden. Free camera: WASD, Q/E vertical, Shift faster; drag to look.</p>
             <p id="geometryQuality" class="hint" role="status"></p>
             <button id="contentFolder" type="button">Choose game Content folder</button>

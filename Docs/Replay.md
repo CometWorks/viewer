@@ -110,9 +110,11 @@ block-definition/value snapshots; it never loads an MWM on the simulation thread
 Content-addressed templates deduplicate the surfaces across blocks; per-block
 pattern offsets remain compact. Earlier recordings retain their topology fallback.
 Replay shares the main scene's theme color parsing, HSV paint conversion, model
-materials and voxel mesher. It uses uniform ambient illumination without a
-directional light or shadow maps. Integrity is a diagnostic rather than a
-permanent red paint overlay.
+materials and voxel mesher. Recorded sun direction and intensity drive sunlight
+and time-of-day shadows as the timeline moves or seeks. The `Recorded sun and
+shadows` control is enabled by default; disabling it uses uniform ambient light.
+Missing sun observations also use ambient light and are identified in the lighting
+status. Integrity is a diagnostic rather than a permanent red paint overlay.
 
 Missing models use wireframe proxies or armor topology; missing historical layouts
 use bounds only. Characters retain their authored metre scale and any recorded
@@ -243,8 +245,10 @@ remain a snapshot of those sources until that reset or the window is reopened.
 Paused history renders on changes and stops once camera damping settles. Playback,
 camera movement, seeks, asset completion, theme changes and resizing wake rendering;
 player labels update with rendered frames. Resuming playback does not advance by
-the time spent idle. Batching reduces submission overhead during panning and
-playback; it does not reduce the models' triangle counts.
+the time spent idle. Camera movement reuses the shadow map; scene, asset and
+recorded sunlight changes refresh it. Batching reduces submission overhead during
+panning and playback; it does not reduce the models' triangle counts. Shadow maps
+are released with the window's other GPU resources when history closes.
 
 Playback optionally interpolates translation and quaternion rotation between
 observations at most 1.5 seconds apart. It never interpolates geometry or action

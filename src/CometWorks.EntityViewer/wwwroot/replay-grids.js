@@ -172,6 +172,7 @@ export class ReplayGrids {
         if (model.kind === "model") mesh = createReplayModelBatch(model, instances);
         else {
             mesh.matrixAutoUpdate = false;
+            mesh.castShadow = model.kind === "armor"; mesh.receiveShadow = true;
             mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
             mesh.computeBoundingSphere();
         }

@@ -1,5 +1,5 @@
 import { els, state } from "./state.js";
-import { fitCameraToScene, setCameraMode, setClippingVisible, updateFpsOverlay, updateLighting, updateSceneBounds } from "./scene.js";
+import { fitCameraToScene, requestRender, setCameraMode, setClippingVisible, updateFpsOverlay, updateLighting, updateSceneBounds } from "./scene.js";
 
 export function wireControls(actions) {
     configureVoxelControl();
@@ -11,6 +11,7 @@ export function wireControls(actions) {
     els.cameraMode.addEventListener("change", () => setCameraMode(els.cameraMode.value));
     els.showGridHelper.addEventListener("change", () => {
         if (state.floorGrid) state.floorGrid.visible = els.showGridHelper.checked;
+        requestRender();
     });
     els.showClipping.addEventListener("change", () => setClippingVisible(els.showClipping.checked));
     els.showVoxels.addEventListener("change", () => {
@@ -37,6 +38,7 @@ export function wireControls(actions) {
             if (state.damagedGroup) state.damagedGroup.visible = false;
         }
         if (state.logisticsGroup) state.logisticsGroup.visible = els.showLogistics.checked;
+        requestRender();
     });
     els.showDamaged.addEventListener("change", () => {
         if (els.showDamaged.checked && els.showLogistics) {
@@ -44,11 +46,13 @@ export function wireControls(actions) {
             if (state.logisticsGroup) state.logisticsGroup.visible = false;
         }
         if (state.damagedGroup) state.damagedGroup.visible = els.showDamaged.checked;
+        requestRender();
     });
-    els.showFps.addEventListener("change", () => updateFpsOverlay());
+    els.showFps.addEventListener("change", () => { updateFpsOverlay(); requestRender(); });
     window.addEventListener("keydown", event => {
         if (state.cameraMode === "fly" && !isTextEntryTarget(event.target) && isFlyKey(event.code)) {
             state.flyKeys.add(event.code);
+            requestRender();
             event.preventDefault();
         }
     });
