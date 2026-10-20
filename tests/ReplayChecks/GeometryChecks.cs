@@ -11,7 +11,7 @@ internal static class GeometryChecks
         Translation = [x * 2.5, 0, 0], Rotation = [0, 0, 0, 1], Color = [0, -1, 0], Integrity = integrity, Build = 1
     };
     private static ReplayRecord Sample(long at) => new() { At = at, Entity = "grid", Kind = "sample", GeometryReady = true, GridSize = 2.5, Origin = [0, 0, 0] };
-    private static string[] Pages(ReplayRecord sample, Dictionary<string, byte[]> parts) =>
+    private static string[] Pages(ReplayRecord sample, IReadOnlyDictionary<string, byte[]> parts) =>
         JsonSerializer.Deserialize<ReplayLayoutPage>(ReplayChunkStore.Expand(parts[sample.LayoutId]), Json)!.Pages;
     private static ReplayRecord Change(string kind, ReplayBlock? block = null) => new() { Kind = kind, Entity = "grid", Block = block, Count = 128 };
     public static async Task Run(string root, long now)
@@ -24,9 +24,11 @@ internal static class GeometryChecks
         Check(incomplete.LayoutId == "", "A partially captured keyframe must never appear complete");
         builder.Apply(Change("layout-ready"));
         var before = Sample(now); var beforeParts = builder.Attach(before);
+        Check(ReferenceEquals(beforeParts, builder.Attach(Sample(now + 1))), "Unchanged layouts reuse immutable dependency sets");
         Check(Pages(before, beforeParts).Length == 2, "Capture must partition blocks into stable pages");
         builder.Apply(Change("layout-remove", Block(0)));
         var after = Sample(now + 1); var afterParts = builder.Attach(after);
+        Check(!ReferenceEquals(beforeParts, afterParts) && beforeParts.Count == 3, "Layout mutation replaces dependencies without modifying older snapshots");
         Check(Pages(after, afterParts).Length == 1 && Pages(before, beforeParts).Intersect(Pages(after, afterParts)).Count() == 1, "Destruction must preserve unaffected pages and remove the destroyed block");
         builder.Apply(Change("layout-block", Block(0)));
         var restored = Sample(now + 2); var restoredParts = builder.Attach(restored);
@@ -38,6 +40,7 @@ internal static class GeometryChecks
         builder.Apply(Change("layout-ready"));
         var gap = Sample(now); builder.Attach(gap);
         Check(gap.LayoutId == "", "Lost capture state requires a fresh complete baseline");
+        Check(Pages(before, beforeParts).Length == 2, "Clearing capture cannot invalidate already published dependencies");
 
         builder.Apply(new ReplayRecord { Kind = "layout-reset", Entity = "grid", Count = 50000 });
         for (var i = 0; i < 50000; i++) builder.Apply(Change("layout-block", Block(i)));
@@ -55,7 +58,7 @@ internal static class GeometryChecks
 
         var path = Path.Combine(root, "geometry");
         var store = new ReplayChunkStore(path, 1024 * 1024);
-        ReplayChunk Chunk(long at) => new() { Id = ReplayChunkStore.NewId(at, 0), Data = ReplayChunkStore.Compress([1, 2, 3]), Geometry = beforeParts };
+        ReplayChunk Chunk(long at) => new() { Id = ReplayChunkStore.NewId(at, 0), Data = ReplayChunkStore.Compress([1, 2, 3]), Geometry = new(beforeParts) };
         var oldest = Chunk(now - ReplayChunkStore.RetentionMs + 1000); var latest = Chunk(now);
         store.Put(oldest, now); store.Put(latest, now);
         Check(Directory.GetFiles(path, "*.blocks").Length == 3, "Identical geometry must be stored once across timeline segments");

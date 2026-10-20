@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,12 +11,14 @@ namespace CometWorks.EntityViewer.Magnetar.Replay;
 // Worker-thread state only. Pages are stable cell-hash buckets; one changed block rewrites one bucket.
 internal sealed class ReplayLayoutBuilder
 {
+    private static readonly IReadOnlyDictionary<string, byte[]> Empty = new Dictionary<string, byte[]>();
     private readonly Dictionary<string, Grid> _grids = new Dictionary<string, Grid>();
     private sealed class Grid
     {
         public readonly Dictionary<int, Dictionary<string, ReplayBlock>> Pages = new Dictionary<int, Dictionary<string, ReplayBlock>>();
         public readonly Dictionary<int, KeyValuePair<string, byte[]>> Encoded = new Dictionary<int, KeyValuePair<string, byte[]>>();
         public readonly Dictionary<string, byte[]> Templates = new Dictionary<string, byte[]>();
+        public IReadOnlyDictionary<string, byte[]>? Dependencies;
         public bool Ready;
         public int Count;
         public int Buckets = 1;
@@ -48,7 +51,7 @@ internal sealed class ReplayLayoutBuilder
         if (grid.Count >= grid.Buckets * 128 && grid.Buckets < 256)
         {
             var blocks = grid.Pages.Values.SelectMany(p => p.Values).ToArray();
-            grid.Buckets *= 2; grid.Pages.Clear(); grid.Encoded.Clear(); grid.Manifest = default;
+            grid.Buckets *= 2; grid.Pages.Clear(); grid.Encoded.Clear(); grid.Manifest = default; grid.Dependencies = null;
             foreach (var existing in blocks)
             {
                 var index = Bucket(existing.Cell, grid.Buckets);
@@ -60,7 +63,7 @@ internal sealed class ReplayLayoutBuilder
         if (!grid.Pages.TryGetValue(bucket, out var page)) grid.Pages[bucket] = page = new Dictionary<string, ReplayBlock>();
         if (record.Kind == "layout-remove")
         {
-            if (page.Remove(key)) { grid.Count--; _blocks--; grid.Encoded.Remove(bucket); grid.Manifest = default; }
+            if (page.Remove(key)) { grid.Count--; _blocks--; grid.Encoded.Remove(bucket); grid.Manifest = default; grid.Dependencies = null; }
         }
         else
         {
@@ -77,24 +80,25 @@ internal sealed class ReplayLayoutBuilder
                 block = block.StorageCopy(); block.PartsId = id; block.Parts = null;
                 grid.Templates[id] = data;
             }
-            page[key] = block; grid.Encoded.Remove(bucket); grid.Manifest = default;
+            page[key] = block; grid.Encoded.Remove(bucket); grid.Manifest = default; grid.Dependencies = null;
         }
         return true;
     }
 
     private static int Bucket(int[] cell, int buckets) => unchecked((cell[0] * 73856093 ^ cell[1] * 19349663 ^ cell[2] * 83492791) & (buckets - 1));
 
-    public Dictionary<string, byte[]> Attach(ReplayRecord record)
+    public IReadOnlyDictionary<string, byte[]> Attach(ReplayRecord record)
     {
+        if (record.Kind != "sample" || !record.GeometryReady || !_grids.TryGetValue(record.Entity, out var grid) || !grid.Ready) return Empty;
+        if (grid.Dependencies != null) { record.LayoutId = grid.Manifest.Key; return grid.Dependencies; }
         var result = new Dictionary<string, byte[]>();
-        if (record.Kind != "sample" || !record.GeometryReady || !_grids.TryGetValue(record.Entity, out var grid) || !grid.Ready) return result;
         foreach (var pair in grid.Pages.OrderBy(p => p.Key))
         {
             if (pair.Value.Count == 0) continue;
             if (!grid.Encoded.TryGetValue(pair.Key, out var encoded))
             {
                 var bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(pair.Value.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Value), ReplayWriter.Json));
-                if (bytes.Length > ReplayChunkStore.MaxGeometryBytes) return new Dictionary<string, byte[]>();
+                if (bytes.Length > ReplayChunkStore.MaxGeometryBytes) return Empty;
                 var data = ReplayChunkStore.Compress(bytes);
                 encoded = new KeyValuePair<string, byte[]>(ReplayChunkStore.GeometryId(data), data);
                 grid.Encoded[pair.Key] = encoded;
@@ -112,6 +116,8 @@ internal sealed class ReplayLayoutBuilder
         foreach (var id in grid.RequiredTemplates) result[id] = grid.Templates[id];
         record.LayoutId = grid.Manifest.Key;
         result[grid.Manifest.Key] = grid.Manifest.Value;
+        // Replace the immutable dependency set; pending segments may still hold the old one.
+        grid.Dependencies = result;
         return result;
     }
 }

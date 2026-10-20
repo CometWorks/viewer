@@ -352,6 +352,62 @@ to select it and inspect its relevant recent evidence; action events follow the
 selected player's historical character ID. Hover distinguishes held from interpolated
 motion and names reconstructed animation. All reconstruction stays in the browser.
 
+## Recorder performance
+
+The simulation thread reuses each actor's suppressed sample and vector buffers.
+Emitting a sample transfers ownership permanently, even if the bounded queue drops
+it. Physics evidence explicitly detaches its buffer; separate action events own
+their position. Acceleration detection retains the previous observation's scalar
+velocity, including suppressed observations. Gravity arrays shared with queued
+samples are replaced, never overwritten.
+
+Periodic block audits compare compact value snapshots. They create replay objects,
+arrays, definition strings and logical model paths only when something changes.
+Audits still inspect the current model and generated-part state; damage, rebuilding
+and topology callbacks retain their existing behavior. Player membership sets and
+voxel discovery/expiry scans reuse bounded collections.
+
+The worker caches each unchanged layout's complete immutable dependency set and
+attaches it once per segment. Layout edits replace that set. Terrain dependencies
+belong to the segment, so they cannot modify a shared layout cache. Queue entries
+are value types, batches reuse collections, and segment span/byte totals are
+maintained incrementally. Retention examines the oldest indexed segment without
+copying the archive. These changes preserve the 0.5 ms update budget checked between
+entities, cadence targets, queue limits, segment limits and explicit coverage gaps.
+
+`tests/RecorderBenchmarks` measures production scheduling, incident tracking, layout
+attachment and archive pruning. It reports median time and thread allocations over
+five runs after two warm-ups, with setup excluded and tiered compilation disabled
+to avoid JIT transitions during short measurements. It asserts unchanged heartbeat,
+incident and dependency counts. Run the baseline and current versions sequentially:
+
+```bash
+recorder_baseline=$(mktemp -d)
+git archive a87994756aef1842b1809e9787c597ad312a35ee \
+  src/Replay src/CometWorks.EntityViewer.Magnetar/Replay | tar -x -C "$recorder_baseline"
+dotnet run -c Release --project tests/RecorderBenchmarks \
+  -p:RecorderSourceRoot="$recorder_baseline" -p:DefineConstants=BASELINE
+dotnet run -c Release --project tests/RecorderBenchmarks
+rm -rf "$recorder_baseline"
+```
+
+Reference results (Linux x64, .NET 10, 2026-10-20; MB is decimal):
+
+| Workload | Before ms | After ms | Before allocated MB | After allocated MB |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 idle grids × 60 observations; 2,000 emitted | 6.48 | 3.10 | 40.32 | 2.02 |
+| 100,000 stationary activity triggers; all metadata retained | 40.84 | 8.12 | 127.20 | 76.00 |
+| 100,000 context lookups across 32 incidents | 10.86 | 8.04 | 0 | 0 |
+| 10,000 unchanged layout attachments; 50,000 blocks | 171.61 | 0.15 | 287.44 | 0 |
+| 1,000 retention checks; 5,000 unexpired segments | 62.12 | 0.14 | 40.42 | 0.30 |
+
+These are isolated steady-state measurements, not whole-server CPU or allocation
+claims. The layout test excludes initial encoding and edits; retention excludes
+expiry/deletion I/O. Game API calls, block audits, serialization, disk writes,
+transport, runtime differences and live battle load require dedicated-server
+profiling. The same record/dependency counts are retained; savings do not come from
+reducing recorded detail.
+
 ## Checks
 
 ```bash
@@ -371,7 +427,10 @@ HTTP access, lossless IDs and offline querying after Quasar restart. Geometry
 checks cover partial captures, destruction/rebuilding, integrity changes, page
 deduplication, corrupt hashes, retention dependency survival and real writer
 materialization. Context checks cover terrain checkpoints, malformed data, dependency
-validation and shared armor templates. Incident checks cover timing, merging, caps,
+validation and shared armor templates. Sample-buffer checks cover immutable emitted
+and detached evidence, suppressed acceleration and appearance thresholds. Writer
+checks cover cached layouts mixed with terrain across record-count, out-of-order
+timestamp and geometry-byte segment boundaries. Incident checks cover timing, merging, caps,
 settings persistence and transport validation. Browser checks include texture-safe
 material cloning, uncapped model preparation, spatial growth and reverse filtering,
 reverse terrain seeks and stale

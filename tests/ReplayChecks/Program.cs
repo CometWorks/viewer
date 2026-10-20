@@ -25,6 +25,7 @@ var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 try
 {
     IncidentChecks.Run();
+    SampleBufferChecks.Run();
     var schedule = new ReplaySchedule();
     Check(schedule.Observe(Sample(0), 0, out _), "First sample must establish baseline");
     Check(!schedule.Due(999) && schedule.Due(1000), "Baseline must use one-second cadence");
@@ -137,6 +138,7 @@ try
 
     await GeometryChecks.Run(root, now);
     await ContextChecks.Run(root, now);
+    await WriterChecks.Run(root, now);
     var page = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new[] { GeometryChecks.Block(0) }, json));
     var pageId = ReplayChunkStore.GeometryId(page);
     var manifest = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new ReplayLayoutPage { Pages = [pageId] }, json));

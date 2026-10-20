@@ -17,6 +17,10 @@ internal static class IncidentChecks
         void Check(bool value, string message) { if (!value) throw new Exception(message); }
         var first = Trigger(0);
         Check(first.IncidentId.Length == 32, "Trigger must be tagged before writing");
+        Check(tracker.HighUntil(500, 0, 0, 1) == 60000 && tracker.HighUntil(500.01, 0, 0, 1) == 0, "Scalar context includes the exact boundary only");
+        Check(tracker.HighUntil(double.NaN, 0, 0, 1) == 0 && tracker.HighUntil(0, double.PositiveInfinity, 0, 1) == 0
+            && tracker.HighUntil([0, 0], 1) == 0, "Invalid context positions remain excluded");
+        var initial = output.Single().Incident!;
         Trigger(59000, kind: "sample");
         Trigger(59999, kind: "movement");
         Check(tracker.HighUntil([0, 0, 0], 59999) == 60000, "Observations cannot prolong incidents");
@@ -24,6 +28,7 @@ internal static class IncidentChecks
         Check(tracker.Count == 0 && output.Last().Incident!.Until == epoch + 60000 && output.Last().Incident!.Reason == "quiet", "Exact one-minute quiet expiry");
         first = Trigger(100000);
         Trigger(150000);
+        Check(initial.Seed.SequenceEqual(new double[] { 0, 0, 0 }) && initial.Until == epoch + 60000, "Later activity cannot mutate published incident snapshots");
         tracker.Advance(200000, epoch + 200000, true);
         Check(tracker.Count == 1 && output.Last().Incident!.Until == epoch + 210000, "Activity extends quiet deadline");
         settings.MaxIncidentMinutes = 60; // Renewal cannot change the running incident's captured cap.
