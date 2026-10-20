@@ -121,6 +121,88 @@ test('overlapping range loads share pending model jobs and add only missing mode
     } finally { renderer.dispose(); delete globalThis.resolveReplayFixture; }
 });
 
+test('grid-wide batches retain block picking, paint and part UVs across page edits and reverse seeks', async () => {
+    globalThis.resolveReplayFixture = async asset => {
+        const result = parsed(asset.logicalPath);
+        result.model.groups = [{start:0,count:3,materialIndex:0,materialName:'paint',technique:'MESH',textures:{}}];
+        return result;
+    };
+    const renderer = new ReplayGrids(() => {}), group = new THREE.Group();
+    const block = (x, model = 'shared.mwm') => ({model,translation:[x,0,0],cell:[x,0,0],color:[x / 128,0,0]});
+    const pages = new Map(Array.from({length:64}, (_, i) => [`page-${i}`, [block(i)]]));
+    const partMatrix = new THREE.Matrix4().makeScale(2.5,2.5,2.5).setPosition(0,3,0);
+    const armor = {...block(70), model:undefined, partsId:'armor',patterns:[1,2,4,4]};
+    pages.set('parts', [armor]); pages.set('unrelated', [block(80, 'other.mwm')]);
+    pages.set('damaged', [block(0, 'replacement.mwm')]);
+    const sample = {layout:[...pages.keys()].filter(id => id !== 'damaged'),gridSize:2.5};
+    try {
+        await renderer.preload({records:[],geometry:pages,modelParts:new Map([['armor',{parts:[{model:'shared.mwm',matrix:partMatrix.toArray()}]}]])});
+        assert.deepEqual(renderer.update(group, sample, pages), {blocks:66,proxies:0});
+        assert.equal(group.children.length, 2, 'storage pages must not each submit the same model');
+        const shared = group.children.find(mesh => mesh.count === 65);
+        const unrelated = group.children.find(mesh => mesh.count === 1);
+        const matrix = new THREE.Matrix4(), color = new THREE.Color();
+        shared.getMatrixAt(64, matrix);
+        assert.deepEqual(matrix.toArray(), new THREE.Matrix4().makeTranslation(70,0,0).multiply(partMatrix).toArray());
+        shared.getColorAt(64, color); assert.equal(color.r, 70/128);
+        assert.deepEqual(Array.from(shared.geometry.getAttribute('sePatternUvOffset').array.slice(-2)), [.25,.5]);
+        assert.equal(shared.userData.blocks[64], armor);
+        shared.getMatrixAt(10, matrix); assert.equal(matrix.elements[12], 10);
+        assert.equal(shared.userData.blocks[10], pages.get('page-10')[0]);
+        group.updateMatrixWorld(true);
+        const hit = new THREE.Raycaster(new THREE.Vector3(10.2,.2,1), new THREE.Vector3(0,0,-1)).intersectObject(shared)[0];
+        assert.equal(shared.userData.blocks[hit.instanceId], pages.get('page-10')[0]);
+
+        let disposed = 0, baseDisposed = 0;
+        shared.geometry.addEventListener('dispose', () => disposed++);
+        renderer.models.get('/shared.mwm').geometry.addEventListener('dispose', () => baseDisposed++);
+        renderer.update(group, {...sample,layout:[...sample.layout]}, pages);
+        assert.ok(group.children.includes(shared), 'transform-only playback retains instance buffers');
+        const damaged = {...sample,layout:sample.layout.map(id => id === 'page-0' ? 'damaged' : id)};
+        assert.equal(renderer.update(group, damaged, pages).blocks, 66);
+        assert.equal(disposed, 1); assert.equal(baseDisposed, 0);
+        assert.ok(group.children.includes(unrelated));
+        assert.equal(group.children.reduce((n, mesh) => n + mesh.count, 0), 66);
+        assert.equal(group.children.some(mesh => mesh.userData.blocks.includes(pages.get('page-0')[0])), false);
+        renderer.update(group, sample, pages);
+        assert.equal(group.children.length, 2);
+        assert.ok(group.children.some(mesh => mesh.userData.blocks.includes(pages.get('page-0')[0])));
+        renderer.update(group, {layout:[],gridSize:2.5}, pages);
+        assert.equal(group.children.length, 0);
+        assert.equal(group.userData.batches.size, 0);
+        assert.equal(baseDisposed, 0);
+    } finally { renderer.release(group); renderer.dispose(); delete globalThis.resolveReplayFixture; }
+});
+
+test('late models replace consolidated proxies and source resets discard old batches', async () => {
+    const requests = [];
+    globalThis.resolveReplayFixture = asset => new Promise(resolve => requests.push({asset,resolve}));
+    const renderer = new ReplayGrids(() => {}), group = new THREE.Group();
+    const pages = new Map([['a',[{model:'late.mwm',translation:[0,0,0],min:[0,0,0],max:[0,0,0]}]],
+        ['b',[{model:'late.mwm',translation:[5,0,0],min:[2,0,0],max:[2,0,0]}]]]);
+    const sample = {layout:['a','b','a'],gridSize:2.5};
+    try {
+        const pending = renderer.preload({records:[],geometry:pages});
+        assert.deepEqual(renderer.update(group, sample, pages), {blocks:2,proxies:2});
+        assert.equal(group.children.length, 1);
+        const proxy = group.children[0], matrix = new THREE.Matrix4();
+        proxy.getMatrixAt(1,matrix); assert.equal(matrix.elements[12], 5); assert.equal(matrix.elements[0], 2.5);
+        let disposed = 0; proxy.addEventListener('dispose', () => disposed++);
+        requests[0].resolve(parsed(requests[0].asset.logicalPath)); await pending;
+        assert.deepEqual(renderer.update(group, sample, pages), {blocks:2,proxies:0});
+        assert.equal(disposed, 1); assert.equal(group.children.length, 1);
+        assert.equal(group.children[0].userData.assetKind, 'model');
+        assert.equal(group.children[0].count, 2);
+        renderer.clear();
+        const reload = renderer.preload({records:[],geometry:pages});
+        assert.equal(renderer.update(group, sample, pages).proxies, 2);
+        requests[1].resolve(parsed(requests[1].asset.logicalPath)); await reload;
+        assert.equal(renderer.update(group, sample, pages).proxies, 0);
+        renderer.release(group);
+        assert.equal(group.userData.pages.size, 0); assert.equal(group.userData.batches.size, 0);
+    } finally { renderer.release(group); renderer.dispose(); delete globalThis.resolveReplayFixture; }
+});
+
 test('closing during a model load cancels queued work and cannot repopulate disposed assets', async () => {
     const requests = [];
     let changed = 0;

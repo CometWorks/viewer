@@ -5,7 +5,7 @@ import { createReplayRenderContext, prepareReplayModel, createReplayModelBatch, 
 import { disposeTextureCache } from "./content-folder.js";
 import { resolveModelAsset, clearModelCache } from "./mwm-loader.js";
 
-// Reuse the live viewer's MWM parser and armor topology. Only changed layout pages rebuild.
+// Reuse the live viewer's MWM parser and armor topology. Storage pages share model batches per grid.
 export class ReplayGrids {
     constructor(changed) {
         this.changed = changed;
@@ -107,64 +107,81 @@ export class ReplayGrids {
         return createReplayCharacter(model, sample) || createReplayModelBatch(model, [{ matrix: new THREE.Matrix4(), colorMask: mask(sample.color), block: sample }]);
     }
     update(group, sample, pages) {
+        if (group.userData.epoch !== this.epoch || group.userData.gridSize !== sample.gridSize) {
+            this.release(group);
+            group.userData.epoch = this.epoch; group.userData.gridSize = sample.gridSize;
+        }
         group.userData.pages ||= new Map();
+        group.userData.batches ||= new Map();
+        const batches = group.userData.batches, dirty = new Set();
         const retained = new Set(sample.layout);
-        for (const [id, child] of group.userData.pages) {
-            if (retained.has(id) && child.userData.epoch === this.epoch && !child.userData.pending.some(key => this.models.get(key)?.geometry)) continue;
-            releaseInstances(child);
-            group.remove(child); group.userData.pages.delete(id);
+        for (const [id, page] of group.userData.pages) {
+            if (retained.has(id) && !page.pending.some(key => this.models.get(key)?.geometry)) continue;
+            for (const key of page.keys) { batches.get(key).pages.delete(id); dirty.add(key); }
+            group.userData.pages.delete(id);
         }
         for (const id of retained) {
             if (group.userData.pages.has(id)) continue;
-            const page = new THREE.Group();
-            const batches = new Map();
+            const page = { keys: new Set(), pending: new Set(), count: pages.get(id).length, proxies: 0 };
             for (const source of pages.get(id)) for (const block of this.sources(source)) {
                 const model = this.model(block);
                 const key = `${model.kind}/${model.key}`;
-                if (!batches.has(key)) batches.set(key, { model, blocks: [] });
-                batches.get(key).blocks.push(block);
+                if (!batches.has(key)) batches.set(key, { model, pages: new Map(), mesh: null });
+                const batch = batches.get(key);
+                if (!batch.pages.has(id)) batch.pages.set(id, []);
+                batch.pages.get(id).push(block);
+                page.keys.add(key); dirty.add(key);
+                if (model.kind === "proxy") page.proxies++;
+                if (model.kind !== "model" && block.model) page.pending.add(`${block.mod || ""}/${block.model}`);
             }
-            let proxies = 0, count = 0;
-            for (const { model, blocks } of batches.values()) {
-                let mesh;
-                const instances = [];
-                if (model.kind !== "model") mesh = new THREE.InstancedMesh(model.geometry, model.kind === "proxy" ? this.proxy : this.solid, blocks.length);
-                const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), rotation = new THREE.Quaternion(), scale = new THREE.Vector3();
-                blocks.forEach((block, i) => {
-                    rotation.fromArray(block.rotation || [0, 0, 0, 1]).normalize();
-                    position.fromArray(block.translation);
-                    scale.setScalar(model.kind === "armor" ? sample.gridSize : 1);
-                    if (model.kind === "proxy") {
-                        position.fromArray(block.min.map((v, axis) => (v + block.max[axis]) * sample.gridSize / 2));
-                        scale.fromArray(block.min.map((v, axis) => (block.max[axis] - v + 1) * sample.gridSize));
-                        rotation.identity(); proxies++;
-                    }
-                    matrix.compose(position, rotation, scale);
-                    if (model.kind === "model") {
-                        if (block.partMatrix) matrix.makeTranslation(...block.translation).multiply(new THREE.Matrix4().fromArray(block.partMatrix));
-                        instances.push({ matrix: matrix.clone(), colorMask: mask(block.color), patternOffset: block.patternOffset, block: block.recordedBlock || block }); count++; return;
-                    }
-                    mesh.setMatrixAt(i, matrix);
-                    const color = displayColorForBlock({ colorMaskHsv: mask(block.color) });
-                    mesh.setColorAt(i, color); count++;
-                });
-                if (model.kind === "model") mesh = createReplayModelBatch(model, instances);
-                mesh.castShadow = true; mesh.receiveShadow = true;
-                mesh.userData.blocks = blocks.map(block => block.recordedBlock || block);
-                mesh.userData.assetKind = model.kind;
-                mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-                mesh.computeBoundingSphere(); page.add(mesh);
-            }
-            page.userData = { epoch: this.epoch, proxies, count: pages.get(id).length,
-                pending: [...batches.values()].filter(batch => batch.model.kind !== "model")
-                    .flatMap(batch => batch.blocks.filter(block => block.model).map(block => `${block.mod || ""}/${block.model}`)) };
-            group.userData.pages.set(id, page); group.add(page);
+            page.pending = [...page.pending]; group.userData.pages.set(id, page);
         }
-        return [...group.userData.pages.values()].reduce((sum, page) => ({ blocks: sum.blocks + page.userData.count, proxies: sum.proxies + page.userData.proxies }), { blocks: 0, proxies: 0 });
+        // Pages are hash buckets, not spatial chunks. Consolidate identical models without
+        // touching unrelated batches or rebuilding any instances for transform-only playback.
+        for (const key of dirty) {
+            const batch = batches.get(key);
+            if (batch.mesh) { releaseInstances(batch.mesh); group.remove(batch.mesh); }
+            if (!batch.pages.size) { batches.delete(key); continue; }
+            batch.mesh = this.createBatch(batch.model, [...batch.pages.values()].flat(), sample.gridSize);
+            group.add(batch.mesh);
+        }
+        return [...group.userData.pages.values()].reduce((sum, page) => ({ blocks: sum.blocks + page.count, proxies: sum.proxies + page.proxies }), { blocks: 0, proxies: 0 });
+    }
+    createBatch(model, blocks, gridSize) {
+        let mesh;
+        const instances = [];
+        if (model.kind !== "model") mesh = new THREE.InstancedMesh(model.geometry, model.kind === "proxy" ? this.proxy : this.solid, blocks.length);
+        const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), rotation = new THREE.Quaternion(), scale = new THREE.Vector3();
+        blocks.forEach((block, i) => {
+            rotation.fromArray(block.rotation || [0, 0, 0, 1]).normalize();
+            position.fromArray(block.translation);
+            scale.setScalar(model.kind === "armor" ? gridSize : 1);
+            if (model.kind === "proxy") {
+                position.fromArray(block.min.map((v, axis) => (v + block.max[axis]) * gridSize / 2));
+                scale.fromArray(block.min.map((v, axis) => (block.max[axis] - v + 1) * gridSize));
+                rotation.identity();
+            }
+            matrix.compose(position, rotation, scale);
+            if (model.kind === "model") {
+                if (block.partMatrix) matrix.makeTranslation(...block.translation).multiply(new THREE.Matrix4().fromArray(block.partMatrix));
+                instances.push({ matrix: matrix.clone(), colorMask: mask(block.color), patternOffset: block.patternOffset, block: block.recordedBlock || block }); return;
+            }
+            mesh.setMatrixAt(i, matrix);
+            mesh.setColorAt(i, displayColorForBlock({ colorMaskHsv: mask(block.color) }));
+        });
+        if (model.kind === "model") mesh = createReplayModelBatch(model, instances);
+        else {
+            mesh.matrixAutoUpdate = false;
+            mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+            mesh.computeBoundingSphere();
+        }
+        mesh.userData.blocks = blocks.map(block => block.recordedBlock || block);
+        mesh.userData.assetKind = model.kind;
+        return mesh;
     }
     release(group) {
         releaseInstances(group);
-        group.clear(); group.userData.pages?.clear();
+        group.clear(); group.userData.pages?.clear(); group.userData.batches?.clear();
     }
 }
 

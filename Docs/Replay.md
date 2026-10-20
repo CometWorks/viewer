@@ -87,7 +87,12 @@ Movement samples also record the grid origin separately from its bounds center,
 so asymmetric grids and changing bounds do not displace the historical blocks.
 
 The replay renderer shares the live viewer's MWM parser, UVs, material groups,
-normal maps, glass and HSV paint shader, with instanced rendering per page/model.
+normal maps, glass and HSV paint shader, with instanced rendering per grid/model.
+Storage pages are hash buckets rather than spatial chunks, so matching models
+across all active pages share a batch. Material groups remain separate draws;
+paint, UV patterns and block picking remain per instance. Transform-only playback
+reuses these meshes. Layout changes rebuild only batches referenced by changed
+pages, including backward seeks and replacement of unavailable assets.
 Configured server asset streaming and local Content/Mods folders supply models
 and textures, never a current grid snapshot. It actively preloads assets from all
 loaded historical pages and character appearances, including later observations,
@@ -95,7 +100,7 @@ with four concurrent model jobs. The previous 128-model, 64 MiB model and
 256-texture admission limits are removed: all assets in the retained 500 m context
 are prepared, including future layouts. Playback waits behind a progress overlay
 while assets, terrain meshes, texture uploads and initial shaders are prepared.
-Missing assets remain explicitly reported. Only changed layout pages rebuild.
+Missing assets remain explicitly reported.
 Loading another range releases its scene instances while retaining reusable assets
 for the history window's lifetime.
 
@@ -234,6 +239,12 @@ viewed and is released on window close or navigation out of history. Changing
 servers, selecting different local asset folders, or switching between streaming
 and local fallback resets it to avoid mixing asset sources. Already loaded assets
 remain a snapshot of those sources until that reset or the window is reopened.
+
+Paused history renders on changes and stops once camera damping settles. Playback,
+camera movement, seeks, asset completion, theme changes and resizing wake rendering;
+player labels update with rendered frames. Resuming playback does not advance by
+the time spent idle. Batching reduces submission overhead during panning and
+playback; it does not reduce the models' triangle counts.
 
 Playback optionally interpolates translation and quaternion rotation between
 observations at most 1.5 seconds apart. It never interpolates geometry or action
