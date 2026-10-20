@@ -22,23 +22,27 @@ export class ReplayGrids {
         this.modelBytes = 0;
         this.context = createReplayRenderContext();
         this.waiters = [];
+        this.disposed = false;
     }
     clear() {
         this.epoch++; clearModelCache();
         this.queue.length = 0; this.waiters.splice(0).forEach(resolve => resolve());
         disposeReplayRenderContext(this.context); disposeTextureCache();
-        this.context = createReplayRenderContext();
+        if (!this.disposed) this.context = createReplayRenderContext();
         this.models.clear(); this.modelBytes = 0; this.revision++;
     }
     dispose() {
-        this.clear(); this.box.dispose(); this.solid.dispose(); this.proxy.dispose();
+        if (this.disposed) return;
+        this.disposed = true;
+        this.clear();
+        this.parts.clear(); this.box.dispose(); this.solid.dispose(); this.proxy.dispose();
         for (const geometry of this.armor.values()) geometry.dispose();
         this.armor.clear();
     }
     model(block) {
         const key = `${block.mod || ""}/${block.model || ""}`;
         let entry = this.models.get(key);
-        if (!entry && block.model) {
+        if (!this.disposed && !entry && block.model) {
             entry = { pending: true };
             this.models.set(key, entry);
             this.queue.push({ key, block, entry, epoch: this.epoch });
@@ -59,6 +63,10 @@ export class ReplayGrids {
         return { geometry: this.box, kind: "proxy", key: "proxy" };
     }
     preload(replay) {
+        if (this.disposed) return Promise.resolve();
+        // Successful assets and in-flight work belong to the window, not the range.
+        // Failed model requests may succeed in a renewed streaming session.
+        for (const [key, entry] of this.models) if (entry.error) this.models.delete(key);
         // Start with player appearances, then all historical pages, including future destruction stages.
         for (const record of replay.records) if (record.type === "player" && record.model) this.model(record);
         this.parts = replay.modelParts || new Map();

@@ -3,13 +3,18 @@ import { createVoxelDataChunkMesh, prepareReplayTerrain } from "./entity-rendere
 import { terrainAt } from "./replay-model.js";
 
 export class ReplayTerrain {
-    constructor(world) { this.world = world; this.meshes = new Map(); this.epoch = 0; this.ready = 0; }
-    clear() {
+    constructor(world) { this.world = world; this.meshes = new Map(); this.cache = new Map(); this.epoch = 0; this.ready = 0; }
+    reset() {
         this.epoch++; this.ready = 0;
-        for (const mesh of this.meshes.values()) if (mesh) {
-            this.world.remove(mesh); mesh.geometry.dispose(); mesh.material.forEach(m => m.dispose());
-        }
+        for (const mesh of this.meshes.values()) if (mesh) { mesh.visible = false; this.world.remove(mesh); }
         this.meshes.clear();
+    }
+    clear() {
+        this.reset();
+        for (const mesh of this.cache.values()) if (mesh) {
+            mesh.geometry.dispose(); mesh.material.forEach(m => m.dispose());
+        }
+        this.cache.clear();
     }
     async preload(replay, context, progress) {
         const epoch = this.epoch;
@@ -18,8 +23,14 @@ export class ReplayTerrain {
         const pages = [...replay.voxels];
         let next = 0;
         await Promise.all(Array.from({ length: 4 }, async () => {
-            while (next < pages.length && epoch === this.epoch) {
+            while (next < pages.length && epoch === this.epoch && !context.disposed) {
                 const [id, page] = pages[next++];
+                // Terrain IDs hash the complete recorded page, including its palette.
+                if (this.cache.has(id)) {
+                    const mesh = this.cache.get(id);
+                    if (mesh) this.world.add(mesh);
+                    this.meshes.set(id, mesh); this.ready++; progress(); continue;
+                }
                 await prepareReplayTerrain(page.palette, context);
                 await new Promise(resolve => setTimeout(resolve, 0));
                 if (epoch !== this.epoch || context.disposed) return;
@@ -33,7 +44,7 @@ export class ReplayTerrain {
                     mesh.visible = false; mesh.quaternion.fromArray(page.rotation).normalize();
                     mesh.userData.assetKind = `historical terrain (${2 ** page.lod} m samples)`; mesh.userData.replayPage = page; this.world.add(mesh);
                 }
-                this.meshes.set(id, mesh); this.ready++; progress();
+                this.cache.set(id, mesh); this.meshes.set(id, mesh); this.ready++; progress();
             }
         }));
     }

@@ -96,16 +96,18 @@ with four concurrent model jobs. The previous 128-model, 64 MiB model and
 are prepared, including future layouts. Playback waits behind a progress overlay
 while assets, terrain meshes, texture uploads and initial shaders are prepared.
 Missing assets remain explicitly reported. Only changed layout pages rebuild.
-Reloading invalidates old work and disposes its GPU resources.
+Loading another range releases its scene instances while retaining reusable assets
+for the history window's lifetime.
 
 Generated armor records the same authored cube-part models, transforms and UV
 pattern offsets used by the main scene. A worker derives these from immutable
 block-definition/value snapshots; it never loads an MWM on the simulation thread.
 Content-addressed templates deduplicate the surfaces across blocks; per-block
 pattern offsets remain compact. Earlier recordings retain their topology fallback.
-Replay shares the main scene's theme color parsing, HSV paint conversion, ambient
-and sun intensities, shadow sizing, model materials and voxel mesher. Integrity
-is a diagnostic rather than a permanent red paint overlay.
+Replay shares the main scene's theme color parsing, HSV paint conversion, model
+materials and voxel mesher. It uses uniform ambient illumination without a
+directional light or shadow maps. Integrity is a diagnostic rather than a
+permanent red paint overlay.
 
 Missing models use wireframe proxies or armor topology; missing historical layouts
 use bounds only. Characters retain their authored metre scale and any recorded
@@ -223,6 +225,15 @@ preparation, and changing camera focus does not expand that context. Selecting a
 incident window automatically loads history and prepares its assets. Damage events mark world
 positions and can be selected to inspect their recorded evidence. The timeline
 aligns damage, suspected physics incidents and simulation speed.
+
+Models, materials, textures (including GPU uploads), and prepared terrain pages
+stay loaded while the history window is open. Loading another range or incident
+adds only assets not already prepared; scene instances and inactive terrain are
+detached without disposing shared assets. The cache grows with the unique assets
+viewed and is released on window close or navigation out of history. Changing
+servers, selecting different local asset folders, or switching between streaming
+and local fallback resets it to avoid mixing asset sources. Already loaded assets
+remain a snapshot of those sources until that reset or the window is reopened.
 
 Playback optionally interpolates translation and quaternion rotation between
 observations at most 1.5 seconds apart. It never interpolates geometry or action

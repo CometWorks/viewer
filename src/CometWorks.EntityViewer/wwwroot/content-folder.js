@@ -319,13 +319,16 @@ export async function setSceneModRoots(mods) {
 }
 
 async function refreshSceneModRoots() {
+    const previousRoots = state.modRoots;
     state.modRoots = new Map();
     sceneModAliases = new Map();
     for (const mod of state.sceneMods || []) {
         const rootId = String(mod.rootId || mod.RootId || "");
         if (!rootId) continue;
-        const root = {
+        const previous = previousRoots?.get(rootId);
+        const root = previous?.generation === assetCacheGeneration && JSON.stringify(previous.metadata) === JSON.stringify(mod) ? previous : {
             id: rootId,
+            generation: assetCacheGeneration,
             kind: "mod-pending",
             name: String(mod.name || mod.Name || ""),
             handle: null,
@@ -337,6 +340,10 @@ async function refreshSceneModRoots() {
         };
         state.modRoots.set(rootId, root);
         registerSceneModAliases(root);
+    }
+    for (const [id, root] of previousRoots || []) if (state.modRoots.get(id) !== root) {
+        closeArchiveReader(root.archive);
+        closeArchiveReader(root.legacyArchiveRoot?.archive);
     }
 }
 
