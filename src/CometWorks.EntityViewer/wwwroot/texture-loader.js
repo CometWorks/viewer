@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { disposeCachedTexture, getAssetFolderCacheGeneration, resolveAssetFile } from "./content-folder.js";
 import { state } from "./state.js";
+import { getRemoteAssetSessionKey } from "./asset-streaming.js";
 
 const MAX_CONCURRENT_TEXTURE_RESOLVES = 24;
 const MAX_CONCURRENT_TEXTURE_READS = 6;
@@ -44,7 +45,7 @@ async function loadTextureUncoalesced(logicalPath, slot, colorSpaceKey, options)
 
     const file = await resolved.getFile();
     if (cacheGeneration !== state.textureCacheGeneration) throw createTextureLoadInvalidatedError(logicalPath);
-    const cacheKey = `${resolved.rootId || "content"}|${resolved.logicalPath.toLowerCase()}|${file.size}|${file.lastModified || 0}|${colorSpaceKey}`;
+    const cacheKey = `${resolved.cacheKey || ""}|${resolved.rootId || "content"}|${resolved.logicalPath.toLowerCase()}|${file.size}|${file.lastModified || 0}|${colorSpaceKey}`;
     if (state.textureCache.has(cacheKey)) return await state.textureCache.get(cacheKey);
 
     const promise = loadResolvedTexture(resolved, file, slot);
@@ -84,7 +85,7 @@ export async function resolveTextureFile(logicalPath, options = {}) {
         if (generation === texturePathCacheGeneration) resolvedTexturePathCache.set(cacheKey, resolved);
         return resolved;
     } finally {
-        inFlightTexturePathCache.delete(cacheKey);
+        if (inFlightTexturePathCache.get(cacheKey) === promise) inFlightTexturePathCache.delete(cacheKey);
     }
 }
 
@@ -524,7 +525,7 @@ function normalizeTextureKey(logicalPath) {
 }
 
 function ensureTexturePathCacheGeneration() {
-    const generation = getAssetFolderCacheGeneration();
+    const generation = `${getAssetFolderCacheGeneration()}/${getRemoteAssetSessionKey()}`;
     if (generation !== texturePathCacheGeneration) {
         resolvedTexturePathCache.clear();
         inFlightTexturePathCache.clear();

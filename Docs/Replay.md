@@ -224,6 +224,15 @@ incident window automatically loads history and prepares its assets. Damage even
 positions and can be selected to inspect their recorded evidence. The timeline
 aligns damage, suspected physics incidents and simulation speed.
 
+Models, materials, textures (including GPU uploads), and prepared terrain pages
+stay loaded while the history window is open. Loading another range or incident
+adds only assets not already prepared; scene instances and inactive terrain are
+detached without disposing shared assets. The cache grows with the unique assets
+viewed and is released on window close or navigation out of history. Changing
+servers, selecting different local asset folders, or switching between streaming
+and local fallback resets it to avoid mixing asset sources. Already loaded assets
+remain a snapshot of those sources until that reset or the window is reopened.
+
 Playback optionally interpolates translation and quaternion rotation between
 observations at most 1.5 seconds apart. It never interpolates geometry or action
 state, crosses a control/character change, or bridges explicit gaps, removals,

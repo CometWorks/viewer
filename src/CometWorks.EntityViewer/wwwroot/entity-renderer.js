@@ -5039,11 +5039,12 @@ export function disposeReplayRenderContext(context) {
     context.disposed = true;
     for (const geometry of context.geometries.values()) geometry.dispose();
     for (const material of context.materials.values()) material.dispose();
-    context.geometries.clear(); context.materials.clear(); context.preloadedTextures.clear();
+    context.geometries.clear(); context.materials.clear(); context.preloadedTextures.clear(); context.textureLoads.clear();
 }
 
 
 export async function prepareReplayTerrain(palette, context) {
+    if (context.disposed) return;
     const selections = collectSceneTextureSelections({ voxelMaterials: palette });
     for (const [key, item] of selections) {
         if (context.preloadedTextures.has(key)) continue;

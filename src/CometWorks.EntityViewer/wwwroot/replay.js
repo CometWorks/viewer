@@ -8,10 +8,10 @@ import { replayViewRotation, diagnosticText } from "./replay-scene.js";
 import { AMBIENT_WITH_LIGHTING, SUN_LIGHT_INTENSITY_SCALE, SUN_SHADOW_MAP_SIZE, configureSunShadow } from "./scene.js";
 import { startQuasarThemeSync, themeColor } from "./theme.js";
 
-import { fetchAssetStreamingStatus, prepareRemoteAssetSession } from "./asset-streaming.js";
+import { fetchAssetStreamingStatus, prepareRemoteAssetSession, getRemoteAssetSessionKey } from "./asset-streaming.js";
 import { ReplayTerrain } from "./replay-terrain.js";
 import { ReplayGrids } from "./replay-grids.js";
-import { restoreContentFolder, restoreModsFolder, pickContentFolder, pickModsFolder, clearAssetFolderCaches, setSceneModRoots } from "./content-folder.js";
+import { restoreContentFolder, restoreModsFolder, pickContentFolder, pickModsFolder, clearAssetFolderCaches, getAssetFolderCacheGeneration, setSceneModRoots } from "./content-folder.js";
 
 startQuasarThemeSync();
 const el = id => document.getElementById(id);
@@ -20,6 +20,8 @@ const initialServer = params.get("serverId") || params.get("agentId");
 let selected = params.get("entityId") || "";
 let replay = buildReplay([]), from = 0, to = 0, at = 0, playing = false, previous = 0;
 let abort, generation = 0, preparing = false;
+let assetServer = "", assetFolderGeneration = -1, remoteAssetsActive = false;
+const assetMods = new Map(), uploadedTextures = new WeakSet();
 let origin = new THREE.Vector3();
 const meshes = new Map();
 const grids = new Map();
@@ -142,6 +144,7 @@ async function start() {
     } catch (error) { el("status").textContent = error.message; }
 }
 async function load() {
+    if (state.viewerDisposed) return;
     abort?.abort(); abort = new AbortController(); const current = ++generation;
     preparing = true; el("assetLoading").hidden = false;
     el("assetLoadingText").textContent = "Loading recorded history…";
@@ -160,14 +163,28 @@ async function load() {
         for (const mesh of meshes.values()) world.remove(mesh); meshes.clear();
         for (const group of grids.values()) { gridRenderer.release(group); world.remove(group); } grids.clear();
         for (const entry of players.values()) releasePlayer(entry); players.clear();
-        terrainRenderer.clear(); gridRenderer.clear(); clearAssetFolderCaches();
+        terrainRenderer.reset();
+        // Range changes replace instances, while the window owns reusable assets.
+        // A different server or local folder must never reuse the old source's assets.
+        if (assetServer !== server || assetFolderGeneration !== getAssetFolderCacheGeneration()) {
+            terrainRenderer.clear(); gridRenderer.clear(); clearAssetFolderCaches();
+            assetMods.clear(); assetServer = server; assetFolderGeneration = getAssetFolderCacheGeneration();
+        }
         const originalServer = [el("server").value, el("server").selectedOptions[0]?.dataset.agentId].includes(initialServer);
         const loaded = pruneReplayContext(buildReplay(batches), (originalServer ? params.get("entityId") : "") || selected);
         const mods = [...new Set([...loaded.geometry.values()].flatMap(page => page.map(block => block.mod)).concat(loaded.records.map(record => record.mod), [...loaded.voxels.values()].flatMap(page => page.palette.map(material => material.mod))).filter(Boolean))]
             .map(name => ({ rootId: `mods-direct:${name}`, name, publishedFileId: /^\d+(?:\.sbm)?$/.test(name) ? Number(name.replace(/\.sbm$/, "")) : 0 }));
-        await setSceneModRoots(mods);
-        try { await prepareRemoteAssetSession({ mods }, { agentId: el("server").selectedOptions[0]?.dataset.agentId || "", entityId: selected }); } catch { /* Local assets and explicit proxies remain available. */ }
+        for (const mod of mods) assetMods.set(mod.rootId, mod);
+        const retainedMods = [...assetMods.values()];
+        await setSceneModRoots(retainedMods);
         if (current !== generation) return;
+        try { await prepareRemoteAssetSession({ mods: retainedMods }, { agentId: el("server").selectedOptions[0]?.dataset.agentId || "", entityId: selected }); } catch { /* Local assets and explicit proxies remain available. */ }
+        if (current !== generation) return;
+        const remoteActive = !!getRemoteAssetSessionKey();
+        if (remoteActive !== remoteAssetsActive) {
+            terrainRenderer.clear(); gridRenderer.clear(); clearAssetFolderCaches();
+            assetFolderGeneration = getAssetFolderCacheGeneration(); remoteAssetsActive = remoteActive;
+        }
         replay = loaded; journal = replayJournal(replay); from = requestedFrom; to = requestedTo; at = from;
         clips = incidentClips(replay, from, to); activeClip = null; inspectedEvent = null; followPosition = null;
         el("clip").replaceChildren(new Option("Entire loaded range", ""));
@@ -181,7 +198,8 @@ async function load() {
         let uploaded = 0;
         for (const texture of new Set(gridRenderer.context.preloadedTextures.values())) {
             if (current !== generation) return;
-            if (texture) renderer.initTexture(texture);
+            if (!texture || uploadedTextures.has(texture)) continue;
+            renderer.initTexture(texture); uploadedTextures.add(texture);
             if (++uploaded % 8 === 0) await new Promise(resolve => requestAnimationFrame(resolve));
         }
         preparing = false;
@@ -212,7 +230,7 @@ async function load() {
         await renderer.compileAsync(scene, camera);
         if (current === generation) el("play").disabled = !replay.records.length;
     } catch (error) {
-        if (error.name !== "AbortError") { el("status").textContent = error.message; replay = buildReplay([]); draw(); }
+        if (current === generation && error.name !== "AbortError") { el("status").textContent = error.message; replay = buildReplay([]); draw(); }
     } finally { if (current === generation) { el("load").disabled = false; preparing = false; el("assetLoading").hidden = true; } }
 }
 function events() {
@@ -230,7 +248,7 @@ function events() {
     if (matches.length > 500) el("events").append(document.createTextNode("Showing 500 events. Narrow the time range for more detail."));
 }
 function draw() {
-    if (preparing) return;
+    if (preparing || state.viewerDisposed) return;
     const frame = frameAt(replay, at, selected, !el("observedOnly").checked);
     for (const mesh of meshes.values()) mesh.visible = false;
     for (const group of grids.values()) group.visible = false;
@@ -484,6 +502,15 @@ el("downloadHistory").addEventListener("click", () => {
     const link = document.createElement("a"); link.href = url; link.download = "recording-events.txt"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
-window.addEventListener("pagehide", () => { abort?.abort(); resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose(); for (const group of grids.values()) gridRenderer.release(group); for (const entry of players.values()) releasePlayer(entry); terrainRenderer.clear(); gridRenderer.dispose(); geometry.dispose(); headGeometry.dispose(); bodyMaterial.dispose(); eventGeometry.dispose(); eventMaterial.dispose(); damageGeometry.dispose(); damageMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose(); Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); state.viewerDisposed = true; state.renderer = null; }, { once: true });
+window.addEventListener("pagehide", () => {
+    state.viewerDisposed = true; generation++; abort?.abort();
+    resize.disconnect(); renderer.setAnimationLoop(null); controls.dispose();
+    for (const group of grids.values()) gridRenderer.release(group);
+    for (const entry of players.values()) releasePlayer(entry);
+    terrainRenderer.clear(); gridRenderer.dispose(); clearAssetFolderCaches(); assetMods.clear();
+    geometry.dispose(); headGeometry.dispose(); bodyMaterial.dispose(); eventGeometry.dispose(); eventMaterial.dispose();
+    damageGeometry.dispose(); damageMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose();
+    Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); state.renderer = null;
+}, { once: true });
 window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });
 start();
