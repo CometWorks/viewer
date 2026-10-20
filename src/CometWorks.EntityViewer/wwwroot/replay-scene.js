@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { movementState } from "./replay-movement.js";
 import { actionLabels } from "./replay-model.js";
-import { AMBIENT_WITH_LIGHTING, SUN_LIGHT_INTENSITY_SCALE, configureSunShadow } from "./scene.js";
+import { AMBIENT_WITH_LIGHTING, viewerSunIntensity, configureSunShadow } from "./scene.js";
 
 export function updateReplaySun(sunlight, ambient, frame, origin, viewRotation, selected, enabled) {
     const sun = frame.health?.sun;
@@ -17,7 +17,7 @@ export function updateReplaySun(sunlight, ambient, frame, origin, viewRotation, 
     const direction = new THREE.Vector3().fromArray(sun).normalize().applyQuaternion(viewRotation);
     sunlight.position.copy(target).addScaledVector(direction, extent * 3);
     sunlight.target.position.copy(target); sunlight.target.updateMatrixWorld();
-    sunlight.intensity = (Number.isFinite(frame.health.sunIntensity) ? Math.max(0, frame.health.sunIntensity) : 1) * SUN_LIGHT_INTENSITY_SCALE;
+    sunlight.intensity = viewerSunIntensity(frame.health.sunIntensity);
     configureSunShadow(bounds, sunlight.position, target, sunlight, focus.gridSize || 2.5);
     sunlight.updateMatrixWorld();
     return "Recorded sunlight and time-of-day shadows";

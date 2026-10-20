@@ -19,7 +19,7 @@ const FLY_FAST_MULTIPLIER = 3;
 const FLY_PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const AMBIENT_WITH_LIGHTING = 0.16;
 const AMBIENT_WITHOUT_LIGHTING = 1.0;
-export const SUN_LIGHT_INTENSITY_SCALE = 2.7;
+const SUN_LIGHT_INTENSITY_SCALE = 2.7;
 export const SUN_SHADOW_MAP_SIZE = 4096;
 const SUN_SHADOW_PADDING_SCALE = 0.08;
 const SUN_SHADOW_MIN_NORMAL_BIAS = 0.02;
@@ -448,13 +448,19 @@ function floorGridBounds(contentBounds, fallbackBounds, selectedBounds = null) {
     return floorBounds;
 }
 
+export function viewerSunIntensity(intensity) {
+    // Match GridRenderSceneInspector.ToEnvironment's cap. History retains the raw
+    // game intensity, so apply the same limit here before scaling it for Three.js.
+    return clamp(Number.isFinite(intensity) ? intensity : 1, 0, 3) * SUN_LIGHT_INTENSITY_SCALE;
+}
+
 export function updateLighting() {
     invalidateShadows();
     const lightingEnabled = !els.showLighting || els.showLighting.checked;
     if (state.ambientLight) state.ambientLight.intensity = lightingEnabled ? AMBIENT_WITH_LIGHTING : AMBIENT_WITHOUT_LIGHTING;
     if (state.sunLight) {
         state.sunLight.visible = lightingEnabled;
-        state.sunLight.intensity = lightingEnabled ? Math.max(0.15, state.sunIntensity || 1) * SUN_LIGHT_INTENSITY_SCALE : 0;
+        state.sunLight.intensity = lightingEnabled ? viewerSunIntensity(Math.max(0.15, state.sunIntensity || 1)) : 0;
     }
     if (state.gridLightGroup) state.gridLightGroup.visible = lightingEnabled;
     for (const light of state.gridLights || []) {
