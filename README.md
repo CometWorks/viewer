@@ -136,7 +136,7 @@ event tracks and source/control evidence. Observations-only mode disables visual
 reconstruction. Compact transition recording preserves the existing game-thread
 budget, sampling targets, 50,000-block grid cap and 24-hour retention.
 
-Replay now prepares the selected 500 m context before playback, including recorded
+Replay prepares the selected incident context before playback, including recorded
 terrain revisions and authored armor surfaces. It shares the main viewer's rendering
 and persistent asset cache, with content hashes to distinguish updated assets.
 Terrain recording remains bounded and deduplicated; older recordings cannot acquire

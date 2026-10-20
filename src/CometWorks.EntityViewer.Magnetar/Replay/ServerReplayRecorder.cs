@@ -45,10 +45,10 @@ internal sealed class ServerReplayRecorder : IDisposable
     private double _nextPlayers;
     private double _nextHealth;
     private bool _active;
-    private readonly Dictionary<long, Hotspot> _hotspots = new Dictionary<long, Hotspot>();
+    private ReplayIncidentTracker _incidents;
+    private ReplayRecordingSettings _settings = new ReplayRecordingSettings();
     private double _retryAt;
     private string _error = "";
-    private sealed class Hotspot { public Vector3D Position; public double Until; }
 
     public ReplayPage Read(ReplayReadRequest request)
     {
@@ -60,8 +60,11 @@ internal sealed class ServerReplayRecorder : IDisposable
     }
 
     // Called on the simulation thread. No hooks, workers, discovery or clock reads while off.
-    public void Configure(bool enabled)
+    public void Configure(bool enabled, ReplayRecordingSettings settings = null)
     {
+        settings = settings ?? new ReplayRecordingSettings();
+        settings.Validate();
+        _settings = settings;
         _enabled = enabled;
         if (enabled) _leaseUntil = _clock.Elapsed.TotalMilliseconds + 30000;
         else { Reset(); _error = ""; }
@@ -89,6 +92,7 @@ internal sealed class ServerReplayRecorder : IDisposable
         if (!ReferenceEquals(session, _session)) Start(session);
         var now = _clock.Elapsed.TotalMilliseconds;
         var started = Stopwatch.GetTimestamp();
+        _incidents.Advance(now, Utc());
         var budget = Stopwatch.Frequency / 2000; // 0.5 ms of capture work per update, checked between entities.
         for (var i = 0; i < 32 && Stopwatch.GetTimestamp() - started < budget && _added.TryDequeue(out var entity); i++)
         {
@@ -104,16 +108,15 @@ internal sealed class ServerReplayRecorder : IDisposable
         for (var i = 0; i < 64 && Stopwatch.GetTimestamp() - started < budget && _damage.TryDequeue(out var damage); i++)
         {
             Interlocked.Decrement(ref _damageCount);
-            _writer.Add(damage);
-            if (damage.Kind == "movement") continue;
-            if (damage.Kind == "action" && (damage.Actions.GetValueOrDefault() & 6) == 0) continue;
-            if (long.TryParse(damage.Entity, out var id) && _grids.TryGetValue(id, out var damaged)) damaged.Schedule.Trigger(now);
-            if (damage.Position != null) Hot(id, new Vector3D(damage.Position[0], damage.Position[1], damage.Position[2]), now);
+            // Resolve topology hooks that have an entity but no position before assigning context.
+            if (damage.Position == null && long.TryParse(damage.Entity, out var id) && _grids.TryGetValue(id, out var target))
+                damage.Position = V(target.Grid.PositionComp.GetPosition());
+            RecordActivity(damage, now);
         }
         if (now >= _nextPlayers && Stopwatch.GetTimestamp() - started < budget)
         {
             CapturePlayers(now, started, budget);
-            _nextPlayers = now + (_hotspots.Count > 0 ? ReplaySchedule.HighInterval : ReplaySchedule.LowInterval);
+            _nextPlayers = now + (_incidents.Count > 0 ? ReplaySchedule.HighInterval : ReplaySchedule.LowInterval);
         }
         var examined = 0;
         while (_scan.Count > 0 && examined++ < 128 && Stopwatch.GetTimestamp() - started < budget)
@@ -133,7 +136,7 @@ internal sealed class ServerReplayRecorder : IDisposable
             if (track.Geometry.Update(now, started, budget)) track.Schedule.Invalidate();
             if (!track.Schedule.Due(now)) continue;
             var position = grid.PositionComp.GetPosition();
-            if (Nearby(position, now)) track.Schedule.Trigger(now);
+            track.Schedule.ContextUntil(_incidents.HighUntil(V(position), now), now);
             if (now >= track.NextContext) { _voxels.Observe(position, grid.PositionComp.WorldAABB.Size); track.NextContext = now + 10000; }
             var record = Sample(grid, track, now);
             record.GeometryReady = track.Geometry.Ready;
@@ -143,13 +146,12 @@ internal sealed class ServerReplayRecorder : IDisposable
                 var evidence = Sample(grid, track, now);
                 evidence.Kind = "physics";
                 evidence.Detail = "Suspected instability: sustained angular speed >5 rad/s or acceleration >100 m/s². Correlation, not attribution.";
-                _writer.Add(evidence);
-                Hot(grid.EntityId, position, now);
+                RecordActivity(evidence, now);
             }
         }
         if (now >= _nextHealth)
         {
-            foreach (var key in _hotspots.Keys.Where(key => _hotspots[key].Until <= now).ToArray()) _hotspots.Remove(key);
+            _incidents.Advance(now, Utc(), checkpoint: true);
             var lost = Interlocked.Exchange(ref _lost, 0);
             if (lost > 0) _writer.Add(new ReplayRecord { At = Utc(), Elapsed = now, Kind = "gap", Value = lost, Detail = "Capture event/track limit" });
             _writer.Add(new ReplayRecord { At = Utc(), Elapsed = now, Tick = (long)MySandboxGame.Static.SimulationFrameCounter, Kind = "health", Sun = V(MySector.DirectionToSunNormalized), SunIntensity = MySector.SunProperties.SunIntensity, Value = Sync.ServerSimulationRatio, Count = _grids.Count, Detail = "Simulation speed; 1 Hz baseline / 5 Hz incident target" });
@@ -163,6 +165,7 @@ internal sealed class ServerReplayRecorder : IDisposable
         _session = session; _active = true;
         var sessionId = Guid.NewGuid().ToString("N");
         _writer = new ReplayWriter(Path.Combine(session.CurrentPath, "EntityViewerReplay"), sessionId, session.WorldId.ToString("N"), _retiringWriter);
+        _incidents = new ReplayIncidentTracker(record => _writer.Add(record));
         _voxels = new ReplayVoxelCapture(_writer);
         _retiringWriter = null;
         MyEntities.OnEntityAdd += OnAdded;
@@ -289,7 +292,7 @@ internal sealed class ServerReplayRecorder : IDisposable
             var matrix = observed.WorldMatrix;
             var scale = matrix.Up.Length();
             var q = Quaternion.CreateFromRotationMatrix(MatrixD.Normalize(matrix));
-            if (Nearby(p, now)) track.Schedule.Trigger(now);
+            track.Schedule.ContextUntil(_incidents.HighUntil(V(p), now), now);
             var sample = new ReplayRecord
             {
                 At = Utc(), Elapsed = now, Tick = (long)MySandboxGame.Static.SimulationFrameCounter,
@@ -308,9 +311,12 @@ internal sealed class ServerReplayRecorder : IDisposable
                 Mod = character?.Definition?.Context?.ModId ?? "", Color = character == null ? null : V(character.ColorMask),
                 Detail = character == null ? "Character unavailable; controlled entity position only." : "Character appearance and position; animation pose is not recorded."
             };
-            if (track.Actions.HasValue && sample.Actions.HasValue && sample.Actions != track.Actions)
-                _writer.Add(new ReplayRecord { At = sample.At, Elapsed = now, Kind = "action", Type = "character", Entity = sample.Character,
-                    Name = sample.Name, Actions = sample.Actions, Position = sample.Position, Weapon = sample.Weapon, Detail = "State changed between budgeted observations" });
+            if (sample.Actions.HasValue && (sample.Actions != track.Actions || (sample.Actions.Value & 6) != 0 && now >= track.NextActivity))
+            {
+                track.NextActivity = now + 1000;
+                RecordActivity(new ReplayRecord { At = sample.At, Elapsed = now, Kind = "action", Type = "character", Entity = sample.Character,
+                    Name = sample.Name, Actions = sample.Actions, Position = sample.Position, Weapon = sample.Weapon, Detail = "Observed character action (including held tool/fire activity)" }, now);
+            }
             track.Actions = sample.Actions;
             if (track.Schedule.Observe(sample, now, out _)) _writer.Add(sample);
         }
@@ -350,11 +356,12 @@ internal sealed class ServerReplayRecorder : IDisposable
         return rotation.Any(v => double.IsNaN(v) || double.IsInfinity(v)) ? null : rotation;
     }
     private static double[] V(Vector3D v) => v.IsValid() ? new[] { Math.Round(v.X, 2), Math.Round(v.Y, 2), Math.Round(v.Z, 2) } : null;
-    private bool Nearby(Vector3D position, double now) => _hotspots.Values.Any(h => now < h.Until && Vector3D.DistanceSquared(position, h.Position) < 1000000);
-    private void Hot(long id, Vector3D position, double now)
+    private void RecordActivity(ReplayRecord record, double now)
     {
-        if (_hotspots.Count >= 32 && !_hotspots.ContainsKey(id)) { Interlocked.Increment(ref _lost); return; }
-        _hotspots[id] = new Hotspot { Position = position, Until = now + ReplaySchedule.QuietTail };
+        _incidents.Observe(record, now, _settings);
+        if (record.IncidentId.Length > 0 && long.TryParse(record.Entity, out var id) && _grids.TryGetValue(id, out var track))
+            track.Schedule.ContextUntil(_incidents.HighUntil(record.Position, now), now);
+        _writer.Add(record);
     }
     private static long Utc() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     private void Reset()
@@ -365,14 +372,15 @@ internal sealed class ServerReplayRecorder : IDisposable
         MyCharacter.OnCharacterDied -= OnDeath;
         ReplayActionPatches.Stop();
         _voxels?.Dispose(); _voxels = null;
+        _incidents?.Close(_clock.Elapsed.TotalMilliseconds, Utc()); _incidents = null;
         if (_writer != null) { _writer.Dispose(); _retiringWriter = _writer; }
         _writer = null; _session = null;
         foreach (var track in _scan) track.Geometry.Dispose();
         foreach (var track in _players.Values) if (track.Character != null) track.Character.MovementStateChanged -= OnMovement;
-        _grids.Clear(); _scan.Clear(); _players.Clear(); _hotspots.Clear(); _cursor = 0; _nextPlayers = 0; _nextHealth = 0;
+        _grids.Clear(); _scan.Clear(); _players.Clear(); _cursor = 0; _nextPlayers = 0; _nextHealth = 0;
         while (_added.TryDequeue(out _)) Interlocked.Decrement(ref _addedCount);
         while (_damage.TryDequeue(out _)) Interlocked.Decrement(ref _damageCount);
     }
     public void Dispose() => Configure(false);
-    private sealed class Track { public MyCharacter Character; public double NextContext; public int? Actions; public MyCubeGrid Grid; public ReplayGridCapture Geometry; public double[] NaturalGravity; public double NextGravity; public ReplaySchedule Schedule = new ReplaySchedule(); }
+    private sealed class Track { public MyCharacter Character; public double NextContext; public double NextActivity; public int? Actions; public MyCubeGrid Grid; public ReplayGridCapture Geometry; public double[] NaturalGravity; public double NextGravity; public ReplaySchedule Schedule = new ReplaySchedule(); }
 }

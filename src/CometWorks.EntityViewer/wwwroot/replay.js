@@ -116,9 +116,12 @@ async function request(path, signal, options = {}) {
     }
     return response.json();
 }
+let incidentIndex = new Map();
 function recordingStatus(status) {
+    el("maxIncidentMinutes").value = status.settings?.maxIncidentMinutes ?? 15;
+    el("maxContextRadius").value = status.settings?.maxContextRadius ?? 10000;
     el("recordingEnabled").checked = !!status.recordingEnabled;
-    el("recordingEnabled").disabled = !el("server").value;
+    el("recordingEnabled").disabled = el("saveRecording").disabled = !el("server").value;
     el("recordingStatus").textContent = status.recordingEnabled
         ? `Recording enabled: 1 Hz baseline, up to 5 Hz during incidents.${status.error ? ` Server status: ${status.error}` : ""}`
         : `Recording disabled. Existing history remains available until expiry.${status.error ? ` Stop pending: ${status.error}. Capture stops within 30 seconds without renewal.` : ""}`;
@@ -148,14 +151,14 @@ async function start() {
         await load();
     } catch (error) { el("status").textContent = error.message; }
 }
-async function load() {
+async function load(range = null) {
     if (state.viewerDisposed) return;
     abort?.abort(); abort = new AbortController(); const current = ++generation;
     preparing = true; el("assetLoading").hidden = false;
     el("assetLoadingText").textContent = "Loading recorded history…";
     playing = false; el("play").disabled = true; el("scrub").disabled = true; el("play").textContent = "Play"; el("load").disabled = true;
-    const requestedFrom = new Date(el("from").value).getTime();
-    const requestedTo = Math.min(Date.now(), requestedFrom + Number(el("minutes").value) * 60000);
+    const requestedFrom = range?.from ?? new Date(el("from").value).getTime();
+    const requestedTo = Math.min(Date.now(), range?.to ?? requestedFrom + Number(el("minutes").value) * 60000);
     try {
         if (!Number.isFinite(requestedFrom) || requestedTo <= requestedFrom) throw new Error("Choose a start time in the last 24 hours.");
         el("status").textContent = "Loading recorded observations…";
@@ -176,7 +179,7 @@ async function load() {
             assetMods.clear(); assetServer = server; assetFolderGeneration = getAssetFolderCacheGeneration();
         }
         const originalServer = [el("server").value, el("server").selectedOptions[0]?.dataset.agentId].includes(initialServer);
-        const loaded = pruneReplayContext(buildReplay(batches), (originalServer ? params.get("entityId") : "") || selected);
+        const loaded = pruneReplayContext(buildReplay(batches), (originalServer ? params.get("entityId") : "") || selected, range?.incidentId || "");
         const mods = [...new Set([...loaded.geometry.values()].flatMap(page => page.map(block => block.mod)).concat(loaded.records.map(record => record.mod), [...loaded.voxels.values()].flatMap(page => page.palette.map(material => material.mod))).filter(Boolean))]
             .map(name => ({ rootId: `mods-direct:${name}`, name, publishedFileId: /^\d+(?:\.sbm)?$/.test(name) ? Number(name.replace(/\.sbm$/, "")) : 0 }));
         for (const mod of mods) assetMods.set(mod.rootId, mod);
@@ -193,7 +196,7 @@ async function load() {
         replay = loaded; journal = replayJournal(replay); from = requestedFrom; to = requestedTo; at = from;
         clips = incidentClips(replay, from, to); activeClip = null; inspectedEvent = null; followPosition = null;
         el("clip").replaceChildren(new Option("Entire loaded range", ""));
-        clips.forEach((clip, i) => el("clip").append(new Option(`${new Date(clip.events[0].at).toLocaleTimeString()} · ${clip.events.length} events${clip.incomplete ? " · incomplete" : ""}`, String(i))));
+        clips.forEach((clip, i) => el("clip").append(new Option(`${new Date(clip.startedAt ?? clip.events[0]?.at ?? clip.start).toLocaleTimeString()} · ${clip.events.length} events${clip.partial ? " · partial range" : ""}${clip.incomplete ? " · incomplete" : ""}`, String(i))));
         const progress = () => { if (current === generation) el("assetLoadingText").textContent = `${gridRenderer.status} · ${terrainRenderer.ready}/${replay.voxels.size} terrain chunks prepared`; };
         const progressTimer = setInterval(progress, 150);
         try { await Promise.all([gridRenderer.preload(replay), terrainRenderer.preload(replay, gridRenderer.context, progress)]); }
@@ -221,15 +224,21 @@ async function load() {
         controls.target.set(0, 0, 0);
         const distance = Math.max(6, Math.max(...(first?.size || [40])) * 2);
         camera.position.set(distance, distance * 0.7, distance);
+        incidentIndex = new Map((overview.incidents || []).filter(i => !i.mergedInto).map(i => [i.id, i]));
         const windows = new Map();
         for (const segment of overview.segments || []) if (segment.events > 0) {
             const minute = Math.floor(segment.at / 60000) * 60000;
             windows.set(minute, (windows.get(minute) || 0) + segment.events);
         }
         el("incidents").replaceChildren(new Option("Choose an incident window", ""));
+        for (const i of incidentIndex.values()) el("incidents").append(new Option(`${new Date(i.startedAt).toLocaleString()} · ${Math.ceil((i.until - i.startedAt) / 1000)} s · ${Math.round(i.radius)} m${i.ended ? "" : " · last recorded"}`, i.id));
         for (const [minute, count] of [...windows].sort((a, b) => b[0] - a[0])) el("incidents").append(new Option(`${new Date(minute).toLocaleString()} · ${count} events`, String(minute)));
         const unavailable = overview.error ? ` Collection status: ${overview.error}` : "";
-        el("status").textContent = `${replay.records.length.toLocaleString()} observations loaded within 500 m of ${replay.contextEntity || "the context anchor"}. ${replay.events.some(e => e.kind === "voxel-coverage") ? "Terrain capture budget reached in this window; context is incomplete. " : ""} ${overview.lostChunks || 0} segments lost to storage limits.${unavailable}`;
+        el("status").textContent = `${replay.records.length.toLocaleString()} observations loaded in ${replay.contextIncidentIds?.size ? "expanding incident context" : "500 m context"} around ${replay.contextEntity || "the incident"}. ${replay.events.some(e => e.kind === "voxel-coverage") ? "Terrain capture budget reached in this window; context is incomplete. " : ""} ${overview.lostChunks || 0} segments lost to storage limits.${unavailable}`;
+        if (range?.incidentId) {
+            const index = clips.findIndex(c => c.ids?.has(range.incidentId));
+            if (index >= 0) { activeClip = clips[index]; replay.activeIncidentIds = activeClip.ids; el("clip").value = String(index); at = activeClip.start; }
+        }
         events(); plot(); draw();
         el("assetLoadingText").textContent = "Preparing replay shaders…";
         await renderer.compileAsync(scene, camera);
@@ -316,7 +325,7 @@ function draw() {
     el("clock").textContent = new Date(at || Date.now()).toLocaleString();
     const health = frame.health;
     el("quality").textContent = frame.gap ? "Missing or incomplete coverage" : `${frame.samples.length} entities · sim speed ${Number(health?.value || 0).toFixed(2)} · ${frame.samples.filter(s => s.high).length} in incident detail · ${el("observedOnly").checked ? "observations only" : "reconstructed motion"}`;
-    const terrainQuality = terrainRenderer.draw(replay, at, frame.samples[0]?.session, origin, frame.samples.find(s => s.entity === replay.contextEntity)?.position || focused?.position);
+    const terrainQuality = terrainRenderer.draw(replay, at, frame.samples[0]?.session, origin, frame.samples.find(s => s.entity === replay.contextEntity)?.position || focused?.position, frame.contexts);
     el("lightingQuality").textContent = updateReplaySun(sunlight, ambient, frame, origin, world.quaternion, selected, el("replayLighting").checked);
     el("geometryQuality").textContent = `${drawnBlocks.toLocaleString()} recorded blocks · ${proxies.toLocaleString()} block proxies · ${missingLayouts} grids with bounds only · ${gridRenderer.status} · ${terrainQuality} · ${frame.samples.some(s => s.gravity) ? "recorded natural gravity" : "gravity not recorded"}`;
     invalidateReplayShadows();
@@ -397,9 +406,13 @@ function moveFreeCamera(dt) {
 }
 el("clip").addEventListener("change", () => {
     activeClip = el("clip").value === "" ? null : clips[Number(el("clip").value)];
+    replay.activeIncidentIds = activeClip?.ids;
     if (activeClip) {
+        if (activeClip.id && (activeClip.actualStart < from || Math.min(Date.now(), activeClip.actualEnd) > to + 1000)) {
+            loadIncident({ id: activeClip.id, startedAt: activeClip.startedAt, until: activeClip.actualEnd }); return;
+        }
         selected = activeClip.focus; el("entity").value = selected;
-        const sample = frameAt(replay, activeClip.events[0].at, selected).samples.find(s => !selected || s.entity === selected);
+        const sample = frameAt(replay, (activeClip.events[0]?.at ?? activeClip.start), selected).samples.find(s => !selected || s.entity === selected);
         if (sample) el("cameraMode").value = sample.type === "player" ? "player" : "grid";
         seek(activeClip.start); focusCamera(sample || (activeClip.position ? { position: activeClip.position } : null)); draw();
     }
@@ -435,22 +448,36 @@ window.addEventListener("keyup", event => keys.delete(event.code));
 window.addEventListener("blur", () => keys.clear());
 el("query").addEventListener("submit", event => { event.preventDefault(); load(); });
 el("server").addEventListener("change", () => { el("recordingEnabled").disabled = true; selected = ""; load(); });
-el("recordingEnabled").addEventListener("change", async () => {
+async function saveRecording() {
+    if (!el("maxIncidentMinutes").reportValidity() || !el("maxContextRadius").reportValidity()) return;
     const server = el("server").value, enabled = el("recordingEnabled").checked;
-    el("recordingEnabled").disabled = true;
+    el("recordingEnabled").disabled = el("saveRecording").disabled = true;
     el("recordingStatus").textContent = enabled ? "Enabling recording…" : "Stopping recording…";
     try {
-        const result = await request(`${encodeURIComponent(server)}/recording`, undefined, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
+        const result = await request(`${encodeURIComponent(server)}/recording`, undefined, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled, maxIncidentMinutes: Number(el("maxIncidentMinutes").value), maxContextRadius: Number(el("maxContextRadius").value) }) });
         if (el("server").value === server) recordingStatus(result);
     } catch (error) {
         if (el("server").value === server) {
             el("recordingStatus").textContent = `Could not confirm recording setting: ${error.message}. Reload history to check.`;
-            el("recordingEnabled").disabled = false;
+            el("recordingEnabled").disabled = el("saveRecording").disabled = false;
         }
     }
-});
+}
+el("recordingEnabled").addEventListener("change", saveRecording);
+el("saveRecording").addEventListener("click", saveRecording);
+function loadIncident(i) {
+    const end = Math.min(Date.now(), i.until);
+    const start = Math.max(Date.now() - 24 * 3600000 + 1000, i.startedAt - 10000, end - 3600000);
+    el("from").value = localTime(new Date(start));
+    el("minutes").querySelector('option[data-incident]')?.remove();
+    const option = new Option("Incident duration", String((end - start) / 60000), true, true);
+    option.dataset.incident = "true"; el("minutes").append(option);
+    load({ from: start, to: end, incidentId: i.id });
+}
 el("incidents").addEventListener("change", () => {
     if (!el("incidents").value) return;
+    const incident = incidentIndex.get(el("incidents").value);
+    if (incident) { loadIncident(incident); return; }
     el("from").value = localTime(new Date(Math.max(Date.now() - 24 * 3600000 + 1000, Number(el("incidents").value) - 30000)));
     el("minutes").value = "5"; load();
 });

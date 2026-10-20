@@ -9,7 +9,7 @@ internal sealed class ReplaySchedule
 {
     public const int LowInterval = 1000;
     public const int HighInterval = 200;
-    public const int QuietTail = 15000;
+    public const int QuietTail = ReplayIncidentTracker.QuietMs;
     public double HighUntil { get; private set; }
     private double _next;
     private double _lastWritten = double.NegativeInfinity;
@@ -20,6 +20,7 @@ internal sealed class ReplaySchedule
 
     public void Invalidate() { _written = null; }
     public void Trigger(double now) { HighUntil = now + QuietTail; _next = Math.Min(_next, now); }
+    public void ContextUntil(double until, double now) { HighUntil = until; if (until > now) _next = Math.Min(_next, now); }
     public bool Due(double now) => now >= _next;
     public bool IsHigh(double now) => now < HighUntil;
 

@@ -24,6 +24,7 @@ Directory.CreateDirectory(root);
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 try
 {
+    IncidentChecks.Run();
     var schedule = new ReplaySchedule();
     Check(schedule.Observe(Sample(0), 0, out _), "First sample must establish baseline");
     Check(!schedule.Due(999) && schedule.Due(1000), "Baseline must use one-second cadence");
@@ -34,9 +35,9 @@ try
     var high = Sample(30010);
     Check(schedule.Observe(high, 30010, out _) && high.High, "Transition to incident detail must be recorded even when stationary");
     Check(!schedule.Due(30209) && schedule.Due(30210), "Incident must use 200 ms cadence");
-    Check(!schedule.IsHigh(45010), "Incident must expire after quiet tail");
-    var low = Sample(45010);
-    Check(schedule.Observe(low, 45010, out _) && !low.High, "Transition back to baseline must be recorded");
+    Check(!schedule.IsHigh(90010), "Incident must expire after quiet tail");
+    var low = Sample(90010);
+    Check(schedule.Observe(low, 90010, out _) && !low.High, "Transition back to baseline must be recorded");
     var detector = new ReplaySchedule();
     var spinning = Sample(0); spinning.AngularVelocity = [6, 0, 0];
     detector.Observe(spinning, 0, out var first);
@@ -117,12 +118,14 @@ try
     var damageAt = now - now % 250;
     writer.Add(new ReplayRecord { At = damageAt, Kind = "damage", Entity = "grid", Source = "attacker", Detail = "Bullet cell (1,2,3)", Value = 10, Count = 1 });
     writer.Add(new ReplayRecord { At = damageAt + 1, Kind = "damage", Entity = "grid", Source = "attacker", Detail = "Bullet cell (1,2,3)", Value = 20, Count = 1 });
+    writer.Add(new ReplayRecord { At = damageAt + 2, Kind = "damage", Entity = "grid", Source = "attacker", Detail = "Bullet cell (1,2,3)", IncidentId = Guid.NewGuid().ToString("N"), Value = 5, Count = 1 });
     writer.Dispose();
     var replacement = new ReplayWriter(writerPath, Guid.NewGuid().ToString("N"), "world", writer);
     replacement.Add(new ReplayRecord { At = now, Kind = "health", Value = 1 }); replacement.Dispose();
     await replacement.Completion.WaitAsync(TimeSpan.FromSeconds(10));
     var written = replacement.Read(new ReplayReadRequest()).Chunks.Select(c => JsonSerializer.Deserialize<ReplayBatch>(ReplayChunkStore.Expand(c.Data), json)!).ToArray();
-    var aggregated = written.SelectMany(b => b.Records).Single(r => r.Kind == "damage");
+    var aggregated = written.SelectMany(b => b.Records).Single(r => r.Kind == "damage" && r.IncidentId.Length == 0);
+    Check(written.SelectMany(b => b.Records).Count(r => r.Kind == "damage") == 2, "Damage cannot coalesce across incident boundaries");
     Check(aggregated.Value == 30 && aggregated.Count == 2, "Real writer must coalesce matching damage and preserve its count/total");
     Check(written.Length == 2 && written.Select(b => b.Session).Distinct().Count() == 2, "Fast world reload must drain both writers without mixing sessions or deleting pending segments");
 
@@ -139,8 +142,18 @@ try
     var manifest = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(new ReplayLayoutPage { Pages = [pageId] }, json));
     var manifestId = ReplayChunkStore.GeometryId(manifest);
     batch.Records[1].LayoutId = manifestId; batch.Records[1].GridSize = 2.5; batch.Records[1].Origin = [0, 0, 0];
+    var incidentId = Guid.NewGuid().ToString("N");
+    var incidentRecord = new ReplayRecord { At = now - 2000, Elapsed = 1000, Kind = "incident", IncidentId = incidentId,
+        Incident = new ReplayIncident { Id = incidentId, StartedAt = now - 2000, LastActivityAt = now - 2000, Until = now + 58000,
+            Deadline = now + 898000, Seed = [0, 0, 0], Radius = 500, MaxRadius = 10000 } };
+    batch.Records.Add(incidentRecord);
     var transportChunk = new ReplayChunk { Id = chunk.Id, Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)), Geometry = new() { [pageId] = page, [manifestId] = manifest } };
 
+    Check(ReplayHistoryService.Decode(transportChunk).Records.Any(r => r.Incident?.Id == incidentId), "Incident metadata survives transport");
+    incidentRecord.Incident!.Radius = 10001;
+    var invalidIncident = new ReplayChunk { Id = chunk.Id, Data = ReplayChunkStore.Compress(JsonSerializer.SerializeToUtf8Bytes(batch, json)), Geometry = transportChunk.Geometry };
+    Throws(() => ReplayHistoryService.Decode(invalidIncident), "Out-of-bounds context rejected at collection boundary");
+    incidentRecord.Incident.Radius = 500;
     var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
     var context = new QuasarPluginContext
     {
@@ -175,7 +188,11 @@ try
     Check((await client.GetAsync(api + "server?from=" + (now - 3000) + "&to=" + now)).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot access player history directly");
     Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot enable server recording");
     client.DefaultRequestHeaders.Remove("X-Test-User"); client.DefaultRequestHeaders.Add("X-Test-User", "admin");
-    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).IsSuccessStatusCode, "Admin can enable recording");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxIncidentMinutes = 61 })).StatusCode == HttpStatusCode.BadRequest, "Incident cap validated");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxContextRadius = 10001 })).StatusCode == HttpStatusCode.BadRequest, "Context cap validated");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxIncidentMinutes = 60, maxContextRadius = 5000 })).IsSuccessStatusCode, "Admin can enable recording");
+    Check(channel.Settings.MaxIncidentMinutes == 60 && channel.Settings.MaxContextRadius == 5000, "Settings reach companion");
+    Check((await client.GetAsync(api + "server?from=" + (now - 60 * 60000) + "&to=" + now)).IsSuccessStatusCode, "One-hour replay allowed within data budgets");
     deadline = DateTime.UtcNow.AddSeconds(10);
     while (!channel.Acknowledged && DateTime.UtcNow < deadline) await Task.Delay(50);
     Check(channel.Acknowledged && channel.Recording, "Enabled background collector ingests and acknowledges without browser polling");
@@ -184,8 +201,8 @@ try
     var stored = await response.Content.ReadFromJsonAsync<List<ReplayBatch>>(json);
     Check(stored!.SelectMany(b => b.Geometry).Single().Value.Single().Definition.EndsWith("LargeBlockArmorBlock"), "Admin queries must include historical geometry dependencies");
     Check(stored!.SelectMany(b => b.Records).Single(r => r.Kind == "sample").Entity == "9223372036854775807", "Entity IDs remain lossless");
-    Check((await client.GetAsync(api + "server?from=" + (now - 16 * 60000) + "&to=" + now)).StatusCode == HttpStatusCode.BadRequest, "Large queries must be bounded");
-    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = false })).IsSuccessStatusCode && !channel.Recording, "Admin disable stops capture");
+    Check((await client.GetAsync(api + "server?from=" + (now - 61 * 60000) + "&to=" + now)).StatusCode == HttpStatusCode.BadRequest, "Large queries must be bounded");
+    Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = false, maxIncidentMinutes = 30, maxContextRadius = 5000 })).IsSuccessStatusCode && !channel.Recording, "Admin disable stops capture");
     var stoppedCalls = channel.Calls;
     await Task.Delay(2200);
     Check(channel.Calls == stoppedCalls, "Disabled collector sends no periodic requests after final drain");
@@ -196,6 +213,10 @@ try
     deadline = DateTime.UtcNow.AddSeconds(5);
     while (restarted.Servers().Length == 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
     Check(!JsonSerializer.SerializeToElement(restarted.Servers(), json)[0].GetProperty("recordingEnabled").GetBoolean(), "Recording opt-out persists across Quasar restart");
+    var restoredIncidents = JsonSerializer.SerializeToElement(restarted.Overview("server"), json).GetProperty("incidents");
+    Check(restoredIncidents.GetArrayLength() == 1 && restoredIncidents[0].GetProperty("id").GetString() == incidentId, "Incident navigation index survives restart");
+    var restoredSettings = JsonSerializer.SerializeToElement(restarted.Overview("server"), json).GetProperty("settings");
+    Check(restoredSettings.GetProperty("maxIncidentMinutes").GetInt32() == 30 && restoredSettings.GetProperty("maxContextRadius").GetInt32() == 5000, "Incident limits persist across restart");
     Check((await restarted.Query("server", now - 3000, now, default)).Count == 1, "Retained history survives Quasar restart and server disconnect");
     await restarted.StopAsync(default); await app.StopAsync();
 
@@ -224,6 +245,7 @@ sealed class TestChannel(ReplayChunk chunk) : IQuasarCompanionChannel
 {
     public int Calls;
     public bool Recording;
+    public ReplayRecordingSettings Settings = new();
     public bool Acknowledged;
     public bool Connected = true;
     public IReadOnlyList<QuasarCompanionServer> GetConnectedServers() => Connected ? [new("server", "agent", "Test server")] : [];
@@ -232,7 +254,7 @@ sealed class TestChannel(ReplayChunk chunk) : IQuasarCompanionChannel
         if (serverId != "agent") throw new Exception("Collection must target the exact live agent, not a shared cluster name");
         Calls++;
         var read = (ReplayReadRequest)(object)request!;
-        Recording = read.Record;
+        Recording = read.Record; Settings = read.Settings;
         if (read.Acknowledge.Contains(chunk.Id)) Acknowledged = true;
         return Task.FromResult((TResponse)(object)new ReplayPage { Chunks = Acknowledged ? [] : [chunk] });
     }

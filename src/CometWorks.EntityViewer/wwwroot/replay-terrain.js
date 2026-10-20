@@ -48,7 +48,7 @@ export class ReplayTerrain {
             }
         }));
     }
-    draw(replay, at, session, origin, center) {
+    draw(replay, at, session, origin, center, contexts = []) {
         for (const mesh of this.meshes.values()) if (mesh) mesh.visible = false;
         let count = 0, coarsest = 0;
         for (const record of terrainAt(replay, at, session)) {
@@ -59,7 +59,8 @@ export class ReplayTerrain {
             const radius = Math.hypot(...page.size) * 2 ** page.lod / 2;
             const chunkCenter = new THREE.Vector3().fromArray(page.size).multiplyScalar(2 ** page.lod / 2)
                 .applyQuaternion(new THREE.Quaternion().fromArray(page.rotation)).add(position);
-            if (center && chunkCenter.distanceTo(new THREE.Vector3().fromArray(center)) > 500 + radius) continue;
+            if (contexts.length ? !contexts.some(c => chunkCenter.distanceTo(new THREE.Vector3().fromArray(c.seed)) <= c.radius + radius)
+                : center && chunkCenter.distanceTo(new THREE.Vector3().fromArray(center)) > 500 + radius) continue;
             if (mesh) { mesh.visible = true; mesh.position.copy(position).sub(origin); mesh.userData.sample = record; }
             count++; coarsest = Math.max(coarsest, 2 ** page.lod);
         }

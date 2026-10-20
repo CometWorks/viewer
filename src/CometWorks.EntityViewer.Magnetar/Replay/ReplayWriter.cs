@@ -134,7 +134,7 @@ internal sealed class ReplayWriter : IDisposable
             foreach (var record in records)
             {
                 if (record.Kind != "damage") { compact.Add(record); continue; }
-                var key = record.Entity + "/" + record.Source + "/" + record.Detail + "/" + record.At / 250;
+                var key = record.IncidentId + "/" + record.Entity + "/" + record.Source + "/" + record.Detail + "/" + record.At / 250;
                 if (!damage.TryGetValue(key, out var prior)) { damage.Add(key, record); compact.Add(record); }
                 else { prior.Value += record.Value; prior.Count += record.Count; }
             }

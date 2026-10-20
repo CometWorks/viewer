@@ -149,15 +149,19 @@
             <p class="hint">Last 24 hours · 1 Hz baseline · 5 Hz incident detail</p>
             <label>Server<select id="server" required></select></label>
             <label><span><input id="recordingEnabled" type="checkbox" disabled> Enable recording on this server</span></label>
+            <label>Maximum incident duration (minutes)<input id="maxIncidentMinutes" type="number" min="1" max="60" value="15"></label>
+            <label>Maximum context radius (metres)<input id="maxContextRadius" type="number" min="500" max="10000" step="100" value="10000"></label>
+            <button id="saveRecording" type="button" disabled>Save recording settings</button>
+            <p class="hint">Incidents end after 1 minute without activity. New incidents use these limits; connected activity expands the initial 500 m context.</p>
             <p id="recordingStatus" class="hint" role="status">Recording is off by default. Enabling records a low-detail baseline and raises detail around incidents. History expires after 24 hours.</p>
             <label>Start time<input id="from" type="datetime-local" step="1" required></label>
-            <label>Window<select id="minutes"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option></select></label>
+            <label>Window<select id="minutes"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
             <label>Incident windows (last 24 hours)<select id="incidents"><option value="">Choose an incident window</option></select></label>
             <button id="load" type="submit">Load history</button>
         </form>
         <p id="status" role="status" aria-live="polite">Connecting to recording history…</p>
         <section class="card replay-inspector">
-            <label>Focus entity (500 m context)<select id="entity"><option value="">All entities</option></select></label>
+            <label>Focus entity (expanding incident context)<select id="entity"><option value="">All entities</option></select></label>
             <label>Incident clip<select id="clip"><option value="">Entire loaded range</option></select></label>
             <label>Camera<select id="cameraMode"><option value="orbit">Orbit</option><option value="grid">Follow grid</option><option value="player">Follow player</option><option value="perspective">Player perspective (reconstructed)</option><option value="free">Free camera</option></select></label>
             <label><span><input id="observedOnly" type="checkbox"> Observations only</span></label>

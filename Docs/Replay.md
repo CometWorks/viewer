@@ -24,12 +24,23 @@ normal update callback retains only a null/disabled check while recording is off
 ## Capture and escalation
 
 - Target baseline: one observation per second for loaded grids and online players.
-- Target incident cadence: five observations per second for affected grids and
-  entities within 1 km of an incident, with a 15-second quiet tail on each track.
-  A nearby track's quiet tail can continue after its incident region expires.
-- Damage triggers immediately schedule the target grid. Concurrent regions are
-  bounded to 32. Repeated damage extends its region; overlapping regions reuse
-  the same per-entity recording schedule.
+- Target incident cadence: five observations per second inside an active incident's
+  recorded context. Meaningful activity renews a 60-second quiet deadline; ordinary
+  samples, movement and nearby high-rate scheduling do not prolong it.
+- Incidents start with a 500 m radius and can grow through overlapping 500 m
+  activity contexts (up to 1 km between trigger points). Connectivity uses the
+  actual activity points, not overlap of aggregate bounds. The resulting spherical
+  capture envelope is fixed to the original seed, with a configurable radius cap
+  of 500–10,000 m (default 10,000 m).
+- The maximum incident duration is configurable from 1–60 minutes (default 15).
+  Each incident snapshots both limits when it starts. Configuration changes and
+  lease renewals never reset existing deadlines. Continued activity at the cap
+  starts a new incident. Overlapping incidents merge when their combined context
+  fits the earliest seed's cap; the earliest hard deadline survives.
+- Capture retains the 32-active-incident bound and at most 256 distinct activity
+  anchors per incident. Established anchors are preserved at capacity and context
+  expansion is marked incomplete. Capture, writer, terrain and query budgets still
+  apply; reaching them must not silently imply complete coverage.
 - Physics detection requires two consecutive observations of angular speed above
   5 rad/s or acceleration above 100 m/s². A grid produces at most one such event
   per five seconds. These are **suspected instability** markers with recorded
@@ -97,7 +108,7 @@ Configured server asset streaming and local Content/Mods folders supply models
 and textures, never a current grid snapshot. It actively preloads assets from all
 loaded historical pages and character appearances, including later observations,
 with four concurrent model jobs. The previous 128-model, 64 MiB model and
-256-texture admission limits are removed: all assets in the retained 500 m context
+256-texture admission limits are removed: all assets in the retained incident context
 are prepared, including future layouts. Playback waits behind a progress overlay
 while assets, terrain meshes, texture uploads and initial shaders are prepared.
 Missing assets remain explicitly reported.
@@ -192,7 +203,7 @@ individual block pages are capped at 256 KiB expanded, and collection responses
 at 4 MiB including geometry. Queries cap unique expanded data at 32 MiB and
 40,000 records, sharing repeated page data within each response. The recording
 limit remains 50,000 blocks per grid; the browser renders all recorded grids within
-the 500 m context without a separate 50,000-block total limit.
+the retained context without a separate 50,000-block total limit.
 Archive file metadata is indexed in memory rather than rescanning the directory
 for every collection. Allocation-accounted storage limits (4 KiB minimum/file):
 
@@ -228,12 +239,21 @@ time. The tools shortcut opens the same viewer in history mode. Legacy
 
 **Entity history** is administrator-only, including API requests and player
 positions. Responses use `private, no-store`. Select a server and a window of
-up to 15 minutes anywhere within the last 24 hours; the incident-window selector
-uses small segment metadata rather than loading a day's samples. Select an entity
-to focus its recorded surroundings and motion trail. The entity that opened history
-anchors a 500 m context: unrelated tracks and assets are pruned before browser
-preparation, and changing camera focus does not expand that context. Selecting an
-incident window automatically loads history and prepares its assets. Damage events mark world
+up to 60 minutes anywhere within the last 24 hours. The incident selector uses a
+small persisted navigation index of the latest 4,096 incidents, with segment
+activity windows as the legacy fallback. It loads the recorded incident boundaries,
+including up to 10 seconds of baseline pre-roll (trimmed at the one-hour limit).
+Select an entity to focus its recorded surroundings and motion trail. Connected
+incidents expand the context of the entity that opened history; recordings without
+incident metadata retain the 500 m context. Unrelated assets are pruned before
+preparation. Frame visibility follows the context recorded at that moment, including
+reverse seeks, rather than the incident's final size. Camera focus does not enlarge
+it. Partial clips keep their original boundaries and can load the full incident.
+The existing 512-segment, 8 MiB compressed, 32 MiB expanded/geometry and 40,000-record
+query budgets remain in force: dense recordings may require a shorter loaded range,
+even when the incident itself lasts longer.
+
+Damage events mark world
 positions and can be selected to inspect their recorded evidence. The timeline
 aligns damage, suspected physics incidents and simulation speed.
 
@@ -275,13 +295,19 @@ or player responsibility.
 
 ## Incident playback and compact actions
 
-Loaded history derives local incident clips around damage, explosions, deaths,
-block removals, splits/merges and physics warnings. Nearby events (1 km) and shared
-entity/source/lineage IDs group together within the quiet tail. Clips have up to
-10 seconds of existing baseline pre-roll and extend 15 seconds after the last
-trigger. Explicit gaps are flagged. Clip grouping is contextual, not a claim of
-causation. Clips are views of the retained history: no additional high-frequency
-pre-trigger sampling, preserved archive or sharing endpoint is created.
+New recordings carry authoritative incident IDs, boundaries and context checkpoints.
+Damage, explosions, deaths, block additions/removals, splits/merges, physics warnings
+and primary/secondary tool or firing activity trigger them. Held character actions
+refresh activity once per second; ordinary motion does not. Active metadata is
+checkpointed every five seconds and on deadline/context changes, so mid-incident
+queries can recover the original start and current extent. Stopping capture records
+a terminal boundary. Explicit gaps and exhausted expansion budgets are flagged.
+
+Old recordings keep their original browser-derived clips (10 seconds of baseline
+pre-roll and a 15-second tail). Clip grouping is contextual, not a claim of causation.
+Clips reference retained history: no additional archive copy is created. Large
+battle context includes actor-local recorded terrain rather than requesting a solid
+10 km terrain volume; unavailable coverage remains explicit.
 
 Use 0.1×, 0.25× or 0.5× playback, step to the previous/next recorded observation,
 or use Space / arrow shortcuts. The six clickable tracks show damage/deaths/
@@ -345,8 +371,10 @@ HTTP access, lossless IDs and offline querying after Quasar restart. Geometry
 checks cover partial captures, destruction/rebuilding, integrity changes, page
 deduplication, corrupt hashes, retention dependency survival and real writer
 materialization. Context checks cover terrain checkpoints, malformed data, dependency
-validation and shared armor templates. Browser checks include texture-safe material
-cloning, uncapped model preparation, 500 m filtering, reverse terrain seeks and stale
+validation and shared armor templates. Incident checks cover timing, merging, caps,
+settings persistence and transport validation. Browser checks include texture-safe
+material cloning, uncapped model preparation, spatial growth and reverse filtering,
+reverse terrain seeks and stale
 checkpoint rejection. Streaming checks include same-size/same-timestamp replacements. Its synthetic
 size/timing sample measures scheduling and compression only, not live server cost.
 Browser tests cover replay seeking, destruction/rebuilding in both directions,
