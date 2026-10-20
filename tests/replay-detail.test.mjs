@@ -4,7 +4,9 @@ import * as THREE from 'three';
 import { registerHooks } from 'node:module';
 const hooks = registerHooks({resolve(specifier, context, next) { return next(specifier === 'zip.js' ? '@zip.js/zip.js' : specifier, context); }});
 const { replayViewRotation, diagnosticText, updateReplaySun } = await import('../src/CometWorks.EntityViewer/wwwroot/replay-scene.js');
+const { updateLighting } = await import('../src/CometWorks.EntityViewer/wwwroot/scene.js');
 hooks.deregister();
+import { state, els } from '../src/CometWorks.EntityViewer/wwwroot/state.js';
 import { buildReplay, replayJournal, describeEvent, pruneReplayContext, frameAt, terrainAt } from '../src/CometWorks.EntityViewer/wwwroot/replay-model.js';
 
 test('gravity view matches projected forward, including vertical and zero gravity', () => {
@@ -43,6 +45,36 @@ test('replay sunlight follows recorded time and the gravity frame, including rev
     apply(1500); assert.equal(sunlight.visible,true);
     apply(20000); assert.equal(sunlight.visible,false,'Expired history must not retain sunlight');
     sunlight.shadow.dispose();
+});
+
+test('raw historical sun intensity matches the main viewer brightness limit without changing the recording', t => {
+    const previousState = {...state}, previousLighting = els.showLighting;
+    t.after(() => { Object.assign(state,previousState); els.showLighting=previousLighting; });
+    const mainSun = new THREE.DirectionalLight();
+    Object.assign(state,{renderer:null,scene:null,sunLight:mainSun,ambientLight:new THREE.AmbientLight(),
+        gridLightGroup:null,gridLights:[],sunMarker:null,sunMarkerLine:null});
+    els.showLighting = {checked:true};
+    const sunlight = new THREE.DirectionalLight(), ambient = new THREE.AmbientLight();
+    t.after(() => {sunlight.shadow.dispose();mainSun.shadow.dispose();});
+    const origin = new THREE.Vector3(), rotation = new THREE.Quaternion();
+    const frame = {health:{sun:[0,1,0]},samples:[{entity:'grid',position:[0,0,0],size:[20,10,10]}]};
+    for (const intensity of [0.2,1,1.9,3,12,80,100,1.9]) {
+        // Main snapshots already cap positive game intensity in ToEnvironment;
+        // stored history deliberately preserves the original observation.
+        state.sunIntensity = Math.min(3,intensity);
+        updateLighting();
+        frame.health.sunIntensity = intensity;
+        updateReplaySun(sunlight,ambient,frame,origin,rotation,'grid',true);
+        assert.equal(sunlight.intensity,state.sunLight.intensity,`Brightness differs at recorded intensity ${intensity}`);
+        assert.equal(ambient.intensity,state.ambientLight.intensity);
+        assert.equal(frame.health.sunIntensity,intensity,'Display conversion must not rewrite recorded evidence');
+        if (intensity >= 3) assert.ok(Math.abs(sunlight.intensity-8.1) < 1e-10);
+    }
+    for (const intensity of [undefined,NaN,Infinity]) {
+        frame.health.sunIntensity = intensity;
+        updateReplaySun(sunlight,ambient,frame,origin,rotation,'grid',true);
+        assert.equal(sunlight.intensity,2.7);
+    }
 });
 
 test('journal records layout changes and cadence without asserting who caused destruction', () => {

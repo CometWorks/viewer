@@ -111,8 +111,12 @@ Content-addressed templates deduplicate the surfaces across blocks; per-block
 pattern offsets remain compact. Earlier recordings retain their topology fallback.
 Replay shares the main scene's theme color parsing, HSV paint conversion, model
 materials and voxel mesher. Recorded sun direction and intensity drive sunlight
-and time-of-day shadows as the timeline moves or seeks. The `Recorded sun and
-shadows` control is enabled by default; disabling it uses uniform ambient light.
+and time-of-day shadows as the timeline moves or seeks. Raw recorded intensity
+uses the main viewer's brightness cap before conversion to renderer intensity,
+so high-intensity game environments do not wash out history's models and terrain.
+The recorded values remain unchanged, and recorded zero intensity stays dark.
+The `Recorded sun and shadows` control is enabled by default; disabling it uses
+uniform ambient light.
 Missing sun observations also use ambient light and are identified in the lighting
 status. Integrity is a diagnostic rather than a permanent red paint overlay.
 
