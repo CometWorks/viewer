@@ -77,6 +77,7 @@ export function initScene() {
     state.controls = new OrbitControls(state.camera, state.renderer.domElement);
     state.controls.enableDamping = true;
     state.controls.dampingFactor = 0.08;
+    state.controls.addEventListener("change", requestRender);
 
     state.ambientLight = new THREE.AmbientLight(0xffffff, AMBIENT_WITH_LIGHTING);
     state.scene.add(state.ambientLight);
@@ -117,16 +118,26 @@ export function initScene() {
     resize();
 }
 
-export function animate(time) {
-    if (state.viewerDisposed) return;
+export function requestRender() {
+    if (state.viewerDisposed || !state.scene || !state.renderer || state.animationFrameHandle) return;
     state.animationFrameHandle = requestAnimationFrame(animate);
+}
+
+export function animate(time) {
+    state.animationFrameHandle = 0;
+    if (state.viewerDisposed) return;
     const now = time || performance.now();
     const delta = state.lastFrameTime ? Math.min(0.1, (now - state.lastFrameTime) / 1000) : 0;
     state.lastFrameTime = now;
-    if (state.cameraMode === "fly") updateFlyMovement(delta);
+    if (state.cameraMode === "fly") { if (updateFlyMovement(delta)) requestRender(); }
     else state.controls.update();
     state.renderer.render(state.scene, state.camera);
     updateFpsOverlay(now);
+    if (!state.animationFrameHandle) {
+        state.lastFrameTime = 0;
+        state.fpsFrameCount = 0; state.fpsLastUpdateTime = 0;
+        if (els.fpsOverlay && els.showFps?.checked) els.fpsOverlay.textContent = "Idle · rendering paused";
+    }
 }
 
 export function disposeViewer() {
@@ -181,6 +192,7 @@ function applySceneTheme() {
     if (state.clippingBox?.material) state.clippingBox.material.color.set(themeColor("--hint", 0x7dd3fc));
     if (state.sunMarker?.material) state.sunMarker.material.color.set(themeColor("--warning", 0xfacc15));
     if (state.sunMarkerLine?.material) state.sunMarkerLine.material.color.set(themeColor("--warning", 0xfacc15));
+    requestRender();
 }
 
 export function updateFpsOverlay(now = performance.now()) {
@@ -221,6 +233,7 @@ export function replaceFloorGrid(bounds, gridSize, alignment = null) {
 export function setClippingVisible(visible) {
     state.showClipping = !!visible;
     if (state.clippingBox) state.clippingBox.visible = state.showClipping;
+    requestRender();
 }
 
 function createFloorGrid(bounds, gridSize, alignment) {
@@ -477,6 +490,7 @@ export function updateSunLightPosition() {
 
 export function invalidateShadows() {
     if (state.renderer) state.renderer.shadowMap.needsUpdate = true;
+    requestRender();
 }
 
 export function disposeObjectTree(root) {
@@ -559,6 +573,7 @@ export function setCameraMode(mode) {
         state.controls.update();
     }
     updateCameraHint();
+    requestRender();
 }
 
 function updateCameraHint() {
@@ -581,6 +596,7 @@ function resize() {
     state.camera.aspect = width / height;
     state.camera.updateProjectionMatrix();
     state.renderer.setSize(width, height, false);
+    requestRender();
 }
 
 function createSunMarker() {
@@ -962,6 +978,7 @@ function updateLogisticsFocus(focus) {
         const factor = !focus ? 0.72 : focused ? 1 : 0.16;
         applyLogisticsOpacityFactor(object.material, factor);
     });
+    requestRender();
 }
 
 function updateDamagedFocus(focus) {
@@ -973,6 +990,7 @@ function updateDamagedFocus(focus) {
         const factor = !focus ? 0.72 : focused ? 1 : 0.16;
         applyDamagedOpacityFactor(object.material, factor);
     });
+    requestRender();
 }
 
 function damagedFocus(item) {
@@ -1058,6 +1076,7 @@ function syncFlyAnglesFromCamera() {
 function applyFlyCameraRotation() {
     state.camera.rotation.order = "YXZ";
     state.camera.rotation.set(state.flyPitch, state.flyYaw, 0, "YXZ");
+    requestRender();
 }
 
 function syncOrbitTargetFromCamera() {
@@ -1069,7 +1088,7 @@ function syncOrbitTargetFromCamera() {
 }
 
 function updateFlyMovement(delta) {
-    if (!delta || !state.flyKeys.size) return;
+    if (!state.flyKeys.size) return;
     const direction = new THREE.Vector3();
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
@@ -1082,6 +1101,7 @@ function updateFlyMovement(delta) {
     if (direction.lengthSq() > 0) {
         const fast = state.flyKeys.has("ShiftLeft") || state.flyKeys.has("ShiftRight");
         state.camera.position.addScaledVector(direction.normalize(), FLY_BASE_SPEED * (fast ? FLY_FAST_MULTIPLIER : 1) * delta);
+        return true;
     }
 }
 

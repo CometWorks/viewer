@@ -5,7 +5,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { els, state } from "./state.js";
 import { blockBox, boundsToBox3, createBoxMesh } from "./geometry.js";
 import { colorFromHash, matrixDtoToThree, num, vec3 } from "./math.js";
-import { ASTEROID_GRID_CUBE_SIZE, LARGE_GRID_CUBE_SIZE, collectObjectTreeTextures, disposeObjectTree, fitCameraToScene, floorGridLayout, invalidateShadows, updateLighting, updateSceneBounds, updateSunLightPosition } from "./scene.js";
+import { ASTEROID_GRID_CUBE_SIZE, LARGE_GRID_CUBE_SIZE, collectObjectTreeTextures, disposeObjectTree, fitCameraToScene, floorGridLayout, invalidateShadows, requestRender, updateLighting, updateSceneBounds, updateSunLightPosition } from "./scene.js";
 import { resolveModelAsset } from "./mwm-loader.js";
 import { armorFallbackModelCount, armorFallbackModelForDefinition } from "./armor-fallback-models.js";
 import { loadTexture, textureToCanvas } from "./texture-loader.js";
@@ -3076,6 +3076,7 @@ function loadLcdCanvasFonts(context) {
             renderLcdCanvas(context);
             context.texture.needsUpdate = true;
             context.material.needsUpdate = true;
+            requestRender();
         }).catch(error => log(`LCD font fallback retained for ${font}: ${error.message}`, true));
     }
 }

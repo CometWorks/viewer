@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { replayViewRotation, diagnosticText } from '../src/CometWorks.EntityViewer/wwwroot/replay-scene.js';
+import { registerHooks } from 'node:module';
+const hooks = registerHooks({resolve(specifier, context, next) { return next(specifier === 'zip.js' ? '@zip.js/zip.js' : specifier, context); }});
+const { replayViewRotation, diagnosticText, updateReplaySun } = await import('../src/CometWorks.EntityViewer/wwwroot/replay-scene.js');
+hooks.deregister();
 import { buildReplay, replayJournal, describeEvent, pruneReplayContext, frameAt, terrainAt } from '../src/CometWorks.EntityViewer/wwwroot/replay-model.js';
 
 test('gravity view matches projected forward, including vertical and zero gravity', () => {
@@ -13,6 +16,33 @@ test('gravity view matches projected forward, including vertical and zero gravit
     }
     const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), .5);
     assert.ok(rotation.clone().multiply(replayViewRotation({rotation:rotation.toArray()})).angleTo(new THREE.Quaternion()) < 1e-8);
+});
+
+test('replay sunlight follows recorded time and the gravity frame, including reverse seeks and missing sun data', () => {
+    const sunlight = new THREE.DirectionalLight(), ambient = new THREE.AmbientLight();
+    const origin = new THREE.Vector3(100,200,300), rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1),Math.PI/2);
+    const sample = {entity:'grid',position:[110,200,300],size:[20,10,10],gridSize:2.5};
+    const replay = buildReplay([{session:'s',records:[
+        {at:1000,kind:'health',sun:[0,1,0],sunIntensity:1},
+        {at:1000,kind:'sample',...sample},
+        {at:2000,kind:'health',sun:[0,0,1],sunIntensity:0},
+        {at:3000,kind:'health'},
+    ]}]);
+    const apply = (at, enabled=true) => updateReplaySun(sunlight,ambient,frameAt(replay,at),origin,rotation,'grid',enabled);
+    assert.match(apply(1500),/Recorded/);
+    const morning = sunlight.position.clone();
+    assert.ok(sunlight.target.position.distanceTo(new THREE.Vector3(0,10,0)) < 1e-8);
+    assert.ok(sunlight.position.clone().sub(sunlight.target.position).normalize().distanceTo(new THREE.Vector3(-1,0,0)) < 1e-8);
+    assert.equal(sunlight.visible,true); assert.ok(ambient.intensity < 1);
+    apply(2500); assert.equal(sunlight.intensity,0); assert.notDeepEqual(sunlight.position,morning);
+    apply(1500); assert.ok(sunlight.position.distanceTo(morning) < 1e-8);
+    const shadow = sunlight.shadow.camera;
+    assert.ok([shadow.left,shadow.right,shadow.top,shadow.bottom,shadow.near,shadow.far].every(Number.isFinite));
+    assert.match(apply(3500),/unavailable/); assert.equal(sunlight.visible,false); assert.equal(ambient.intensity,1);
+    apply(1500,false); assert.equal(sunlight.visible,false); assert.equal(ambient.intensity,1);
+    apply(1500); assert.equal(sunlight.visible,true);
+    apply(20000); assert.equal(sunlight.visible,false,'Expired history must not retain sunlight');
+    sunlight.shadow.dispose();
 });
 
 test('journal records layout changes and cadence without asserting who caused destruction', () => {

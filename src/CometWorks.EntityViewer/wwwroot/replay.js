@@ -4,7 +4,8 @@ import { animateReplayCharacter } from "./replay-character.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { buildReplay, pruneReplayContext, frameAt, speed, trailAt, blockCountAt, describeEvent, replayJournal, incidentClips, observationStep, eventLane, evidenceAt, actionLabels, eventMatches } from "./replay-model.js";
 import { state } from "./state.js";
-import { replayViewRotation, diagnosticText } from "./replay-scene.js";
+import { replayViewRotation, diagnosticText, updateReplaySun } from "./replay-scene.js";
+import { SUN_SHADOW_MAP_SIZE } from "./scene.js";
 import { startQuasarThemeSync, themeColor } from "./theme.js";
 
 import { fetchAssetStreamingStatus, prepareRemoteAssetSession, getRemoteAssetSessionKey } from "./asset-streaming.js";
@@ -50,14 +51,20 @@ function applyTheme() { scene.background = new THREE.Color(themeColor("--bg", 0x
 applyTheme();
 window.addEventListener("quasar-entity-viewer-theme-changed", applyTheme);
 world.add(...markers, trail);
-scene.add(new THREE.AmbientLight(0xffffff, 1));
+const ambient = new THREE.AmbientLight(0xffffff, 1);
+const sunlight = new THREE.DirectionalLight();
+sunlight.castShadow = true; sunlight.visible = false;
+sunlight.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
+scene.add(ambient, sunlight, sunlight.target);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 state.renderer = renderer; state.viewerDisposed = false;
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
 viewport.appendChild(renderer.domElement);
-renderer.domElement.addEventListener("webglcontextrestored", requestRender);
+renderer.domElement.addEventListener("webglcontextrestored", invalidateReplayShadows);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.addEventListener("change", requestRender);
@@ -76,9 +83,9 @@ function playerFor(key, sample) {
         const group = new THREE.Group(), model = gridRenderer.character(sample);
         if (model) group.add(model);
         else {
-            const head = new THREE.Mesh(headGeometry, bodyMaterial); head.position.y = 1.65; group.add(head);
+            const head = new THREE.Mesh(headGeometry, bodyMaterial); head.position.y = 1.65; head.castShadow = true; head.receiveShadow = true; group.add(head);
             for (const [x, y, sx, sy, sz] of [[0, 1.15, .5, .65, .3], [-.34, 1.05, .16, .7, .18], [.34, 1.05, .16, .7, .18], [-.14, .4, .2, .8, .23], [.14, .4, .2, .8, .23]]) {
-                const part = new THREE.Mesh(geometry, bodyMaterial); part.position.set(x, y, 0); part.scale.set(sx, sy, sz); group.add(part);
+                const part = new THREE.Mesh(geometry, bodyMaterial); part.position.set(x, y, 0); part.scale.set(sx, sy, sz); part.castShadow = true; part.receiveShadow = true; group.add(part);
             }
         }
         const label = document.createElement("span"); label.className = "replay-player-label"; el("playerLabels").append(label);
@@ -310,8 +317,9 @@ function draw() {
     const health = frame.health;
     el("quality").textContent = frame.gap ? "Missing or incomplete coverage" : `${frame.samples.length} entities · sim speed ${Number(health?.value || 0).toFixed(2)} · ${frame.samples.filter(s => s.high).length} in incident detail · ${el("observedOnly").checked ? "observations only" : "reconstructed motion"}`;
     const terrainQuality = terrainRenderer.draw(replay, at, frame.samples[0]?.session, origin, frame.samples.find(s => s.entity === replay.contextEntity)?.position || focused?.position);
+    el("lightingQuality").textContent = updateReplaySun(sunlight, ambient, frame, origin, world.quaternion, selected, el("replayLighting").checked);
     el("geometryQuality").textContent = `${drawnBlocks.toLocaleString()} recorded blocks · ${proxies.toLocaleString()} block proxies · ${missingLayouts} grids with bounds only · ${gridRenderer.status} · ${terrainQuality} · ${frame.samples.some(s => s.gravity) ? "recorded natural gravity" : "gravity not recorded"}`;
-    requestRender();
+    invalidateReplayShadows();
 }
 const laneNames = ["Damage", "Actions", "Grid changes", "Physics", "Sim speed", "Gaps"];
 const laneColors = ["#ff6b78", "#c6a0ff", "#68b7ff", "#ffb454", "#63e5a1", "#999"];
@@ -403,6 +411,7 @@ el("cameraMode").addEventListener("change", () => {
     draw();
 });
 el("observedOnly").addEventListener("change", draw);
+el("replayLighting").addEventListener("change", draw);
 el("stepBack").addEventListener("click", () => step(-1));
 el("stepForward").addEventListener("click", () => step(1));
 for (const [id, choose] of [["firstDamage", records => records.find(e => e.kind === "damage")], ["largestImpact", records => records.filter(e => e.kind === "damage").sort((a,b) => b.value - a.value)[0]], ["slowdown", records => records.filter(e => e.kind === "health").sort((a,b) => a.value - b.value)[0]]]) {
@@ -451,6 +460,10 @@ el("entity").addEventListener("change", () => { selected = el("entity").value; c
 el("eventFilter").addEventListener("change", events);
 function requestRender() {
     if (!state.viewerDisposed && renderFrame === null) renderFrame = requestAnimationFrame(render);
+}
+function invalidateReplayShadows() {
+    renderer.shadowMap.needsUpdate = true;
+    requestRender();
 }
 function render(time) {
     renderFrame = null;
@@ -513,6 +526,7 @@ window.addEventListener("pagehide", () => {
     for (const group of grids.values()) gridRenderer.release(group);
     for (const entry of players.values()) releasePlayer(entry);
     terrainRenderer.clear(); gridRenderer.dispose(); clearAssetFolderCaches(); assetMods.clear();
+    sunlight.shadow.dispose();
     geometry.dispose(); headGeometry.dispose(); bodyMaterial.dispose(); eventGeometry.dispose(); eventMaterial.dispose();
     damageGeometry.dispose(); damageMaterial.dispose(); trail.geometry.dispose(); trailMaterial.dispose();
     Object.values(materials).forEach(m => m.dispose()); renderer.dispose(); state.renderer = null;

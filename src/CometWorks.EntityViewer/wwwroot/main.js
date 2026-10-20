@@ -1,5 +1,5 @@
 import { cacheElements, els, state } from "./state.js";
-import { initScene, animate, disposeViewer } from "./scene.js";
+import { initScene, requestRender, disposeViewer } from "./scene.js";
 import { configureContextControl, configureVoxelControl, wireControls } from "./controls.js";
 import { fetchEntityScene, parseContextFlag, parseVoxelFlag } from "./quasar-api.js";
 import { clearAssetFolderCaches, getFileAccessSupport, getSavedContentFolderName, getSavedModsFolderName, pickContentFolder, pickModsFolder, restoreContentFolder, restoreModsFolder, warnIfUsingBackupFolderAccess } from "./content-folder.js";
@@ -43,7 +43,7 @@ async function start() {
             els.clearAssetCache.disabled = false;
         }
     });
-    animate();
+    requestRender();
 
     await refreshAssetStreamingStatus();
 
