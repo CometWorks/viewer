@@ -24,24 +24,36 @@ public sealed class ServerAssetResolver(
         if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
             return null;
 
-        var normalized = NormalizeLogicalPath(request.LogicalPath);
+        // Validate before removing recognized Content/Mods/Workshop prefixes.
+        var input = (request.LogicalPath ?? string.Empty).Replace('\\', '/');
+        if (!AssetPathBoundary.IsLogicalPath(input) ||
+            !string.IsNullOrWhiteSpace(request.RootId) && !AssetPathBoundary.IsLeaf(request.RootId.Trim()))
+            return null;
+        var normalized = NormalizeLogicalPath(input);
         if (string.IsNullOrWhiteSpace(normalized.Path))
             return null;
 
-        var rootId = string.IsNullOrWhiteSpace(request.RootId) ? normalized.ModName : request.RootId.Trim();
-        var sourceKind = request.SourceKind ?? string.Empty;
-        var shouldResolveMod = !string.IsNullOrWhiteSpace(rootId) ||
-                               !string.IsNullOrWhiteSpace(normalized.ModName) ||
-                               sourceKind.Equals("mod", StringComparison.OrdinalIgnoreCase);
-
-        if (shouldResolveMod)
+        try
         {
-            var modAsset = TryResolveModAsset(session, settings, rootId, normalized.ModName, normalized.Path);
-            if (modAsset is not null)
-                return await Fingerprint(modAsset, cancellationToken).ConfigureAwait(false);
-        }
+            var rootId = string.IsNullOrWhiteSpace(request.RootId) ? normalized.ModName : request.RootId.Trim();
+            var sourceKind = request.SourceKind ?? string.Empty;
+            var shouldResolveMod = !string.IsNullOrWhiteSpace(rootId) ||
+                                   !string.IsNullOrWhiteSpace(normalized.ModName) ||
+                                   sourceKind.Equals("mod", StringComparison.OrdinalIgnoreCase);
 
-        return await Fingerprint(TryResolveContentAsset(settings, normalized.Path), cancellationToken).ConfigureAwait(false);
+            if (shouldResolveMod)
+            {
+                var modAsset = TryResolveModAsset(session, settings, rootId, normalized.ModName, normalized.Path);
+                if (modAsset is not null)
+                    return await Fingerprint(modAsset, cancellationToken).ConfigureAwait(false);
+            }
+
+            return await Fingerprint(TryResolveContentAsset(settings, normalized.Path), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null; // A changed or unreadable source is an unavailable asset.
+        }
     }
 
     private static async Task<ResolvedServerAsset?> Fingerprint(ResolvedServerAsset? asset, CancellationToken token)
@@ -58,13 +70,13 @@ public sealed class ServerAssetResolver(
         EntityViewerStreamingSettings settings,
         string logicalPath)
     {
-        var contentRoot = ResolveContentRoot(settings);
+        var contentRoot = ResolveApprovedRoot(ResolveContentRoot(settings));
         if (string.IsNullOrWhiteSpace(contentRoot) || !Directory.Exists(contentRoot))
             return null;
 
         foreach (var candidate in CandidatePaths(logicalPath))
         {
-            var resolvedPath = TryResolveFileUnderDirectory(contentRoot, candidate);
+            var resolvedPath = TryResolveFileUnderDirectory(contentRoot, candidate, contentRoot);
             if (resolvedPath is null)
                 continue;
 
@@ -73,6 +85,7 @@ public sealed class ServerAssetResolver(
             {
                 LogicalPath = candidate,
                 RootKind = "content",
+                ApprovedRoot = contentRoot,
                 FilePath = resolvedPath,
                 Size = info.Length,
                 LastModifiedUtc = info.LastWriteTimeUtc,
@@ -90,7 +103,7 @@ public sealed class ServerAssetResolver(
         string modName,
         string logicalPath)
     {
-        var modsRoot = ResolveModsRoot(session, settings);
+        var modsRoot = ResolveApprovedRoot(ResolveModsRoot(session, settings));
         if (string.IsNullOrWhiteSpace(modsRoot))
             return null;
 
@@ -106,8 +119,8 @@ public sealed class ServerAssetResolver(
         {
             var resolved = modRoot.Kind switch
             {
-                "mod-directory" => TryResolveDirectoryModAsset(modRoot.Path, mod.RootId, candidate),
-                "mod-archive" => TryResolveArchiveAsset(modRoot.Path, mod.RootId, candidate, "mod-archive"),
+                "mod-directory" => TryResolveDirectoryModAsset(modRoot.Path, modsRoot, mod.RootId, candidate),
+                "mod-archive" => TryResolveArchiveAsset(modRoot.Path, modsRoot, mod.RootId, candidate, "mod-archive"),
                 _ => null,
             };
             if (resolved is not null)
@@ -117,9 +130,9 @@ public sealed class ServerAssetResolver(
         return null;
     }
 
-    private ResolvedServerAsset? TryResolveDirectoryModAsset(string modDirectory, string rootId, string logicalPath)
+    private ResolvedServerAsset? TryResolveDirectoryModAsset(string modDirectory, string approvedRoot, string rootId, string logicalPath)
     {
-        var file = TryResolveFileUnderDirectory(modDirectory, logicalPath);
+        var file = TryResolveFileUnderDirectory(modDirectory, logicalPath, approvedRoot);
         if (file is not null)
         {
             var info = new FileInfo(file);
@@ -128,6 +141,7 @@ public sealed class ServerAssetResolver(
                 LogicalPath = logicalPath,
                 RootId = rootId,
                 RootKind = "mod-directory",
+                ApprovedRoot = approvedRoot,
                 FilePath = file,
                 Size = info.Length,
                 LastModifiedUtc = info.LastWriteTimeUtc,
@@ -136,22 +150,26 @@ public sealed class ServerAssetResolver(
         }
 
         var legacyArchive = TryFindLegacyArchive(modDirectory);
-        return legacyArchive is null ? null : TryResolveArchiveAsset(legacyArchive, rootId, logicalPath, "mod-archive");
+        return legacyArchive is null ? null : TryResolveArchiveAsset(legacyArchive, approvedRoot, rootId, logicalPath, "mod-archive");
     }
 
-    private ResolvedServerAsset? TryResolveArchiveAsset(string archivePath, string rootId, string logicalPath, string rootKind)
+    private ResolvedServerAsset? TryResolveArchiveAsset(string archivePath, string approvedRoot, string rootId, string logicalPath, string rootKind)
     {
         try
         {
+            archivePath = AssetPathBoundary.TryResolveUnder(archivePath, approvedRoot)!;
+            if (archivePath is null)
+                return null;
             var info = new FileInfo(archivePath);
             var key = (archivePath, info.LastWriteTimeUtc, info.Length);
             var index = _archiveIndexes.GetOrCreate(key, cacheEntry =>
             {
-                using var archive = ZipFile.OpenRead(archivePath);
+                using var file = AssetPathBoundary.OpenRead(archivePath, approvedRoot);
+                using var archive = new ZipArchive(file, ZipArchiveMode.Read);
                 var entries = new Dictionary<string, ArchiveAsset>(StringComparer.Ordinal);
                 foreach (var candidate in archive.Entries)
                 {
-                    if (string.IsNullOrWhiteSpace(candidate.Name)) continue;
+                    if (!AssetPathBoundary.IsLogicalPath(candidate.FullName)) continue;
                     entries.TryAdd(ArchivePathKey(candidate.FullName),
                         new ArchiveAsset(candidate.FullName, candidate.Length, candidate.LastWriteTime.UtcDateTime));
                 }
@@ -169,6 +187,7 @@ public sealed class ServerAssetResolver(
                 LogicalPath = logicalPath,
                 RootId = rootId,
                 RootKind = rootKind,
+                ApprovedRoot = approvedRoot,
                 FilePath = archivePath,
                 ArchiveEntryName = entry!.Name,
                 Size = entry.Size,
@@ -197,14 +216,14 @@ public sealed class ServerAssetResolver(
         }
 
         var magnetarsRoot = Path.Combine(paths.QuasarDirectory, "Magnetars");
-        var agentDirectoryName = SafePathSegment(session.AgentId);
-        if (string.IsNullOrWhiteSpace(agentDirectoryName))
+        var agentDirectoryName = session.AgentId;
+        if (!AssetPathBoundary.IsLeaf(agentDirectoryName))
             return string.Empty;
-
         var candidate = Path.Combine(magnetarsRoot, agentDirectoryName, "DedicatedServer", "Mods");
         var fullCandidate = Path.GetFullPath(candidate);
-        return Directory.Exists(fullCandidate) && IsPathUnder(fullCandidate, magnetarsRoot)
-            ? fullCandidate
+        var approved = ResolveApprovedRoot(magnetarsRoot);
+        return Directory.Exists(fullCandidate) && !string.IsNullOrEmpty(approved)
+            ? AssetPathBoundary.TryResolveUnder(fullCandidate, approved) ?? string.Empty
             : string.Empty;
     }
 
@@ -235,16 +254,11 @@ public sealed class ServerAssetResolver(
     {
         foreach (var root in EnumerateModSearchRoots(modsRoot))
         {
-            foreach (var name in ModCandidateNames(mod))
+            if (AssetPathBoundary.TryResolveUnder(root, modsRoot) is null && root != modsRoot)
+                continue;
+            foreach (var name in ModCandidateNames(mod).Where(AssetPathBoundary.IsLeaf))
             {
-                var match = TryFindTopLevelChild(root, name);
-                if (match is not null)
-                    return match;
-
-                if (!ArchiveStem(name).Equals(name, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                match = TryFindTopLevelChild(root, ArchiveStem(name));
+                var match = TryFindTopLevelChild(root, name, modsRoot);
                 if (match is not null)
                     return match;
             }
@@ -274,17 +288,19 @@ public sealed class ServerAssetResolver(
             yield return nested;
     }
 
-    private static ModRoot? TryFindTopLevelChild(string root, string name)
+    private static ModRoot? TryFindTopLevelChild(string root, string name, string approvedRoot)
     {
-        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(name) || !Directory.Exists(root))
+        if (string.IsNullOrWhiteSpace(root) || !AssetPathBoundary.IsLeaf(name) || !Directory.Exists(root))
             return null;
 
         foreach (var candidateName in CandidateModRootNames(name))
         {
-            var exact = Path.Combine(root, candidateName);
+            var exact = AssetPathBoundary.TryResolveUnder(Path.Combine(root, candidateName), approvedRoot);
+            if (exact is null)
+                continue;
             if (Directory.Exists(exact))
                 return new ModRoot("mod-directory", exact);
-            if (File.Exists(exact) && IsModArchive(exact))
+            if (File.Exists(exact) && IsModArchive(candidateName))
                 return new ModRoot("mod-archive", exact);
         }
 
@@ -298,10 +314,13 @@ public sealed class ServerAssetResolver(
                     if (!fileName.Equals(candidateName, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    if (Directory.Exists(entry))
-                        return new ModRoot("mod-directory", entry);
-                    if (File.Exists(entry) && IsModArchive(entry))
-                        return new ModRoot("mod-archive", entry);
+                    var resolved = AssetPathBoundary.TryResolveUnder(entry, approvedRoot);
+                    if (resolved is null)
+                        continue;
+                    if (Directory.Exists(resolved))
+                        return new ModRoot("mod-directory", resolved);
+                    if (File.Exists(resolved) && IsModArchive(entry))
+                        return new ModRoot("mod-archive", resolved);
                 }
             }
         }
@@ -338,10 +357,12 @@ public sealed class ServerAssetResolver(
             yield return mod.RootId;
     }
 
-    private static string? TryResolveFileUnderDirectory(string root, string relativePath)
+    private static string? TryResolveFileUnderDirectory(string root, string relativePath, string approvedRoot)
     {
+        if (!AssetPathBoundary.IsLogicalPath(relativePath))
+            return null;
         var rootFullPath = Path.GetFullPath(root);
-        var parts = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var current = rootFullPath;
 
         for (var i = 0; i < parts.Length; i++)
@@ -355,14 +376,16 @@ public sealed class ServerAssetResolver(
                     return null;
 
                 var full = Path.GetFullPath(filePath);
-                return IsPathUnder(full, rootFullPath) ? full : null;
+                return AssetPathBoundary.TryResolveUnder(full, approvedRoot);
             }
 
             var directory = Directory.Exists(exact) ? exact : FindChild(current, parts[i], wantDirectory: true);
             if (directory is null)
                 return null;
 
-            current = directory;
+            current = AssetPathBoundary.TryResolveUnder(directory, approvedRoot)!;
+            if (current is null)
+                return null;
         }
 
         return null;
@@ -390,13 +413,15 @@ public sealed class ServerAssetResolver(
         return null;
     }
 
-    private static bool IsPathUnder(string path, string root)
+    private static string ResolveApprovedRoot(string root)
     {
-        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        var normalizedPath = Path.GetFullPath(path);
-        return normalizedPath.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase) ||
-               normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-               normalizedPath.StartsWith(normalizedRoot + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(root))
+            return string.Empty;
+        try { return AssetPathBoundary.ResolveExisting(root); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return string.Empty;
+        }
     }
 
     private static IEnumerable<string> CandidatePaths(string logicalPath)
@@ -414,20 +439,16 @@ public sealed class ServerAssetResolver(
 
     private static NormalizedPath NormalizeLogicalPath(string path)
     {
-        var value = (path ?? string.Empty).Trim().Replace('\\', '/');
-        while (value.StartsWith("./", StringComparison.Ordinal))
-            value = value[2..];
-
-        value = value.Replace("//", "/", StringComparison.Ordinal);
-        if (value.StartsWith("Content/", StringComparison.OrdinalIgnoreCase))
-            value = value["Content/".Length..];
-
+        var value = (path ?? string.Empty).Replace('\\', '/');
         var workshopMatch = System.Text.RegularExpressions.Regex.Match(
             value,
             @"(?:^|/)content/244850/([^/]+)/(.+)$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (workshopMatch.Success)
             return new NormalizedPath(StripModArchivePrefix(workshopMatch.Groups[2].Value), workshopMatch.Groups[1].Value);
+
+        if (value.StartsWith("Content/", StringComparison.OrdinalIgnoreCase))
+            value = value["Content/".Length..];
 
         if (value.StartsWith("Mods/", StringComparison.OrdinalIgnoreCase))
         {
@@ -442,7 +463,7 @@ public sealed class ServerAssetResolver(
 
     private static string StripModArchivePrefix(string path)
     {
-        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
         if (parts.Count > 1 && IsModArchive(parts[0]))
             parts.RemoveAt(0);
         return string.Join('/', parts);
@@ -451,19 +472,7 @@ public sealed class ServerAssetResolver(
     private static string NormalizeModAlias(string value)
     {
         var alias = (value ?? string.Empty).Trim().Replace('\\', '/');
-        var slash = alias.IndexOf('/');
-        if (slash >= 0)
-            alias = alias[..slash];
-        return alias.ToLowerInvariant();
-    }
-
-    private static string SafePathSegment(string value)
-    {
-        var normalized = (value ?? string.Empty).Trim().Replace('\\', '/');
-        if (string.IsNullOrWhiteSpace(normalized))
-            return string.Empty;
-
-        return normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? string.Empty;
+        return AssetPathBoundary.IsLeaf(alias) ? alias.ToLowerInvariant() : string.Empty;
     }
 
     private static string ArchiveStem(string path)
@@ -493,7 +502,7 @@ public sealed class ServerAssetResolver(
     }
 
     private static string ArchivePathKey(string path) =>
-        (path ?? string.Empty).Replace('\\', '/').TrimStart('.', '/').Replace("//", "/", StringComparison.Ordinal).ToLowerInvariant();
+        (path ?? string.Empty).Replace('\\', '/').ToLowerInvariant();
 
     private static string DetectSingleTopLevel(ZipArchive archive)
     {
@@ -501,6 +510,8 @@ public sealed class ServerAssetResolver(
         var hasAssetDirectory = false;
         foreach (var entry in archive.Entries)
         {
+            if (!AssetPathBoundary.IsLogicalPath(entry.FullName.TrimEnd('/')))
+                continue;
             var parts = ArchivePathKey(entry.FullName).Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length == 0)
                 continue;

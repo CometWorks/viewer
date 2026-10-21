@@ -56,6 +56,10 @@ manifest also declares the `cometworks.entityviewer` companion plugin id. The
 adapter opens a fullscreen native browser dialog that serves the viewer from
 `/_quasar/plugins/cometworks.entityviewer/`.
 
+The DIS-0042 Viewer follow-up needs both Quasar's shared browser trusted-principal
+update and this plugin's asset path update. See [asset boundaries and rollout](Docs/EntityViewer.md#asset-boundary).
+The original urgent agent/Host fix remains independent.
+
 ## Preview Workflow
 
 Build or run the standalone preview host while developing viewer plugin UI:

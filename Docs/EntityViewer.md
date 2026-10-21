@@ -32,6 +32,51 @@ The scene endpoint returns metadata, not model or texture bytes. Opt-in server
 asset streaming uses separate plugin-owned endpoints after the server owner
 accepts consent and configures the asset roots.
 
+Scene and asset APIs require Quasar's `CanView` policy. Replay/history, streaming
+settings and installer management require `CanManageSecurity`. Per-user random
+session and file capabilities expire; final downloads still require authorization,
+current streaming consent and the owning user/session. The companion has no
+separate listener; it uses Quasar's authenticated agent transport.
+
+The DIS-0042 follow-up requires **both** Quasar's shared trusted-principal update
+and this Viewer Quasar plugin update. Quasar validates intended original/effective
+destinations and same-origin browser context before granting automatic network
+roles. Normal signed-in users, service principals and same-origin Viewer iframe
+requests keep their existing behavior. Configure the intended public BaseUrl and
+reverse proxy backend Host in Quasar. See the
+[Quasar rollout order](https://github.com/CometWorks/quasar/blob/dis-0042-viewer-guards/Docs/SecurityUpgradeDIS0042.md#viewer-follow-up-rollout).
+The original urgent [agent/Host PR242](https://github.com/CometWorks/quasar/pull/242)
+remains independent and should not wait for this follow-up. Update this adapter
+and its static assets together, restart the worker through the usual UI plugin
+flow and reload Viewer. This change needs no new companion protocol.
+
+Asset names must be relative paths with valid portable filename components.
+Rooted paths, dot/parent components, repeated separators, trailing dots/spaces,
+Windows device names and invalid/control characters are rejected before any
+Content/Mods/Workshop prefix normalization. Mod aliases and managed agent IDs
+must be single leaf names. Ordinary case-insensitive SE asset-name lookup,
+extension inference, relative Content/Mods/Workshop prefixes, directory mods,
+`.sbm` archives and legacy archives remain supported. Archive entries with invalid
+components are ignored, rather than normalized into valid asset names.
+
+Containment follows actual filesystem link/reparse ancestry and the OS's path
+casing rules. Configured Content and Mods root symlinks are resolved deliberately
+and their physical targets become the approved roots. Links within those roots
+remain usable; links to files, directories or archives outside them are rejected.
+Automatic per-agent Mods fallback must also stay inside the installation's
+Magnetars root. Cached asset capabilities retain their approved physical root
+snapshot and final opens recheck ancestry, so replacing a cached path with a
+stable outside link cannot serve that target. Disappeared, unreadable or invalid
+sources become unavailable assets. Existing capabilities retain their approved
+root snapshot until expiry; disabling streaming still rejects them immediately.
+
+Managed path validation and FileStream open cannot atomically pin every ancestor
+against a concurrent local writer. Protect asset roots and their ancestors from
+untrusted filesystem writes. These changes do not claim race-proof local-writer
+containment; native atomic-open evaluation is tracked in
+[ticket 1367](https://tasks.cometworks.se/tasks/1367). Windows reparse/junction
+acceptance and installed browser/proxy behavior still need human verification.
+
 ### Server asset streaming
 
 Use the **Server asset streaming** button in the viewer dialog title bar to
@@ -83,6 +128,21 @@ lookups check expiry directly without scanning all tokens for every asset.
 Disabling streaming also rejects downloads using previously issued tokens.
 
 ### Streaming regression checks
+
+The path correctness fixture runs entirely offline with synthetic temporary files,
+directories, archives and symlinks. It starts no web host, listener, Steam or game:
+
+```bash
+dotnet build tests/AssetBoundaryChecks/AssetBoundaryChecks.csproj -m:2 \
+  -p:QuasarPluginAbstractionsProject=/path/to/Quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj
+dotnet tests/AssetBoundaryChecks/bin/Debug/net10.0/AssetBoundaryChecks.dll
+```
+
+Windows needs symlink creation permission (for example Developer Mode); inability
+to create links fails the fixture explicitly. The Linux-only case-distinct sibling
+check is skipped on Windows. Run Windows checks separately before claiming that
+platform verified. The listener-based StreamingChecks below are a separate
+integration check and were not run for this source-only follow-up.
 
 Run `npm test` (Node 22.15 or newer) and `npm run check` for browser
 session/cache behavior, model batching/LOD/cancellation, and module syntax.

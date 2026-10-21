@@ -367,11 +367,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                         entityTag: new EntityTagHeaderValue($"\"{asset.CacheKeyForUser(token.UserId)}\""),
                         enableRangeProcessing: !asset.IsArchiveEntry);
                 }
-                catch (FileNotFoundException)
-                {
-                    return Results.NotFound();
-                }
-                catch (DirectoryNotFoundException)
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 {
                     return Results.NotFound();
                 }

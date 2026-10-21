@@ -14,6 +14,8 @@ public sealed class ResolvedServerAsset
 
     public string RootKind { get; init; } = string.Empty;
 
+    internal string ApprovedRoot { get; init; } = string.Empty;
+
     public string FilePath { get; init; } = string.Empty;
 
     public string ArchiveEntryName { get; init; } = string.Empty;
@@ -38,8 +40,7 @@ public sealed class ResolvedServerAsset
 
     public Stream OpenRead()
     {
-        var file = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-            bufferSize: 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var file = AssetPathBoundary.OpenRead(FilePath, ApprovedRoot);
         if (!IsArchiveEntry)
             return file;
 
