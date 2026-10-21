@@ -53,8 +53,12 @@ flow and reload Viewer. This change needs no new companion protocol.
 Asset names must be relative paths with valid portable filename components.
 Rooted paths, dot/parent components, repeated separators, trailing dots/spaces,
 Windows device names and invalid/control characters are rejected before any
-Content/Mods/Workshop prefix normalization. Mod aliases and managed agent IDs
-must be single leaf names. Ordinary case-insensitive SE asset-name lookup,
+Content/Mods/Workshop prefix normalization. Filesystem mod aliases and managed
+agent IDs must be single leaf names. Session RootId values such as replay's
+`mods-direct:<name>` are opaque protocol identifiers: exact matching selects the
+session mod, then only its Name, FriendlyName or PublishedFileId supplies
+filesystem candidates. RootId itself is never combined with a filesystem root.
+Ordinary case-insensitive SE asset-name lookup,
 extension inference, relative Content/Mods/Workshop prefixes, directory mods,
 `.sbm` archives and legacy archives remain supported. Archive entries with invalid
 components are ignored, rather than normalized into valid asset names.

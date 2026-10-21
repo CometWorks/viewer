@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.Json;
 using CometWorks.EntityViewer.Quasar.Streaming;
 using Microsoft.Extensions.Logging.Abstractions;
 using Quasar.Plugin.Abstractions;
@@ -63,6 +64,55 @@ try
     foreach (var invalid in new[] { "../OtherContent", "LocalMod/Models", "LocalMod\\Models", ".", "..", "/LocalMod" })
         Check(await Resolve("Models/Block.mwm", invalid) is null, "non-leaf root alias");
     Check(await Resolve("Models/Block.mwm", "bad") is { RootKind: "content" }, "invalid mod metadata cannot select outside root; base fallback preserved");
+
+    // replay.js sends these camelCase session entries; asset-streaming.js keeps RootId intact.
+    var webJson = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    var replayRequest = JsonSerializer.Deserialize<AssetSessionRequest>("""
+        {"agentId":"server","entityId":"recorded-grid","mods":[
+          {"rootId":"mods-direct:LocalMod","name":"LocalMod","publishedFileId":0},
+          {"rootId":"mods-direct:123.sbm","name":"123.sbm","publishedFileId":123}
+        ]}
+        """, webJson)!;
+    var replaySession = new ViewerAssetSessionStore().CreateSession("replay-user", replayRequest);
+    var replayModelRequest = JsonSerializer.Deserialize<AssetResolveRequest>("""
+        {"logicalPath":"Models/Block.mwm","rootId":"mods-direct:LocalMod","sourceKind":"mod"}
+        """, webJson)!;
+    var replayModel = await resolver.ResolveAsync(replaySession, replayModelRequest, default);
+    Check(replayModel is { RootKind: "mod-directory", RootId: "mods-direct:LocalMod" } &&
+        await Contents(replayModel) == "mod", "opaque replay ID selects the mod model instead of base fallback");
+    Write(Path.Combine(mods, "LocalMod", "Textures", "Replay.dds"), "texture");
+    var replayTexture = await resolver.ResolveAsync(replaySession,
+        new() { LogicalPath = "textures/replay.dds", RootId = "mods-direct:LocalMod", SourceKind = "mod" }, default);
+    Check(await Contents(replayTexture) == "texture", "opaque replay ID supports mod textures and case-insensitive lookup");
+    var replayArchive = await resolver.ResolveAsync(replaySession,
+        new() { LogicalPath = "Models/Archive.mwm", RootId = "mods-direct:123.sbm", SourceKind = "mod" }, default);
+    Check(replayArchive is { RootKind: "mod-archive", RootId: "mods-direct:123.sbm" } &&
+        await Contents(replayArchive) == "archive", "numeric replay mod shape supports Workshop archives");
+    Check(await resolver.ResolveAsync(replaySession,
+        new() { LogicalPath = "Models/../Models/Block.mwm", RootId = "mods-direct:LocalMod" }, default) is null,
+        "matched opaque ID does not relax logical path validation");
+    Check(await resolver.ResolveAsync(replaySession,
+        new() { LogicalPath = "Models/Block.mwm", RootId = "mods-direct:UnknownMod" }, default) is null,
+        "unknown opaque IDs cannot select a filesystem mod");
+    Write(Path.Combine(outside, "Models", "OnlyOutside.mwm"), "other");
+    var invalidReplaySession = new ViewerAssetSessionStore().CreateSession("replay-user", new()
+    {
+        Mods = [new() { RootId = "mods-direct:../OtherContent", Name = "../OtherContent" },
+            new() { RootId = "mods-direct:LocalMod/Models", Name = "LocalMod/Models" },
+            new() { RootId = "../OtherContent" }, new() { RootId = "LocalMod" }],
+    });
+    Check(await resolver.ResolveAsync(invalidReplaySession,
+        new() { LogicalPath = "Models/OnlyOutside.mwm", RootId = "mods-direct:../OtherContent" }, default) is null,
+        "matched opaque ID cannot admit a parent path as a filesystem candidate");
+    Check(await resolver.ResolveAsync(invalidReplaySession,
+        new() { LogicalPath = "Block.mwm", RootId = "mods-direct:LocalMod/Models" }, default) is null,
+        "matched opaque ID cannot admit a multi-component filesystem name");
+    Check(await resolver.ResolveAsync(invalidReplaySession,
+        new() { LogicalPath = "Models/OnlyOutside.mwm", RootId = "../OtherContent" }, default) is null,
+        "opaque protocol IDs are never combined with the filesystem root");
+    Check(await resolver.ResolveAsync(invalidReplaySession,
+        new() { LogicalPath = "Models/Block.mwm", RootId = "LocalMod" }, default) is { RootKind: "content" },
+        "even a leaf protocol ID is not a filesystem candidate without mod metadata");
 
     // Authorization ownership/expiry is independent of path validation.
     var tokens = new ViewerAssetSessionStore();
@@ -170,6 +220,13 @@ void Throws(Func<Stream> open, string message)
     try { using var stream = open(); }
     catch (FileNotFoundException) { checks++; return; }
     throw new Exception(message);
+}
+static async Task<string?> Contents(ResolvedServerAsset? asset)
+{
+    if (asset is null) return null;
+    using var stream = asset.OpenRead();
+    using var reader = new StreamReader(stream);
+    return await reader.ReadToEndAsync();
 }
 static void Write(string path, string text)
 {

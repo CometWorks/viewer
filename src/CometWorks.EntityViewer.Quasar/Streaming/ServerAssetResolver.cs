@@ -26,8 +26,7 @@ public sealed class ServerAssetResolver(
 
         // Validate before removing recognized Content/Mods/Workshop prefixes.
         var input = (request.LogicalPath ?? string.Empty).Replace('\\', '/');
-        if (!AssetPathBoundary.IsLogicalPath(input) ||
-            !string.IsNullOrWhiteSpace(request.RootId) && !AssetPathBoundary.IsLeaf(request.RootId.Trim()))
+        if (!AssetPathBoundary.IsLogicalPath(input))
             return null;
         var normalized = NormalizeLogicalPath(input);
         if (string.IsNullOrWhiteSpace(normalized.Path))
@@ -35,15 +34,15 @@ public sealed class ServerAssetResolver(
 
         try
         {
-            var rootId = string.IsNullOrWhiteSpace(request.RootId) ? normalized.ModName : request.RootId.Trim();
-            var sourceKind = request.SourceKind ?? string.Empty;
-            var shouldResolveMod = !string.IsNullOrWhiteSpace(rootId) ||
-                                   !string.IsNullOrWhiteSpace(normalized.ModName) ||
-                                   sourceKind.Equals("mod", StringComparison.OrdinalIgnoreCase);
+            var rootId = string.IsNullOrWhiteSpace(request.RootId) ? normalized.ModName : request.RootId;
+            var mod = FindSessionMod(session, rootId, normalized.ModName);
+            // Unknown path-like aliases stay invalid; a matched protocol ID is opaque.
+            if (mod is null && !string.IsNullOrWhiteSpace(rootId) && !AssetPathBoundary.IsLeaf(rootId))
+                return null;
 
-            if (shouldResolveMod)
+            if (mod is not null)
             {
-                var modAsset = TryResolveModAsset(session, settings, rootId, normalized.ModName, normalized.Path);
+                var modAsset = TryResolveModAsset(session, settings, mod, normalized.Path);
                 if (modAsset is not null)
                     return await Fingerprint(modAsset, cancellationToken).ConfigureAwait(false);
             }
@@ -99,16 +98,11 @@ public sealed class ServerAssetResolver(
     private ResolvedServerAsset? TryResolveModAsset(
         ViewerAssetSession session,
         EntityViewerStreamingSettings settings,
-        string rootId,
-        string modName,
+        AssetSessionModDto mod,
         string logicalPath)
     {
         var modsRoot = ResolveApprovedRoot(ResolveModsRoot(session, settings));
         if (string.IsNullOrWhiteSpace(modsRoot))
-            return null;
-
-        var mod = FindSessionMod(session, rootId, modName);
-        if (mod is null)
             return null;
 
         var modRoot = TryFindModRoot(modsRoot, mod);
@@ -229,23 +223,30 @@ public sealed class ServerAssetResolver(
 
     private static AssetSessionModDto? FindSessionMod(ViewerAssetSession session, string rootId, string modName)
     {
+        // RootId is a protocol identifier (for example mods-direct:LocalMod), not a path.
+        if (!string.IsNullOrWhiteSpace(rootId))
+        {
+            var identified = session.Mods.FirstOrDefault(mod => string.Equals(mod.RootId, rootId, StringComparison.Ordinal));
+            if (identified is not null)
+                return identified;
+        }
+
         foreach (var mod in session.Mods)
         {
-            if (MatchesMod(mod, rootId) || MatchesMod(mod, modName))
+            if (MatchesModAlias(mod, rootId) || MatchesModAlias(mod, modName))
                 return mod;
         }
 
         return null;
     }
 
-    private static bool MatchesMod(AssetSessionModDto mod, string value)
+    private static bool MatchesModAlias(AssetSessionModDto mod, string value)
     {
         var normalized = NormalizeModAlias(value);
         if (string.IsNullOrWhiteSpace(normalized))
             return false;
 
-        return NormalizeModAlias(mod.RootId) == normalized ||
-               NormalizeModAlias(mod.Name) == normalized ||
+        return NormalizeModAlias(mod.Name) == normalized ||
                NormalizeModAlias(mod.FriendlyName) == normalized ||
                (mod.PublishedFileId != 0 && mod.PublishedFileId.ToString() == normalized);
     }
@@ -353,8 +354,6 @@ public sealed class ServerAssetResolver(
             yield return mod.Name;
         if (!string.IsNullOrWhiteSpace(mod.FriendlyName))
             yield return mod.FriendlyName;
-        if (!string.IsNullOrWhiteSpace(mod.RootId))
-            yield return mod.RootId;
     }
 
     private static string? TryResolveFileUnderDirectory(string root, string relativePath, string approvedRoot)
