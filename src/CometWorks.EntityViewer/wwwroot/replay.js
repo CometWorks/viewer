@@ -114,7 +114,13 @@ async function request(path, signal, options = {}) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || `History request failed (${response.status}).`);
     }
-    return response.json();
+    const body = await response.json();
+    const sessionId = response.headers.get("X-Entity-Viewer-Asset-Session") || "";
+    if (sessionId && body && typeof body === "object") Object.defineProperty(body, "assetSession", { value: {
+        sessionId,
+        expiresAtUtc: response.headers.get("X-Entity-Viewer-Asset-Session-Expires") || "",
+    }, enumerable: false });
+    return body;
 }
 let incidentIndex = new Map();
 function recordingStatus(status) {
@@ -186,7 +192,7 @@ async function load(range = null) {
         const retainedMods = [...assetMods.values()];
         await setSceneModRoots(retainedMods);
         if (current !== generation) return;
-        try { await prepareRemoteAssetSession({ mods: retainedMods }, { agentId: el("server").selectedOptions[0]?.dataset.agentId || "", entityId: selected }); } catch { /* Local assets and explicit proxies remain available. */ }
+        try { await prepareRemoteAssetSession(batches); } catch { /* Local assets and explicit proxies remain available. */ }
         if (current !== generation) return;
         const remoteActive = !!getRemoteAssetSessionKey();
         if (remoteActive !== remoteAssetsActive) {

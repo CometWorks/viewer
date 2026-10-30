@@ -67,13 +67,13 @@ try
 
     // replay.js sends these camelCase session entries; asset-streaming.js keeps RootId intact.
     var webJson = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-    var replayRequest = JsonSerializer.Deserialize<AssetSessionRequest>("""
-        {"agentId":"server","entityId":"recorded-grid","mods":[
+    var replayMods = JsonSerializer.Deserialize<List<AssetSessionModDto>>("""
+        [
           {"rootId":"mods-direct:LocalMod","name":"LocalMod","publishedFileId":0},
           {"rootId":"mods-direct:123.sbm","name":"123.sbm","publishedFileId":123}
-        ]}
+        ]
         """, webJson)!;
-    var replaySession = new ViewerAssetSessionStore().CreateSession("replay-user", replayRequest);
+    var replaySession = new ViewerAssetSessionStore().CreateSession("replay-user", "server", "recorded-grid", replayMods);
     var replayModelRequest = JsonSerializer.Deserialize<AssetResolveRequest>("""
         {"logicalPath":"Models/Block.mwm","rootId":"mods-direct:LocalMod","sourceKind":"mod"}
         """, webJson)!;
@@ -95,12 +95,10 @@ try
         new() { LogicalPath = "Models/Block.mwm", RootId = "mods-direct:UnknownMod" }, default) is null,
         "unknown opaque IDs cannot select a filesystem mod");
     Write(Path.Combine(outside, "Models", "OnlyOutside.mwm"), "other");
-    var invalidReplaySession = new ViewerAssetSessionStore().CreateSession("replay-user", new()
-    {
-        Mods = [new() { RootId = "mods-direct:../OtherContent", Name = "../OtherContent" },
+    var invalidReplaySession = new ViewerAssetSessionStore().CreateSession("replay-user", "server", "recorded-grid",
+        [new() { RootId = "mods-direct:../OtherContent", Name = "../OtherContent" },
             new() { RootId = "mods-direct:LocalMod/Models", Name = "LocalMod/Models" },
-            new() { RootId = "../OtherContent" }, new() { RootId = "LocalMod" }],
-    });
+            new() { RootId = "../OtherContent" }, new() { RootId = "LocalMod" }]);
     Check(await resolver.ResolveAsync(invalidReplaySession,
         new() { LogicalPath = "Models/OnlyOutside.mwm", RootId = "mods-direct:../OtherContent" }, default) is null,
         "matched opaque ID cannot admit a parent path as a filesystem candidate");
@@ -116,9 +114,9 @@ try
 
     // Authorization ownership/expiry is independent of path validation.
     var tokens = new ViewerAssetSessionStore();
-    var owned = tokens.CreateSession("alice", new());
+    var owned = tokens.CreateSession("alice", "server", "1", []);
     var baseAsset = (await Resolve("Models/Block.mwm"))!;
-    var token = tokens.CreateAssetToken("alice", owned.Id, baseAsset);
+    var token = tokens.CreateAssetToken("alice", owned.Id, baseAsset)!;
     Check(tokens.TryGetSession(owned.Id, "bob") is null && tokens.TryGetAssetToken(token.Id, "bob") is null, "user ownership");
     settings.StreamingEnabled = false;
     Check(await Resolve("Models/Block.mwm") is null, "streaming consent gate");

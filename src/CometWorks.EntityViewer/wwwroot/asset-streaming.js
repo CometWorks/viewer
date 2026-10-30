@@ -1,5 +1,3 @@
-import { getViewerParams } from "./quasar-api.js";
-import { log } from "./logging.js";
 import { loadStreamedAsset } from "./asset-cache.js";
 
 const STATUS_PATH = "api/assets/status";
@@ -19,7 +17,7 @@ export async function fetchAssetStreamingStatus() {
     return currentStatus;
 }
 
-export async function prepareRemoteAssetSession(scene, target = null) {
+export async function prepareRemoteAssetSession(scene) {
     const generation = ++sessionGeneration;
     const previousId = remoteAssetSession?.sessionId || "";
     remoteAssetSession = null;
@@ -27,35 +25,12 @@ export async function prepareRemoteAssetSession(scene, target = null) {
         return { active: false, changed: !!previousId };
     }
 
-    const { agentId, entityId } = target || getViewerParams();
-    const sessionUrl = pluginApiUrl(SESSIONS_PATH);
-    log(`Creating server asset streaming session: POST ${sessionUrl.pathname}.`);
-    const response = await fetch(sessionUrl, {
-        method: "POST",
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        credentials: "same-origin",
-        body: JSON.stringify({
-            agentId,
-            entityId,
-            mods: Array.isArray(scene?.mods) ? scene.mods : [],
-        }),
-    });
-    log(`Server asset streaming session response: HTTP ${response.status}.`);
-    if (!response.ok) throw await createStatusError(response, "Asset streaming session request failed");
-
-    const body = await response.json();
     if (generation !== sessionGeneration) return { active: false, changed: false };
-    const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
-    if (!sessionId) {
-        const fields = body && typeof body === "object" ? Object.keys(body).join(", ") : "none";
-        throw new Error(`Asset streaming session response has no valid session ID (fields: ${fields}).`);
-    }
+    const sessionId = typeof scene?.assetSession?.sessionId === "string" ? scene.assetSession.sessionId.trim() : "";
+    if (!sessionId) return { active: false, changed: !!previousId };
     remoteAssetSession = {
         sessionId,
-        expiresAtUtc: body.expiresAtUtc || "",
+        expiresAtUtc: scene.assetSession.expiresAtUtc || "",
     };
     return { active: true, changed: previousId !== remoteAssetSession.sessionId };
 }

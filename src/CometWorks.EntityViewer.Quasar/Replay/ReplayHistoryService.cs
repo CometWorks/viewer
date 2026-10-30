@@ -34,6 +34,8 @@ public sealed class ReplayHistoryService : BackgroundService
     public string Resolve(string id) => _servers.Values.FirstOrDefault(s => s.Info.ServerId.Equals(id, StringComparison.OrdinalIgnoreCase)
         || s.Info.AgentId.Equals(id, StringComparison.OrdinalIgnoreCase))?.Info.ServerId ?? id;
 
+    public string AgentId(string serverId) => Find(serverId).Info.AgentId;
+
     public object Overview(string serverId)
     {
         var server = Find(serverId);
