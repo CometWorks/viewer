@@ -2,6 +2,7 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject Microsoft.AspNetCore.Components.NavigationManager Navigation
 
 <ViewerModal @ref="_dialog" Title="@Title" Fullscreen="true" ModuleUrl="@DialogModuleUrl" Closed="Closed">
     <Header>
@@ -14,7 +15,7 @@
         @if (string.IsNullOrWhiteSpace(ViewerUrl)) { <p class="entity-viewer-notice entity-viewer-tone-error">Viewer URL missing.</p> }
         else
         {
-            <div class="entity-viewer-frame-shell"><iframe class="entity-viewer-frame" @key="_viewerRevision" src="@ViewerUrl" title="@Title" allow="fullscreen"></iframe></div>
+            <div class="entity-viewer-frame-shell"><iframe class="entity-viewer-frame" @key="_viewerRevision" src="@Navigation.ApplicationUrl(ViewerUrl)" title="@Title" allow="fullscreen"></iframe></div>
         }
         @if (_assetSetupOpen)
         {
@@ -62,7 +63,7 @@
         try
         {
             var module = await GetAssetSetupModuleAsync();
-            var status = await module.InvokeAsync<AssetSetupPromptStatus>("fetchAssetStatus", AssetSetupApiBasePath);
+            var status = await module.InvokeAsync<AssetSetupPromptStatus>("fetchAssetStatus", Navigation.ApplicationUrl(AssetSetupApiBasePath));
             if (status.CanManageStreaming &&
                 (status.ConsentRequired || (status.StreamingEnabled && !status.FileStreamingReady)))
             {
@@ -93,7 +94,7 @@
 
     private async ValueTask<IJSObjectReference> GetAssetSetupModuleAsync()
     {
-        _assetSetupModule ??= await JS.InvokeAsync<IJSObjectReference>("import", AssetSetupModuleUrl);
+        _assetSetupModule ??= await JS.InvokeAsync<IJSObjectReference>("import", Navigation.ApplicationUrl(AssetSetupModuleUrl));
         return _assetSetupModule;
     }
 
