@@ -184,14 +184,17 @@ Suggested endpoints:
     prompts. The value is not stored.
 - `POST /installer/cancel`
   - Admin only. Stops the running SteamCMD process tree.
-- `POST /sessions`
-  - Existing Quasar `CanView` authorization required. Creates a short-lived
-    asset session for `{ agentId, entityId, sceneCaptureId, mods[] }`.
+- `GET /api/entities/{serverId}/{entityId}/scene`
+  - Existing Quasar `CanView` authorization required. When streaming is enabled,
+    creates a short-lived asset session directly from the companion-produced
+    scene mods and returns its opaque ID in response headers.
+- `GET /api/replay/{serverId}`
+  - Quasar `CanManageSecurity` authorization required. Creates a short-lived
+    asset session directly from the validated replay batches returned by the
+    server and returns its opaque ID in response headers.
 - `POST /sessions/{sessionId}/resolve`
   - Resolves `{ logicalPath, rootId, sourceKind }` to an opaque asset token and
     metadata.
-- `POST /sessions/{sessionId}/resolve-batch`
-  - Same, batched for model/texture bursts.
 - `GET /files/{assetToken}`
   - Streams bytes for one resolved asset. Supports `Range`, `ETag`, cancellation,
     and per-user/session expiry.
@@ -200,11 +203,12 @@ Never expose raw filesystem paths in responses. Use opaque ids/tokens only.
 
 ## Browser Runtime Changes
 
-Add `remote-assets.js`:
+The remote asset runtime:
 
 - Calls `/api/assets/status` on startup.
-- Creates asset session after scene snapshot succeeds.
-- Resolves logical paths through `/resolve` or `/resolve-batch`.
+- Activates only the opaque asset session issued with a scene or replay response;
+  browser input never defines the session's allowed mods.
+- Resolves logical paths through `/resolve`.
 - Returns handle-like objects with `getFile()` that fetch bytes from
   `/files/{assetToken}` and creates a `File`/`Blob`.
 - Caches resolved metadata and in-flight byte fetches with the existing cache
@@ -229,6 +233,9 @@ Update `index.html` / controls:
 
 - All asset endpoints stay under Quasar plugin routes and rely on Quasar's
   normal control-plane access model.
+- Viewer APIs are also mapped under the static-web-assets compatibility prefix.
+  Every API route requires a named Quasar policy and inherits Quasar's default
+  authentication scheme; only static HTML/JavaScript/CSS/icon files are public.
 - Streaming file endpoints require:
   - Quasar `CanView`
   - streaming consent enabled
@@ -236,6 +243,8 @@ Update `index.html` / controls:
   - asset token bound to same user/session
 - Add rate limits and concurrency limits per user/session.
 - Add max file size and response byte budget knobs.
+- Do not expose host paths or path-bearing diagnostics to ordinary viewers;
+  detailed root and installer diagnostics remain administrator-only.
 - Audit consent changes, installer runs, and denied asset requests.
 - Use `Cache-Control: private` or `no-store` depending on legal decision. Do not
   let shared proxies cache game assets.

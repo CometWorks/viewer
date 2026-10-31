@@ -66,6 +66,8 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 long entityId,
                 HttpContext httpContext,
                 IQuasarCompanionChannel companionChannel,
+                IEntityViewerStreamingSettingsStore settingsStore,
+                ViewerAssetSessionStore sessionStore,
                 CancellationToken cancellationToken) =>
             {
                 try
@@ -82,6 +84,17 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                         GetEntitySceneOperation,
                         request,
                         cancellationToken);
+                    httpContext.Response.Headers.CacheControl = "private, no-store";
+                    var settings = await settingsStore.GetAsync(cancellationToken);
+                    if (settings.StreamingEnabled && settings.HasCurrentConsent)
+                    {
+                        var session = sessionStore.CreateSession(
+                            ViewerAssetSessionProtocol.UserId(httpContext.User),
+                            serverId,
+                            entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ViewerAssetSessionProtocol.SceneMods(scene));
+                        ViewerAssetSessionProtocol.WriteHeaders(httpContext.Response, session);
+                    }
                     return Results.Json(scene);
                 }
                 catch (TimeoutException exception)
@@ -279,29 +292,6 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
         installerCancelEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
-        var sessionEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/sessions",
-            async (
-                AssetSessionRequest request,
-                HttpContext httpContext,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                ViewerAssetSessionStore sessionStore,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
-                    return Results.Problem("Server asset streaming is not enabled.", statusCode: StatusCodes.Status409Conflict);
-
-                var session = sessionStore.CreateSession(UserId(httpContext.User), request);
-                return Results.Json(new AssetSessionResponse
-                {
-                    SessionId = session.Id,
-                    ExpiresAtUtc = session.ExpiresAtUtc,
-                });
-            });
-
-        sessionEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
-
         var resolveEndpoint = endpoints.MapPost(
             $"{routePrefix}/api/assets/sessions/{{sessionId}}/resolve",
             async (
@@ -316,12 +306,17 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 var session = sessionStore.TryGetSession(sessionId, userId);
                 if (session is null)
                     return Results.NotFound(new AssetResolveResponse { Found = false, Message = "Asset session not found or expired." });
+                if (!sessionStore.TryBeginResolve(session, out var resolveLease))
+                    return Results.Json(new AssetResolveResponse { Found = false, Message = "Asset resolve limit reached." }, statusCode: StatusCodes.Status429TooManyRequests);
 
+                using var lease = resolveLease;
                 var asset = await resolver.ResolveAsync(session, request, cancellationToken);
                 if (asset is null)
                     return Results.Json(new AssetResolveResponse { Found = false, LogicalPath = request.LogicalPath, Message = "Asset not found." });
 
                 var token = sessionStore.CreateAssetToken(userId, session.Id, asset);
+                if (token is null)
+                    return Results.NotFound(new AssetResolveResponse { Found = false, Message = "Asset session not found or expired." });
                 return Results.Json(new AssetResolveResponse
                 {
                     Found = true,
@@ -353,11 +348,14 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 var token = sessionStore.TryGetAssetToken(assetToken, UserId(httpContext.User));
                 if (token is null)
                     return Results.NotFound();
+                if (!sessionStore.TryBeginStream(token, out var streamLease))
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
 
                 try
                 {
                     var asset = token.Asset;
                     var stream = asset.OpenRead();
+                    httpContext.Response.RegisterForDispose(streamLease!);
                     if (asset.IsArchiveEntry)
                         httpContext.Response.ContentLength = asset.Size;
                     return Results.File(
@@ -369,6 +367,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 {
+                    streamLease!.Dispose();
                     return Results.NotFound();
                 }
             });
@@ -401,13 +400,16 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             BaseGameContentConfigured = baseGameContentConfigured,
             ManagedGameContentExists = content.ClientProbe.IsUsable,
             ManagedDedicatedServerContentExists = content.DedicatedServerProbe.IsUsable,
-            ActiveBaseGameContentDirectory = activeContentDirectory,
+            ActiveBaseGameContentDirectory = canManageStreaming ? activeContentDirectory : string.Empty,
             ManagedContentSource = content.Source,
-            BaseGameContentMessage = contentMessage,
+            BaseGameContentMessage = canManageStreaming
+                ? contentMessage
+                : baseGameContentConfigured ? "Space Engineers Content is ready." : "Space Engineers Content is not ready.",
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
                 : settings.LastInstallStatus,
-            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured, contentMessage),
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured,
+                canManageStreaming ? contentMessage : "Space Engineers Content is not ready."),
             ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
         };
     }

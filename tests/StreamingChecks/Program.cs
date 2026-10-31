@@ -9,8 +9,10 @@ using System.Text.Json;
 using CometWorks.EntityViewer.Quasar;
 using CometWorks.EntityViewer.Quasar.Streaming;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Quasar.Plugin.Abstractions;
@@ -38,7 +40,7 @@ try
     var plugin = new EntityViewerQuasarPlugin();
     plugin.ConfigureServices(builder.Services, context);
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
-    builder.Services.AddSingleton<IQuasarCompanionChannel, UnusedCompanionChannel>();
+    builder.Services.AddSingleton<IQuasarCompanionChannel, TestCompanionChannel>();
     builder.Services.AddAuthentication("test")
         .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ => { });
     builder.Services.AddAuthorization(options =>
@@ -58,6 +60,8 @@ try
     var mods = Path.Combine(root, "Mods");
     Directory.CreateDirectory(mods);
     var archivePath = Path.Combine(mods, "123.sbm");
+    Directory.CreateDirectory(Path.Combine(mods, "Hidden", "Models"));
+    await File.WriteAllTextAsync(Path.Combine(mods, "Hidden", "Models", "secret.mwm"), "hidden");
     var bytes = RandomNumberGenerator.GetBytes(16 * 1024 * 1024);
     var expectedHash = SHA256.HashData(bytes);
     WriteArchive(archivePath, bytes);
@@ -79,8 +83,8 @@ try
     Check(reads.All(settings => settings.StreamingEnabled), "Concurrent settings readers");
 
     var sessions = app.Services.GetRequiredService<ViewerAssetSessionStore>();
-    var request = new AssetSessionRequest { Mods = [new AssetSessionModDto { RootId = "123", PublishedFileId = 123 }] };
-    var session = sessions.CreateSession("alice", request);
+    AssetSessionModDto[] approvedMods = [new() { RootId = "123", PublishedFileId = 123 }];
+    var session = sessions.CreateSession("alice", "server", "42", approvedMods);
     var resolver = app.Services.GetRequiredService<ServerAssetResolver>();
     var archiveAsset = await resolver.ResolveAsync(session,
         new AssetResolveRequest { RootId = "123", LogicalPath = "Models/mod.mwm" }, default);
@@ -102,15 +106,108 @@ try
     Check(replaced!.Size == 4 && replaced.CacheKeyForUser("alice") != oldKey, "Archive index and cache revision must refresh on replacement");
     WriteArchive(archivePath, bytes);
 
+    var oversized = Path.Combine(content, "Models", "oversized.mwm");
+    await using (var file = new FileStream(oversized, FileMode.Create, FileAccess.Write))
+        file.SetLength(AssetStreamingLimits.MaxAssetBytes + 1);
+    Check(await resolver.ResolveAsync(session, new AssetResolveRequest { LogicalPath = "Models/oversized.mwm" }, default) is null,
+        "Oversized loose assets are rejected before hashing");
+
+    var limitStore = new ViewerAssetSessionStore();
+    var oldest = limitStore.CreateSession("limited", "server", "1", []);
+    for (var i = 1; i < AssetStreamingLimits.MaxSessionsPerUser; i++)
+        limitStore.CreateSession("limited", "server", i.ToString(), []);
+    Check(limitStore.TryGetSession(oldest.Id, "limited") is not null, "Session cap retains active sessions up to the limit");
+    limitStore.CreateSession("limited", "server", "overflow", []);
+    Check(limitStore.TryGetSession(oldest.Id, "limited") is null, "Session cap evicts the oldest per-user session");
+
+    var boundedSession = limitStore.CreateSession("bounded", "server", "1", []);
+    Check(limitStore.TryBeginResolve(boundedSession, out var resolveOne), "First per-session resolve lease");
+    Check(limitStore.TryBeginResolve(boundedSession, out var resolveTwo), "Second per-session resolve lease");
+    Check(!limitStore.TryBeginResolve(boundedSession, out _), "Per-session resolve concurrency is bounded");
+    resolveOne!.Dispose();
+    resolveTwo!.Dispose();
+    var globalResolveLeases = new List<IDisposable>();
+    for (var i = 0; i < AssetStreamingLimits.MaxConcurrentResolves; i++)
+    {
+        var globalSession = limitStore.CreateSession("global-" + i, "server", "1", []);
+        Check(limitStore.TryBeginResolve(globalSession, out var globalLease), "Global resolve concurrency budget before limit");
+        globalResolveLeases.Add(globalLease!);
+    }
+    var excessGlobalSession = limitStore.CreateSession("global-overflow", "server", "1", []);
+    Check(!limitStore.TryBeginResolve(excessGlobalSession, out _), "Global resolve concurrency is bounded");
+    foreach (var globalLease in globalResolveLeases) globalLease.Dispose();
+    var rateSession = limitStore.CreateSession("rate", "server", "1", []);
+    for (var i = 0; i < AssetStreamingLimits.MaxResolveRequestsPerMinute; i++)
+    {
+        Check(limitStore.TryBeginResolve(rateSession, out var resolveLease), "Resolve rate budget before limit");
+        resolveLease!.Dispose();
+    }
+    Check(!limitStore.TryBeginResolve(rateSession, out _), "Per-session resolve rate is bounded");
+    var secondRateSession = limitStore.CreateSession("rate", "server", "2", []);
+    for (var i = AssetStreamingLimits.MaxResolveRequestsPerMinute;
+         i < AssetStreamingLimits.MaxResolveRequestsPerUserPerMinute; i++)
+    {
+        Check(limitStore.TryBeginResolve(secondRateSession, out var resolveLease), "Per-user resolve rate budget before limit");
+        resolveLease!.Dispose();
+    }
+    var thirdRateSession = limitStore.CreateSession("rate", "server", "3", []);
+    Check(!limitStore.TryBeginResolve(thirdRateSession, out _), "Per-user resolve rate is bounded across sessions");
+
+    var budgetSession = limitStore.CreateSession("budget", "server", "1", []);
+    var budgetAsset = new ResolvedServerAsset { Size = AssetStreamingLimits.MaxAssetBytes };
+    var budgetToken = limitStore.CreateAssetToken("budget", budgetSession.Id, budgetAsset)!;
+    var budgetResponses = (int)(AssetStreamingLimits.MaxSessionResponseBytes / AssetStreamingLimits.MaxAssetBytes);
+    for (var i = 0; i < budgetResponses; i++)
+    {
+        Check(limitStore.TryBeginStream(budgetToken, out var streamLease), "Response byte budget before limit");
+        streamLease!.Dispose();
+    }
+    Check(!limitStore.TryBeginStream(budgetToken, out _), "Per-session response bytes are bounded");
+
+    var tokenSession = limitStore.CreateSession("tokens", "server", "1", []);
+    var firstToken = limitStore.CreateAssetToken("tokens", tokenSession.Id, new ResolvedServerAsset { Size = 1 })!;
+    for (var i = 1; i <= AssetStreamingLimits.MaxTokensPerSession; i++)
+        limitStore.CreateAssetToken("tokens", tokenSession.Id, new ResolvedServerAsset { Size = 1 });
+    Check(limitStore.TryGetAssetToken(firstToken.Id, "tokens") is null, "Token cap evicts the oldest per-session token");
+
     await app.StartAsync();
     var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+    AuditViewerEndpoints(app);
     const string api = "/_quasar/plugins/cometworks.entityviewer/api/assets/";
     using var alice = Client("alice");
     using var bob = Client("bob");
     using var anonymous = Client("");
-    Check((await anonymous.GetAsync(api + "status")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous clients cannot resolve assets");
-    var aliceSession = await CreateSession(alice);
-    var bobSession = await CreateSession(bob);
+    await AssertAnonymousEndpointsDenied(anonymous);
+    Check((await bob.GetAsync("/_content/CometWorks.EntityViewer/api/replay/servers")).StatusCode == HttpStatusCode.Forbidden,
+        "Ordinary viewers cannot inspect replay history through the static-assets prefix");
+
+    var bobStatus = (await bob.GetFromJsonAsync<AssetStreamingStatusResponse>(api + "status"))!;
+    Check(!bobStatus.CanManageStreaming && bobStatus.ActiveBaseGameContentDirectory.Length == 0 &&
+          !bobStatus.BaseGameContentMessage.Contains(content, StringComparison.Ordinal) &&
+          !bobStatus.Message.Contains(content, StringComparison.Ordinal),
+        "Viewer status redacts host filesystem paths");
+    var aliceStatus = (await alice.GetFromJsonAsync<AssetStreamingStatusResponse>(api + "status"))!;
+    Check(aliceStatus.CanManageStreaming && Path.GetFullPath(aliceStatus.ActiveBaseGameContentDirectory) == Path.GetFullPath(content),
+        "Streaming administrators retain path diagnostics");
+
+    using var removedSessionEndpoint = await alice.PostAsJsonAsync(api + "sessions", new
+    {
+        agentId = "server",
+        entityId = "42",
+        mods = new[] { new { rootId = "Hidden", name = "Hidden" } },
+    });
+    Check(removedSessionEndpoint.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,
+        "Browsers cannot create sessions or choose authorized mod roots");
+
+    var aliceSession = await IssueSceneSession(alice, "/_quasar/plugins/cometworks.entityviewer");
+    var bobSession = await IssueSceneSession(bob, "/_content/CometWorks.EntityViewer");
+    using (var guessed = await bob.PostAsJsonAsync(api + "sessions/" + bobSession + "/resolve",
+        new AssetResolveRequest { RootId = "Hidden", LogicalPath = "Models/secret.mwm" }))
+    {
+        guessed.EnsureSuccessStatusCode();
+        Check(!(await guessed.Content.ReadFromJsonAsync<AssetResolveResponse>())!.Found,
+            "A viewer cannot guess an installed mod that was absent from the companion scene");
+    }
     var aliceAsset = await Resolve(alice, aliceSession, "Models/mod.mwm", "123");
     var bobAsset = await Resolve(bob, bobSession, "Models/mod.mwm", "123");
     Check(aliceAsset.CacheKey != bobAsset.CacheKey, "HTTP cache keys are isolated by user");
@@ -123,7 +220,7 @@ try
     // Keep one large response unread while other users finish independent downloads.
     using var slow = await alice.GetAsync(api + "files/" + aliceAsset.AssetToken, HttpCompletionOption.ResponseHeadersRead);
     var elapsed = Stopwatch.StartNew();
-    var downloads = new[] { (alice, aliceAsset), (bob, bobAsset) }.SelectMany(pair => Enumerable.Range(0, 4).Select(async _ =>
+    var downloads = new[] { (alice, aliceAsset), (bob, bobAsset) }.SelectMany(pair => Enumerable.Range(0, 3).Select(async _ =>
     {
         using var response = await pair.Item1.GetAsync(api + "files/" + pair.Item2.AssetToken);
         response.EnsureSuccessStatusCode();
@@ -132,7 +229,7 @@ try
         Check(SHA256.HashData(await response.Content.ReadAsByteArrayAsync()).SequenceEqual(expectedHash), "Concurrent archive responses contain identical complete bytes");
     }));
     await Task.WhenAll(downloads).WaitAsync(TimeSpan.FromSeconds(15));
-    Console.WriteLine($"PASS: two users completed eight 16 MiB archive downloads in {elapsed.ElapsedMilliseconds} ms while another response remained unread.");
+    Console.WriteLine($"PASS: two users completed six 16 MiB archive downloads in {elapsed.ElapsedMilliseconds} ms while another response remained unread.");
     slow.Dispose();
 
     var plain = await Resolve(alice, aliceSession, "Models/block.mwm", "");
@@ -169,12 +266,40 @@ try
         if (user.Length > 0) client.DefaultRequestHeaders.Add("X-Test-User", user);
         return client;
     }
-    async Task<string> CreateSession(HttpClient client)
+    async Task<string> IssueSceneSession(HttpClient client, string routePrefix)
     {
-        using var response = await client.PostAsJsonAsync(api + "sessions", request);
+        using var response = await client.GetAsync(routePrefix + "/api/entities/server/42/scene");
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<AssetSessionResponse>())!.SessionId;
+        Check(response.Headers.CacheControl?.NoStore == true && response.Headers.CacheControl.Private,
+            "Scene responses that issue asset sessions cannot enter shared caches");
+        Check(response.Headers.TryGetValues("X-Entity-Viewer-Asset-Session", out var values),
+            "Companion-produced scenes issue an opaque asset session");
+        return values!.Single();
     }
+
+    async Task AssertAnonymousEndpointsDenied(HttpClient client)
+    {
+        foreach (var routePrefix in new[] { "/_quasar/plugins/cometworks.entityviewer", "/_content/CometWorks.EntityViewer" })
+        {
+            foreach (var (method, template) in ViewerApiRoutes())
+            {
+                var path = routePrefix + template
+                    .Replace("{serverId}", "server", StringComparison.Ordinal)
+                    .Replace("{entityId:long}", "42", StringComparison.Ordinal)
+                    .Replace("{sessionId}", "session", StringComparison.Ordinal)
+                    .Replace("{assetToken}", "token", StringComparison.Ordinal);
+                if (template == "/api/replay/{serverId}")
+                    path += "?from=1&to=2";
+                using var request = new HttpRequestMessage(new HttpMethod(method), path);
+                if (method is "POST" or "PUT")
+                    request.Content = JsonContent.Create(new { });
+                using var response = await client.SendAsync(request);
+                Check(response.StatusCode == HttpStatusCode.Unauthorized,
+                    $"Anonymous request must be denied: {method} {path}");
+            }
+        }
+    }
+
     async Task<AssetResolveResponse> Resolve(HttpClient client, string id, string logicalPath, string rootId)
     {
         using var response = await client.PostAsJsonAsync(api + "sessions/" + id + "/resolve", new AssetResolveRequest { LogicalPath = logicalPath, RootId = rootId });
@@ -192,6 +317,68 @@ finally
 static void Check(bool condition, string message)
 {
     if (!condition) throw new Exception(message);
+}
+
+static (string Method, string Template)[] ViewerApiRoutes() =>
+[
+    ("GET", "/api/replay/servers"),
+    ("GET", "/api/replay/{serverId}/overview"),
+    ("PUT", "/api/replay/{serverId}/recording"),
+    ("GET", "/api/replay/{serverId}"),
+    ("GET", "/api/entities/{serverId}/{entityId:long}/scene"),
+    ("GET", "/api/assets/status"),
+    ("POST", "/api/assets/settings/consent"),
+    ("GET", "/api/assets/settings/roots"),
+    ("POST", "/api/assets/settings/roots"),
+    ("GET", "/api/assets/installer/status"),
+    ("POST", "/api/assets/installer/start"),
+    ("POST", "/api/assets/installer/input"),
+    ("POST", "/api/assets/installer/cancel"),
+    ("POST", "/api/assets/sessions/{sessionId}/resolve"),
+    ("GET", "/api/assets/files/{assetToken}"),
+];
+
+static void AuditViewerEndpoints(WebApplication app)
+{
+    var prefixes = new[] { "/_quasar/plugins/cometworks.entityviewer", "/_content/CometWorks.EntityViewer" };
+    var endpoints = app.Services.GetRequiredService<EndpointDataSource>().Endpoints
+        .OfType<RouteEndpoint>()
+        .Where(endpoint => prefixes.Any(prefix =>
+            endpoint.RoutePattern.RawText?.StartsWith(prefix + "/api/", StringComparison.Ordinal) == true))
+        .ToArray();
+
+    foreach (var prefix in prefixes)
+    {
+        var actual = endpoints
+            .Where(endpoint => endpoint.RoutePattern.RawText!.StartsWith(prefix, StringComparison.Ordinal))
+            .SelectMany(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods
+                .Select(method => (method, Template: endpoint.RoutePattern.RawText![prefix.Length..])))
+            .OrderBy(route => route.method, StringComparer.Ordinal)
+            .ThenBy(route => route.Template, StringComparer.Ordinal)
+            .ToArray();
+        var expected = ViewerApiRoutes()
+            .OrderBy(route => route.Method, StringComparer.Ordinal)
+            .ThenBy(route => route.Template, StringComparer.Ordinal)
+            .ToArray();
+        Check(actual.SequenceEqual(expected), $"Complete Viewer API endpoint inventory for {prefix}");
+    }
+
+    foreach (var endpoint in endpoints)
+    {
+        var route = endpoint.RoutePattern.RawText!;
+        var relative = prefixes.Select(prefix => route.StartsWith(prefix, StringComparison.Ordinal) ? route[prefix.Length..] : null)
+            .First(value => value is not null)!;
+        var expectedPolicy = relative.StartsWith("/api/replay", StringComparison.Ordinal) ||
+                             relative.StartsWith("/api/assets/settings/", StringComparison.Ordinal) ||
+                             relative.StartsWith("/api/assets/installer/", StringComparison.Ordinal)
+            ? QuasarPolicyNames.CanManageSecurity
+            : QuasarPolicyNames.CanView;
+        var authorization = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>();
+        Check(authorization.Any(data => data.Policy == expectedPolicy), $"{route} requires {expectedPolicy}");
+        Check(authorization.All(data => string.IsNullOrWhiteSpace(data.AuthenticationSchemes)),
+            $"{route} inherits Quasar's default authentication scheme");
+        Check(endpoint.Metadata.GetMetadata<IAllowAnonymous>() is null, $"{route} cannot override Quasar authorization anonymously");
+    }
 }
 
 static void WriteArchive(string path, byte[] bytes)
@@ -214,8 +401,21 @@ sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptio
     }
 }
 
-sealed class UnusedCompanionChannel : IQuasarCompanionChannel
+sealed class TestCompanionChannel : IQuasarCompanionChannel
 {
     public Task<TResponse> SendAsync<TRequest, TResponse>(string serverId, string companionPluginId, string operation,
-        TRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
+        TRequest request, CancellationToken cancellationToken)
+    {
+        if (companionPluginId != "cometworks.entityviewer" || operation != "get-entity-scene")
+            throw new InvalidOperationException("Only the scene operation is expected in streaming checks.");
+        var scene = JsonSerializer.Deserialize<JsonElement>("""
+            {
+              "grid": { "id": "42" },
+              "mods": [
+                { "rootId": "123", "publishedFileId": 123 }
+              ]
+            }
+            """);
+        return Task.FromResult((TResponse)(object)scene);
+    }
 }

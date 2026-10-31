@@ -49,15 +49,16 @@ public sealed class ServerAssetResolver(
 
             return await Fingerprint(TryResolveContentAsset(settings, normalized.Path), cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
         {
             return null; // A changed or unreadable source is an unavailable asset.
         }
     }
 
-    private static async Task<ResolvedServerAsset?> Fingerprint(ResolvedServerAsset? asset, CancellationToken token)
+    private async Task<ResolvedServerAsset?> Fingerprint(ResolvedServerAsset? asset, CancellationToken token)
     {
-        if (asset == null) return null;
+        if (asset == null || asset.Size < 0 || asset.Size > AssetStreamingLimits.MaxAssetBytes)
+            return null;
         // Quasar I/O only, never the simulation thread. Hash the actual entry bytes: updates
         // can preserve both file length and timestamps (especially Workshop ZIP entries).
         await using var stream = asset.OpenRead();
@@ -80,6 +81,8 @@ public sealed class ServerAssetResolver(
                 continue;
 
             var info = new FileInfo(resolvedPath);
+            if (info.Length > AssetStreamingLimits.MaxAssetBytes)
+                continue;
             return new ResolvedServerAsset
             {
                 LogicalPath = candidate,
@@ -130,6 +133,8 @@ public sealed class ServerAssetResolver(
         if (file is not null)
         {
             var info = new FileInfo(file);
+            if (info.Length > AssetStreamingLimits.MaxAssetBytes)
+                return null;
             return new ResolvedServerAsset
             {
                 LogicalPath = logicalPath,
@@ -155,15 +160,22 @@ public sealed class ServerAssetResolver(
             if (archivePath is null)
                 return null;
             var info = new FileInfo(archivePath);
+            if (info.Length > AssetStreamingLimits.MaxArchiveBytes)
+                return null;
             var key = (archivePath, info.LastWriteTimeUtc, info.Length);
             var index = _archiveIndexes.GetOrCreate(key, cacheEntry =>
             {
                 using var file = AssetPathBoundary.OpenRead(archivePath, approvedRoot);
+                if (file.Length != info.Length || file.Length > AssetStreamingLimits.MaxArchiveBytes)
+                    throw new InvalidDataException("Mod archive changed before it could be inspected.");
                 using var archive = new ZipArchive(file, ZipArchiveMode.Read);
+                if (archive.Entries.Count > AssetStreamingLimits.MaxArchiveEntries)
+                    throw new InvalidDataException("Mod archive contains too many entries.");
                 var entries = new Dictionary<string, ArchiveAsset>(StringComparer.Ordinal);
                 foreach (var candidate in archive.Entries)
                 {
                     if (!AssetPathBoundary.IsLogicalPath(candidate.FullName)) continue;
+                    if (candidate.Length < 0 || candidate.Length > AssetStreamingLimits.MaxAssetBytes) continue;
                     entries.TryAdd(ArchivePathKey(candidate.FullName),
                         new ArchiveAsset(candidate.FullName, candidate.Length, candidate.LastWriteTime.UtcDateTime));
                 }
