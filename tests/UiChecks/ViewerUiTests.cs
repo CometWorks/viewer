@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Bunit;
+using Microsoft.AspNetCore.Components;
 using CometWorks.EntityViewer.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -9,10 +10,13 @@ namespace Viewer.UiChecks;
 
 public sealed class ViewerUiTests
 {
-    [Fact]
-    public async Task ColumnOpensNativeViewerWithContextAndReturnsFocusThroughClose()
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/my-server-panel/")]
+    public async Task ColumnOpensNativeViewerWithContextAndReturnsFocusThroughClose(string prefix)
     {
         await using var context = new BunitContext();
+        context.Services.AddSingleton<NavigationManager>(new PanelNavigation(prefix));
         var js = new ViewerJs();
         context.Services.AddSingleton<IJSRuntime>(js);
         var cell = context.Render<EntityViewerColumnCell>(p => p.Add(x => x.AgentId, "agent/one")
@@ -26,8 +30,9 @@ public sealed class ViewerUiTests
         Assert.Contains("mud-table-cell", header.Find("th").ClassList);
         await cell.Find("button").ClickAsync();
         Assert.Contains("agentId=agent%2Fone&entityId=42&voxels=1&context=1", cell.Find("iframe").GetAttribute("src"));
+        Assert.StartsWith("https://dash.test" + prefix + "_quasar/plugins/", cell.Find("iframe").GetAttribute("src"));
         Assert.Contains("entity-viewer-fullscreen", cell.Find("dialog").ClassName);
-        Assert.Contains(js.Calls, x => x.Name == "import" && (string)x.Arguments![0]! == "/_quasar/plugins/cometworks.entityviewer/viewer-dialog.js");
+        Assert.Contains(js.Calls, x => x.Name == "import" && (string)x.Arguments![0]! == "https://dash.test" + prefix + "_quasar/plugins/cometworks.entityviewer/viewer-dialog.js");
         Assert.Contains(js.Calls, x => x.Name == "open");
         if (Environment.GetEnvironmentVariable("VIEWER_UI_PREVIEW_OUTPUT") is { Length: > 0 } preview)
             await File.WriteAllTextAsync(preview, cell.Markup);
@@ -38,10 +43,13 @@ public sealed class ViewerUiTests
         Assert.True(cell.Find("button").HasAttribute("disabled"));
     }
 
-    [Fact]
-    public async Task AssetSetupPreservesConsentRootsAndChangedResult()
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/my-server-panel/")]
+    public async Task AssetSetupPreservesConsentRootsAndChangedResult(string prefix)
     {
         await using var context = new BunitContext();
+        context.Services.AddSingleton<NavigationManager>(new PanelNavigation(prefix));
         var js = new ViewerJs { CanManage = true, ConsentRequired = true };
         context.Services.AddSingleton<IJSRuntime>(js);
         bool? changed = null;
@@ -56,6 +64,7 @@ public sealed class ViewerUiTests
         setup.FindAll("input")[0].Input("/games/SpaceEngineers/Content");
         await setup.FindAll("button").Single(x => x.TextContent.Contains("Save Asset Roots")).ClickAsync();
         var saved = js.Calls.Last(x => x.Name == "saveRootSettings");
+        Assert.StartsWith("https://dash.test" + prefix + "_quasar/plugins/", (string)saved.Arguments![0]!);
         var request = JsonSerializer.SerializeToElement(saved.Arguments![1], new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal("ExternalInstall", request.GetProperty("baseGameSourceMode").GetString());
         Assert.Equal("/games/SpaceEngineers/Content", request.GetProperty("baseGameContentPath").GetString());
@@ -72,6 +81,12 @@ public sealed class ViewerUiTests
         Assert.Contains("management access", setup.Markup);
         Assert.Empty(setup.FindAll("input, select"));
         Assert.DoesNotContain("Accept and Enable", setup.Markup);
+    }
+
+    private sealed class PanelNavigation : NavigationManager
+    {
+        public PanelNavigation(string prefix) => Initialize("https://dash.test" + prefix, "https://dash.test" + prefix);
+        protected override void NavigateToCore(string uri, bool forceLoad) { }
     }
 
     private sealed class ViewerJs : IJSRuntime, IJSObjectReference

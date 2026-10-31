@@ -7,6 +7,17 @@ The plugin adapter opens its own fullscreen native browser dialog and serves the
 iframe from Quasar's plugin static asset mount:
 `/_quasar/plugins/cometworks.entityviewer/`.
 
+## Hosted Quasar prefixes
+
+The matching Quasar/Nebula implementation can serve this complete plugin under
+`https://dash.se-servers.net/<panel-id>/`. The viewer's dialog, iframe,
+module imports and asset-setup API parameters resolve against Quasar's application
+base. Scene, asset and replay requests already resolve relative to their module,
+so they retain the prefix without an additional public host or plugin proxy.
+Install matching Quasar and viewer revisions. Live hosted rendering, streaming
+and update cutover still require deployment acceptance testing; this does not
+provide browser-origin isolation between independent hosted panels.
+
 ## How to open it
 
 1. Open **Entities**.
