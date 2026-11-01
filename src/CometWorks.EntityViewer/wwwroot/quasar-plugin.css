@@ -1,6 +1,8 @@
 /* Plugin controls inherit the host palette; no global resets or alternate UI framework. */
 .entity-viewer-native-dialog { --viewer-bg: var(--quasar-palette-background, #101317); --viewer-surface: var(--quasar-palette-surface, #181c21); --viewer-text: var(--quasar-palette-text-primary, #e6e9ee); --viewer-muted: var(--quasar-palette-text-secondary, #9ca5b3); --viewer-border: var(--quasar-palette-lines-default, #303740); --viewer-accent: var(--quasar-palette-primary, #56c8dc); box-sizing: border-box; width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; background: var(--viewer-surface); color: var(--viewer-text); border: 1px solid var(--viewer-border); border-radius: 6px; font: 13px system-ui, sans-serif; }
 .entity-viewer-native-dialog * { box-sizing: border-box; }
+/* Dialogs live inside host action cells; reset table text layout and wrap arbitrary paths. */
+.entity-viewer-native-dialog { text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .entity-viewer-native-dialog::backdrop { background: #0009; }
 .entity-viewer-fullscreen { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
 .entity-viewer-dialog-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--viewer-border); }

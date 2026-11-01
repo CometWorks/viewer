@@ -3,7 +3,7 @@ import { movementState } from "./replay-movement.js";
 
 export const eventKinds = new Set(["damage", "physics", "gap", "action", "movement", "death", "explosion", "block-added", "block-removed", "split", "merge", "voxel-invalidated", "voxel-coverage"]);
 export function buildReplay(batches) {
-    const records = batches.flatMap(batch => (batch.records || []).map(record => ({ ...record, session: batch.session, world: batch.world })))
+    const records = batches.flatMap(batch => (batch.records || []).map(record => ({ ...record, session: batch.session, world: batch.world, node: batch.node || "" })))
         .sort((a, b) => a.at - b.at || (a.elapsed || 0) - (b.elapsed || 0));
     const incidents = new Map();
     for (const record of records) if (record.kind === "incident" && record.incident) {
@@ -41,7 +41,17 @@ export function buildReplay(batches) {
         if (!map.has(key)) map.set(key, []);
         map.get(key).push(record);
     }
-    return { incidents, modelParts, voxels, terrainTracks, geometry, records, tracks, actions, movements, gaps, discontinuities, events: records.filter(r => eventKinds.has(r.kind)), health: records.filter(r => r.kind === "health") };
+    const health = records.filter(r => r.kind === "health"), healthByNode = new Map(), healthBySession = new Map();
+    for (const record of health) {
+        if (!healthBySession.has(record.session)) {
+            const session = { at: record.at, health: [] };
+            healthBySession.set(record.session, session);
+            if (!healthByNode.has(record.node)) healthByNode.set(record.node, []);
+            healthByNode.get(record.node).push(session);
+        }
+        healthBySession.get(record.session).health.push(record);
+    }
+    return { incidents, modelParts, voxels, terrainTracks, geometry, records, tracks, actions, movements, gaps, discontinuities, healthByNode, events: records.filter(r => eventKinds.has(r.kind)), health };
 }
 
 export function lastAt(records, at) {
@@ -51,29 +61,40 @@ export function lastAt(records, at) {
 }
 
 export function frameAt(replay, at, entity = "", interpolate = false) {
-    const health = lastAt(replay.health, at);
-    const session = health && at - health.at <= 10000 ? health.session : null;
-    if (!session) return { samples: [], health, gap: true };
+    // A restart supersedes only its own slot. Other cluster nodes remain visible.
+    const nodeHealth = [...replay.healthByNode.values()].map(sessions => {
+        const session = lastAt(sessions, at);
+        return session ? lastAt(session.health, at) : null;
+    }).filter(Boolean);
+    const activeHealth = nodeHealth.filter(h => at - h.at <= 10000);
+    const sessions = new Set(activeHealth.map(h => h.session));
     const samples = [];
-    const gap = lastAt(replay.gaps.get(session) || [], at);
+    const gaps = new Map([...sessions].map(session => [session, lastAt(replay.gaps.get(session) || [], at)]));
+    const gap = !sessions.size || activeHealth.length < nodeHealth.length || [...gaps.values()].some(record => record && at - record.at < 35000);
     for (const track of replay.tracks.values()) {
         let sample = lastAt(track, at);
-        if (!sample || sample.session !== session || sample.kind === "removed" || !sample.position || at - sample.at > 35000) continue;
-        if (gap && gap.at >= sample.at) continue;
+        if (!sample || !sessions.has(sample.session) || sample.kind === "removed" || !sample.position || at - sample.at > 35000) continue;
+        const recordingGap = gaps.get(sample.session);
+        if (recordingGap && recordingGap.at >= sample.at) continue;
         if (interpolate) sample = interpolateSample(replay, track, sample, at);
         if (sample.type === "player") {
-            const movement = lastAt(replay.movements.get(`${session}/${sample.character}`) || [], at);
-            if (movement && movement.at >= sample.at && (!gap || movement.at > gap.at)) sample = { ...sample, movement: movement.movement, movementAt: movement.at };
-            const action = lastAt(replay.actions.get(`${session}/${sample.character}`) || [], at);
-            if (action && action.at >= sample.at && (!gap || action.at > gap.at)) sample = { ...sample, actions: action.actions, weapon: action.weapon, actionAt: action.at };
+            const movement = lastAt(replay.movements.get(`${sample.session}/${sample.character}`) || [], at);
+            if (movement && movement.at >= sample.at && (!recordingGap || movement.at > recordingGap.at)) sample = { ...sample, movement: movement.movement, movementAt: movement.at };
+            const action = lastAt(replay.actions.get(`${sample.session}/${sample.character}`) || [], at);
+            if (action && action.at >= sample.at && (!recordingGap || action.at > recordingGap.at)) sample = { ...sample, actions: action.actions, weapon: action.weapon, actionAt: action.at };
         }
         samples.push(sample);
     }
-    const contexts = incidentContextsAt(replay, at, session);
-    if (contexts.length) return { samples: samples.filter(s => inContexts(s.position, contexts)), contexts, health, gap: !!gap && at - gap.at < 35000 };
+    const focused = samples.find(s => s.entity === entity);
+    const health = activeHealth.find(h => h.session === focused?.session)
+        || activeHealth.reduce((slowest, h) => !slowest || h.value < slowest.value ? h : slowest, null)
+        || lastAt(replay.health, at);
+    const contextsBySession = new Map([...sessions].map(session => [session, incidentContextsAt(replay, at, session)]));
+    const contexts = [...contextsBySession.values()].flat();
+    if (contexts.length) return { sessions, samples: samples.filter(s => inContexts(s.position, contextsBySession.get(s.session))), contexts, health, gap };
     const anchor = replay.contextEntity || entity;
     const selected = anchor ? samples.find(s => s.entity === anchor) : null;
-    return { samples: selected ? samples.filter(s => distance(s.position, selected.position) <= 500) : anchor ? [] : samples, health, gap: !!gap && at - gap.at < 35000 };
+    return { sessions, samples: selected ? samples.filter(s => distance(s.position, selected.position) <= 500) : anchor ? [] : samples, health, gap };
 }
 
 export function distance(a, b) { return Math.hypot(...a.map((v, i) => v - b[i])); }
@@ -251,9 +272,9 @@ export function incidentClips(replay, from, to) {
         if (event.at > to) break;
         if (event.incidentId || authoritativeSessions.has(event.session)) continue;
         if (!["damage", "physics", "death", "explosion", "split", "merge", "block-removed"].includes(event.kind)) continue;
-        for (let i = active.length - 1; i >= 0; i--) if (active[i].end < event.at || active[i].session !== event.session) active.splice(i, 1);
+        for (let i = active.length - 1; i >= 0; i--) if (active[i].end < event.at) active.splice(i, 1);
         const ids = [event.entity, event.source, event.related].filter(Boolean);
-        let clip = active.find(c => ids.some(id => c.entities.has(id)) || event.position && c.position && distance(event.position, c.position) <= 1000);
+        let clip = active.find(c => c.session === event.session && (ids.some(id => c.entities.has(id)) || event.position && c.position && distance(event.position, c.position) <= 1000));
         if (!clip) {
             const sessionStart = sessionStarts.get(event.session) ?? event.at;
             clip = { start: Math.max(from, sessionStart, event.at - 10000), end: Math.min(to, event.at + 15000), session: event.session, events: [], entities: new Set(), position: event.position };
@@ -264,7 +285,9 @@ export function incidentClips(replay, from, to) {
         ids.forEach(id => clip.entities.add(id));
     }
     const sessionOrder = [...sessionStarts.entries()];
-    const sessionEnds = new Map(sessionOrder.map(([session], i) => [session, i + 1 < sessionOrder.length ? sessionOrder[i + 1][1] - 1 : to]));
+    const sessionNodes = new Map(replay.records.map(r => [r.session, r.node]));
+    const sessionEnds = new Map(sessionOrder.map(([session], i) => [session,
+        (sessionOrder.slice(i + 1).find(([next]) => sessionNodes.get(next) === sessionNodes.get(session))?.[1] ?? to + 1) - 1]));
     return clips.filter(c => c.end >= from && c.start <= to).map(c => ({ ...c, end: Math.min(c.end, sessionEnds.get(c.session)),
         incomplete: c.incomplete || (lastAt(replay.gaps.get(c.session) || [], c.end)?.at ?? -Infinity) >= c.start,
         focus: c.events.find(e => replay.tracks.has(`${c.session}/${e.entity}`))?.entity || frameAt(replay, (c.events[0]?.at ?? c.start)).samples.find(s => s.character === c.events[0]?.entity)?.entity || "" }));
@@ -283,16 +306,19 @@ export function evidenceAt(replay, event) {
 }
 
 export function terrainAt(replay, at, session) {
-    if (!session) return [];
-    const gap = lastAt(replay.gaps.get(session) || [], at);
+    const sessions = typeof session === "string" ? new Set([session]) : session;
+    if (!sessions?.size) return [];
     return [...replay.terrainTracks.values()].map(track => {
         const record = lastAt(track, at);
         const invalid = lastAt(track.filter(r => r.kind === "voxel-invalidated"), at);
         return invalid && record?.value <= invalid.at ? null : record;
-    }).filter(record =>
-        record?.session === session && record.kind === "voxel-sample" && at - record.at <= 15000
-        && (!gap || record.value > gap.at) && replay.voxels.has(record.terrainId)).filter(record => {
-        const contexts = incidentContextsAt(replay, at, session);
+    }).filter(record => {
+        if (!record || !sessions.has(record.session)) return false;
+        const gap = lastAt(replay.gaps.get(record.session) || [], at);
+        return record.kind === "voxel-sample" && at - record.at <= 15000
+            && (!gap || record.value > gap.at) && replay.voxels.has(record.terrainId);
+    }).filter(record => {
+        const contexts = incidentContextsAt(replay, at, record.session);
         const page = replay.voxels.get(record.terrainId);
         return !contexts.length || inContexts(record.position, contexts, Math.hypot(...page.size) * 2 ** page.lod / 2);
     });
@@ -301,14 +327,20 @@ export function terrainAt(replay, at, session) {
 // Keep the context anchored to the entity that opened history. Selecting another focus
 // must not progressively drag unrelated entities/assets into the replay.
 export function pruneReplayContext(replay, entity, incidentId = "") {
+    if (!entity && !incidentId && replay.healthByNode.size > 1) return replay;
     const anchorEntity = entity || replay.records.find(r => r.kind === "sample")?.entity;
     if (!anchorEntity && !incidentId) return replay;
     const anchors = new Map([...replay.tracks].filter(([, track]) => track[0].entity === anchorEntity).map(([key, track]) => [track[0].session, track]));
+    const anchorTrack = [...anchors.values()].flat().sort((a, b) => a.at - b.at);
+    const anchorAt = record => {
+        const anchor = lastAt(anchorTrack, record.at);
+        return anchor && (anchor.session === record.session || anchor.node !== record.node) ? anchor : null;
+    };
     const contextIds = new Set();
     for (const [id, ids] of incidentGroups(replay)) {
         const relevant = incidentId ? ids.has(incidentId) : replay.events.some(e => ids.has(e.incidentId) && (e.entity && eventMatches(replay, e, anchorEntity) || [e.source, e.related].includes(anchorEntity)))
             || [...ids].some(key => (replay.incidents.get(key) || []).some(r => {
-                const a = lastAt(anchors.get(r.session) || [], r.at);
+                const a = anchorAt(r);
                 return a?.position && r.at - a.at <= 35000 && inContexts(a.position, [r.incident]);
             }));
         if (relevant) ids.forEach(key => contextIds.add(key));
@@ -319,15 +351,15 @@ export function pruneReplayContext(replay, entity, incidentId = "") {
     const near = (record, anchor) => record?.kind === "sample" && anchor?.kind === "sample" && record.position && anchor.position && distance(record.position, anchor.position) <= 500;
     const retained = new Set();
     for (const [key, track] of replay.tracks) {
-        const anchor = anchors.get(track[0].session);
+        const anchor = anchors.get(track[0].session) || anchorTrack.filter(a => a.node !== track[0].node);
         if (track.some(r => withinIncident(r))) retained.add(key);
         if (!anchor || incidentId) continue;
-        if (track[0].entity === anchorEntity || track.some(r => { const a = lastAt(anchor, r.at); return a && r.at - a.at <= 35000 && near(r, a); })
+        if (track[0].entity === anchorEntity || track.some(r => { const a = anchorAt(r); return a && r.at - a.at <= 35000 && near(r, a); })
             || anchor.some(a => { const r = lastAt(track, a.at); return r && a.at - r.at <= 35000 && near(r, a); })) retained.add(key);
     }
     const nearbyTerrain = new Set();
     for (const record of replay.records) if (record.kind === "voxel-sample") {
-        const page = replay.voxels.get(record.terrainId), anchor = lastAt(anchors.get(record.session) || [], record.at);
+        const page = replay.voxels.get(record.terrainId), anchor = anchorAt(record);
         const radius = page ? Math.hypot(...page.size) * 2 ** page.lod / 2 : 0;
         if (withinIncident(record, radius) || !incidentId && anchor?.position && record.position && distance(record.position, anchor.position) <= 500 + radius) nearbyTerrain.add(`${record.session}/${record.entity}`);
     }
@@ -345,14 +377,14 @@ export function pruneReplayContext(replay, entity, incidentId = "") {
             if (incidentId) return false;
         }
         if (retained.has(`${r.session}/${r.entity}`) || retained.has(`${r.session}/${r.source}`) || nearbyTerrain.has(`${r.session}/${r.entity}`)) return true;
-        const a = lastAt(anchors.get(r.session) || [], r.at);
+        const a = anchorAt(r);
         return !incidentId && r.kind !== "sample" && a?.position && r.position && distance(r.position, a.position) <= 500;
     });
     const pageIds = new Set(records.flatMap(r => r.layout || []));
     const terrainIds = new Set(records.map(r => r.terrainId).filter(Boolean));
     const partIds = new Set([...pageIds].flatMap(id => (replay.geometry.get(id) || []).map(block => block.partsId).filter(Boolean)));
     const result = buildReplay([...new Set(records.map(r => r.session))].map(session => ({ session,
-        world: records.find(r => r.session === session)?.world, records: records.filter(r => r.session === session),
+        node: records.find(r => r.session === session)?.node, world: records.find(r => r.session === session)?.world, records: records.filter(r => r.session === session),
         geometry: Object.fromEntries([...replay.geometry].filter(([id]) => pageIds.has(id))),
         modelParts: Object.fromEntries([...replay.modelParts].filter(([id]) => partIds.has(id))),
         voxels: Object.fromEntries([...replay.voxels].filter(([id]) => terrainIds.has(id))) })));
