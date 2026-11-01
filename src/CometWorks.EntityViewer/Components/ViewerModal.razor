@@ -1,6 +1,7 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject Microsoft.AspNetCore.Components.NavigationManager Navigation
 
 <dialog @ref="_element" class="entity-viewer-native-dialog @(Fullscreen ? "entity-viewer-fullscreen" : null)" aria-labelledby="@_titleId">
     <header class="entity-viewer-dialog-header"><h2 id="@_titleId">@Title</h2>@Header</header>
@@ -26,7 +27,7 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
-        _module = await JS.InvokeAsync<IJSObjectReference>("import", ModuleUrl);
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", Navigation.ApplicationUrl(ModuleUrl));
         if (_disposed)
         {
             await _module.DisposeAsync();

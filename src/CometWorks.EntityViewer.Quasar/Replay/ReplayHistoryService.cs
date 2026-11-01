@@ -18,6 +18,8 @@ public sealed class ReplayHistoryService : BackgroundService
     private readonly ILogger<ReplayHistoryService> _logger;
     private readonly ConcurrentDictionary<string, ServerHistory> _servers = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _queries = new(2);
+    private readonly SemaphoreSlim _recordingGate = new(1);
+    private readonly ConcurrentDictionary<string, ReplayRecordingSettings?> _clusterSettings = new(StringComparer.OrdinalIgnoreCase);
 
     public ReplayHistoryService(QuasarPluginContext context, IQuasarCompanionChannel channel, ILogger<ReplayHistoryService> logger)
     {
@@ -25,48 +27,117 @@ public sealed class ReplayHistoryService : BackgroundService
         _channel = channel; _logger = logger;
     }
 
-    public object[] Servers() => _servers.Values.OrderBy(s => s.Info.DisplayName).Select(s => (object)new
-    {
-        s.Info.ServerId, s.Info.AgentId, s.Info.DisplayName, s.Error, s.LostChunks, s.LastCollectedAt, s.RecordingEnabled,
-        retentionHours = 24
-    }).ToArray();
+    private static string GroupId(QuasarCompanionServer info) => string.IsNullOrEmpty(info.ClusterId) ? info.ServerId : "cluster:" + info.ClusterId;
+
+    public object[] Servers() => _servers.Values.GroupBy(s => GroupId(s.Info), StringComparer.OrdinalIgnoreCase)
+        .Select(g => Describe(g.ToArray())).OrderBy(s => s.DisplayName).Cast<object>().ToArray();
 
     public string Resolve(string id) => _servers.Values.FirstOrDefault(s => s.Info.ServerId.Equals(id, StringComparison.OrdinalIgnoreCase)
-        || s.Info.AgentId.Equals(id, StringComparison.OrdinalIgnoreCase))?.Info.ServerId ?? id;
+        || s.Info.AgentId.Equals(id, StringComparison.OrdinalIgnoreCase)) is { } server ? GroupId(server.Info) : id;
+
+    private ServerHistory[] FindGroup(string id)
+    {
+        var resolved = Resolve(id);
+        var members = _servers.Values.Where(s => GroupId(s.Info).Equals(resolved, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return members.Length > 0 ? members : throw new KeyNotFoundException("No replay history for this server.");
+    }
+
+    private ServerStatus Describe(ServerHistory[] members)
+    {
+        var connected = _channel.GetConnectedServers().Select(s => s.AgentId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var first = members.OrderByDescending(s => connected.Contains(s.Info.AgentId)).ThenBy(s => s.Info.ServerId, StringComparer.OrdinalIgnoreCase).First();
+        var enabled = members.Count(s => s.RecordingEnabled);
+        return new(GroupId(first.Info), first.Info.AgentId,
+            string.IsNullOrEmpty(first.Info.ClusterId) ? first.Info.DisplayName : string.IsNullOrEmpty(first.Info.ClusterDisplayName) ? first.Info.ClusterId : first.Info.ClusterDisplayName,
+            members.SelectMany(s => new[] { s.Info.ServerId, s.Info.AgentId }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            string.Join("; ", members.Where(s => !string.IsNullOrEmpty(s.Error)).Select(s => members.Length == 1 ? s.Error : $"{s.Info.DisplayName}: {s.Error}")),
+            members.Sum(s => s.LostChunks), members.Max(s => s.LastCollectedAt), enabled == members.Length,
+            members.Any(s => s.Settings.Enabled != first.Settings.Enabled || s.Settings.MaxIncidentMinutes != first.Settings.MaxIncidentMinutes
+                || s.Settings.MaxContextRadius != first.Settings.MaxContextRadius), first.Settings);
+    }
 
     public object Overview(string serverId)
     {
-        var server = Find(serverId);
+        var members = FindGroup(serverId);
+        var status = Describe(members);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return new { server.Info, server.Error, server.LostChunks, server.LastCollectedAt, server.RecordingEnabled, settings = server.Settings, incidents = server.Incidents.Values.Where(r => r.Incident!.Until >= now - ReplayChunkStore.RetentionMs).OrderByDescending(r => r.Incident!.StartedAt).Select(r => r.Incident), segments = server.Store.List(now).Select(id => new { at = ReplayChunkStore.Timestamp(id), events = int.Parse(id.Split('-')[1]) }) };
+        return new { info = status, status.Error, status.LostChunks, status.LastCollectedAt, status.RecordingEnabled, status.RecordingMixed, settings = status.Settings,
+            incidents = members.SelectMany(s => s.Incidents.Values).Where(r => r.Incident!.Until >= now - ReplayChunkStore.RetentionMs)
+                .OrderByDescending(r => r.Incident!.StartedAt).Select(r => r.Incident),
+            segments = members.SelectMany(s => s.Store.List(now)).Select(id => new { at = ReplayChunkStore.Timestamp(id), events = int.Parse(id.Split('-')[1]) }) };
     }
 
     public async Task<object> SetRecording(string serverId, ReplayRecordingSettings settings, CancellationToken token)
     {
         settings.Validate();
-        var server = Find(serverId);
-        await server.Gate.WaitAsync(token);
+        await _recordingGate.WaitAsync(token);
         try
         {
-            // Persist before sending: a failed stop must never resume collection on restart.
-            var path = Path.Combine(server.Directory, "recording.json");
-            await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(settings, Json), token);
-            File.Move(path + ".tmp", path, true);
-            server.Settings = settings;
-            server.Draining = !settings.Enabled;
-            server.RetryAt = default;
-            await CollectLocked(server, token);
-            return new { server.RecordingEnabled, settings = server.Settings, server.Error };
+            var members = FindGroup(serverId);
+            var cluster = !string.IsNullOrEmpty(members[0].Info.ClusterId);
+            if (cluster)
+            {
+                var id = GroupId(members[0].Info);
+                // One durable cluster policy also covers future nodes and replacement incarnations.
+                await WriteSettings(ClusterSettingsPath(id), settings, token);
+                _clusterSettings[id] = settings;
+            }
+            var connected = _channel.GetConnectedServers().Select(s => s.AgentId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            await Parallel.ForEachAsync(members, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = token }, async (server, cancellation) =>
+            {
+                await server.Gate.WaitAsync(cancellation);
+                try
+                {
+                    // Persist before sending: a failed stop must never resume collection on restart.
+                    if (!cluster) await WriteSettings(Path.Combine(server.Directory, "recording.json"), settings, cancellation);
+                    server.Settings = settings;
+                    server.Draining = !settings.Enabled;
+                    server.RetryAt = default;
+                    if (!cluster || connected.Contains(server.Info.AgentId)) await CollectLocked(server, cancellation);
+                }
+                finally { server.Gate.Release(); }
+            });
+            var status = Describe(FindGroup(serverId));
+            return new { status.RecordingEnabled, status.RecordingMixed, settings = status.Settings, status.Error };
         }
-        finally { server.Gate.Release(); }
+        finally { _recordingGate.Release(); }
     }
+
+    private static async Task WriteSettings(string path, ReplayRecordingSettings settings, CancellationToken token)
+    {
+        await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(settings, Json), token);
+        File.Move(path + ".tmp", path, true);
+    }
+
+    private static string Hash(string id) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id.ToLowerInvariant())));
+    private string ClusterSettingsPath(string id) => Path.Combine(_root, Hash(id) + ".recording.json");
+    private ReplayRecordingSettings? ClusterSettings(QuasarCompanionServer info) => string.IsNullOrEmpty(info.ClusterId) ? null
+        : _clusterSettings.GetOrAdd(GroupId(info), id => File.Exists(ClusterSettingsPath(id)) ? ReadSettings(ClusterSettingsPath(id), id) : null);
+
+    private ReplayRecordingSettings ReadSettings(string path, string id)
+    {
+        try
+        {
+            var settings = JsonSerializer.Deserialize<ReplayRecordingSettings>(File.ReadAllText(path), Json) ?? new();
+            settings.Validate();
+            return settings;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException or ArgumentException)
+        {
+            _logger.LogWarning(e, "Recording settings unreadable; recording disabled for {Server}", id);
+            return new();
+        }
+    }
+
+    private sealed record ServerStatus(string ServerId, string AgentId, string DisplayName, string[] MemberIds, string Error,
+        long LostChunks, DateTimeOffset? LastCollectedAt, bool RecordingEnabled, bool RecordingMixed, ReplayRecordingSettings Settings, int RetentionHours = 24);
 
     public async Task<List<ReplayBatch>> Query(string serverId, long from, long to, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (from < now - ReplayChunkStore.RetentionMs || to <= from || to - from > 60 * 60 * 1000 || to > now + 60000)
             throw new ArgumentException("Select up to 60 minutes within the last 24 hours.");
-        var server = Find(serverId);
+        var members = FindGroup(serverId);
         await _queries.WaitAsync(cancellationToken);
         try
         {
@@ -75,14 +146,20 @@ public sealed class ReplayHistoryService : BackgroundService
                 var batches = new List<ReplayBatch>();
                 var count = 0;
                 var expandedBytes = 0;
+                var compressedBytes = 0;
+                var chunks = 0;
                 var seenGeometry = new HashSet<string>();
                 var geometryCache = new Dictionary<string, ReplayBlock[]>();
                 var voxelCache = new Dictionary<string, ReplayVoxelPage>();
                 var partsCache = new Dictionary<string, ReplayModelParts>();
+                foreach (var server in members)
                 foreach (var chunk in server.Store.ReadRange(from, to, now))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    compressedBytes += chunk.Data.Length;
+                    if (++chunks > 512 || compressedBytes > 8 * 1024 * 1024) throw new InvalidDataException("Too much replay data. Select a shorter time range.");
                     var batch = Decode(chunk, out var expandedSize, geometryCache, voxelCache, partsCache);
+                    batch.Node = string.IsNullOrEmpty(server.Info.ClusterSlot) ? server.Info.ServerId : server.Info.ClusterSlot;
                     expandedBytes += expandedSize;
                     foreach (var id in batch.Geometry.Keys.ToArray())
                         if (!seenGeometry.Add(id)) batch.Geometry.Remove(id);
@@ -136,7 +213,19 @@ public sealed class ReplayHistoryService : BackgroundService
             await server.Gate.WaitAsync(token);
             try
             {
-                server.Info = info;
+                if (server.Info != info)
+                {
+                    var path = Path.Combine(server.Directory, "server.json");
+                    await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(info, Json), token);
+                    File.Move(path + ".tmp", path, true);
+                    server.Info = info;
+                }
+                if (ClusterSettings(info) is { } settings && !ReferenceEquals(settings, server.Settings))
+                {
+                    server.Settings = settings;
+                    server.Draining = !settings.Enabled;
+                    server.RetryAt = default;
+                }
                 if ((!server.RecordingEnabled && !server.Draining) || server.RetryAt > DateTimeOffset.UtcNow) return;
                 await CollectLocked(server, token);
             }
@@ -193,18 +282,12 @@ public sealed class ReplayHistoryService : BackgroundService
 
     private ServerHistory Open(QuasarCompanionServer info)
     {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(info.ServerId.ToLowerInvariant())));
+        var hash = Hash(info.ServerId);
         var directory = Path.Combine(_root, hash);
         var store = new ReplayChunkStore(directory, 256L * 1024 * 1024);
         File.WriteAllText(Path.Combine(directory, "server.json"), JsonSerializer.Serialize(info, Json));
-        var settings = new ReplayRecordingSettings();
         var settingsPath = Path.Combine(directory, "recording.json");
-        try
-        {
-            if (File.Exists(settingsPath)) settings = JsonSerializer.Deserialize<ReplayRecordingSettings>(File.ReadAllText(settingsPath), Json) ?? new ReplayRecordingSettings();
-            settings.Validate();
-        }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException or ArgumentException) { settings = new ReplayRecordingSettings(); _logger.LogWarning(e, "Recording settings unreadable; recording disabled for {Server}", info.ServerId); }
+        var settings = ClusterSettings(info) ?? (File.Exists(settingsPath) ? ReadSettings(settingsPath, info.ServerId) : new());
         var server = new ServerHistory(info, store, directory) { Settings = settings };
         try
         {
@@ -216,8 +299,6 @@ public sealed class ReplayHistoryService : BackgroundService
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { _logger.LogWarning(e, "Incident index unreadable for {Server}", info.ServerId); }
         return server;
     }
-
-    private ServerHistory Find(string id) => _servers.TryGetValue(Resolve(id), out var server) ? server : throw new KeyNotFoundException("No replay history for this server.");
 
     internal static ReplayBatch Decode(ReplayChunk chunk) => Decode(chunk, out _);
 
