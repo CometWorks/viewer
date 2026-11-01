@@ -25,6 +25,7 @@ var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 try
 {
     await HostedPrefixChecks.RunAsync();
+    await ClusterReplayChecks.Run(root);
     IncidentChecks.Run();
     SampleBufferChecks.Run();
     var schedule = new ReplaySchedule();

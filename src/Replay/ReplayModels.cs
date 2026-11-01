@@ -84,6 +84,9 @@ public sealed class ReplayBatch
     public int Version { get; set; } = 1;
     public string Session { get; set; } = "";
     public string World { get; set; } = "";
+    // Added by Quasar queries: stable node slot, so concurrent cluster sessions stay independent.
+    [DefaultValue("")]
+    public string Node { get; set; } = "";
     public Dictionary<string, ReplayBlock[]> Geometry { get; set; } = new Dictionary<string, ReplayBlock[]>();
     public Dictionary<string, ReplayModelParts> ModelParts { get; set; } = new Dictionary<string, ReplayModelParts>();
     public Dictionary<string, ReplayVoxelPage> Voxels { get; set; } = new Dictionary<string, ReplayVoxelPage>();

@@ -1,14 +1,28 @@
 # Contextual replay
 
 Recording is **disabled by default**, including upgrades from automatic recording.
-An administrator can opt in per server using **Enable recording on this server**
+An administrator can opt in per server using **Enable recording for this server (all cluster nodes)**
 in the Entity Viewer history sidebar. The setting persists in Quasar. Once enabled,
 the recorder runs in the Entity Viewer Magnetar companion without an open browser. Quasar's viewer plugin collects and archives data through the existing
 companion channel. Magnetar core requires no new runtime service or physics patch.
 The Quasar abstraction adds connected-server discovery for background companion
-consumers. Standalone history uses the stable server name; clustered nodes use
-the existing telemetry identity (node/slot/epoch), and requests address the exact
-live agent. Cross-node incident stitching is not implemented. Matching Quasar and viewer revisions must be installed.
+consumers. Standalone history uses the stable server name. A cluster appears once,
+under its configured display name, and combines history from all its nodes. Discovery
+supplies the explicit cluster ID and stable slot; display names are never used to
+infer membership. Node and agent deep links select the containing cluster.
+Collection still uses separate telemetry archives (node/slot/epoch) and addresses
+each exact live agent. Existing archive files are not moved. Cluster membership
+is saved with each archive so offline history remains grouped across Quasar restarts.
+Older archives without cluster metadata join the group when that node reconnects;
+an offline legacy archive cannot be assigned to a cluster from its hashed ID alone.
+Matching Quasar and viewer revisions must be installed.
+
+Recording controls apply to the whole selected cluster. A durable cluster policy
+covers connected nodes, offline members when they reconnect, and newly discovered
+slots or replacement incarnations. Existing per-node settings remain until a cluster
+setting is saved; conflicting settings appear as a mixed checkbox. Standalone
+settings stay independent. Incidents and evidence keep their original node sessions;
+this grouping does not infer cross-node incident ownership or merge incident IDs.
 
 Disabled companions do not construct a recorder, discover entities, attach recording
 hooks, start recording workers or sample the world. Quasar sends no collection
@@ -201,7 +215,7 @@ cross-segment delta chains and baseline dependencies at retention boundaries.
 Timeline compressed segments are capped at 512 KiB and expansion at 4 MiB;
 individual block pages are capped at 256 KiB expanded, and collection responses
 at 4 MiB including geometry. Queries cap unique expanded data at 32 MiB and
-40,000 records, sharing repeated page data within each response. The recording
+40,000 records across the whole selected server or cluster, sharing repeated page data within each response. The recording
 limit remains 50,000 blocks per grid; the browser renders all recorded grids within
 the retained context without a separate 50,000-block total limit.
 Archive file metadata is indexed in memory rather than rescanning the directory
@@ -243,7 +257,9 @@ up to 60 minutes anywhere within the last 24 hours. The incident selector uses a
 small persisted navigation index of the latest 4,096 incidents, with segment
 activity windows as the legacy fallback. It loads the recorded incident boundaries,
 including up to 10 seconds of baseline pre-roll (trimmed at the one-hour limit).
-Select an entity to focus its recorded surroundings and motion trail. Connected
+Unfocused cluster history includes every node in the loaded range. Selecting an
+entity focuses its recorded surroundings and motion trail, including nearby
+observations on other nodes. Connected
 incidents expand the context of the entity that opened history; recordings without
 incident metadata retain the 500 m context. Unrelated assets are pruned before
 preparation. Frame visibility follows the context recorded at that moment, including
@@ -280,7 +296,11 @@ state, crosses a control/character change, or bridges explicit gaps, removals,
 sessions or motion inconsistent with recorded velocity. Longer suppression
 intervals hold the previous observation. **Observations only** disables motion
 interpolation and reconstructed character animation. It hides data after removal, expired heartbeats, recording gaps, or a
-new recording session. Sessions are separate even if game entity IDs are reused.
+new recording session on that node slot. Concurrent cluster nodes remain visible;
+one node's gap or restart does not replace another node's session. The unfocused
+simulation-speed readout shows the slowest currently observed node. Incident clips,
+terrain validity and evidence attribution retain their node/session boundaries.
+Sessions are separate even if game entity IDs are reused.
 Queries include short pre-roll so unchanged entities are visible at the window
 start. Seeking backward restores the recorded layout directly, including blocks
 that were subsequently destroyed. Missing geometry is explicitly reported.
@@ -423,7 +443,10 @@ ReplayChecks covers idle suppression/heartbeats, cadence transitions and quiet
 tails, sustained-motion detection, compression, idempotent writes, spool restart,
 acknowledgements, storage quota/retention, default-disabled silence, admin recording
 control, persistent opt-out, collection without a browser, admin-only
-HTTP access, lossless IDs and offline querying after Quasar restart. Geometry
+HTTP access, lossless IDs and offline querying after Quasar restart. Cluster checks
+cover explicit membership, node aliases, shared recording control, new-node policy
+inheritance, offline restart, combined incidents and queries, and isolation from
+other clusters and standalone servers. Geometry
 checks cover partial captures, destruction/rebuilding, integrity changes, page
 deduplication, corrupt hashes, retention dependency survival and real writer
 materialization. Context checks cover terrain checkpoints, malformed data, dependency
