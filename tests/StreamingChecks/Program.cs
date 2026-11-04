@@ -39,6 +39,7 @@ try
     var plugin = new EntityViewerQuasarPlugin();
     plugin.ConfigureServices(builder.Services, context);
     builder.Services.AddSingleton<IQuasarOperationDispatcher, FixtureOperationDispatcher>();
+    builder.Services.AddSingleton<IQuasarHttpOperations, FixtureOperationDispatcher>();
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
     builder.Services.AddSingleton<IQuasarCompanionChannel, UnusedCompanionChannel>();
     builder.Services.AddAuthentication("test")
@@ -217,8 +218,11 @@ sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptio
 }
 
 // The isolated plugin host supplies the SDK boundary; Quasar's own checks exercise runtime settings and HTTP transport.
-sealed class FixtureOperationDispatcher(IEnumerable<QuasarOperation> operations) : IQuasarOperationDispatcher
+sealed class FixtureOperationDispatcher(IEnumerable<QuasarOperation> operations) : IQuasarOperationDispatcher, IQuasarHttpOperations
 {
+    public async Task<IResult> ExecuteAsync(HttpContext http, string pluginId, string operationId, JsonElement? request = null) =>
+        (await DispatchAsync(new(http.User, http.RequestServices), pluginId, operationId,
+            request ?? JsonSerializer.SerializeToElement(new { }), http.RequestAborted)).ToHttpResult();
     public async Task<QuasarOperationResult> DispatchAsync(QuasarOperationContext context, string pluginId,
         string operationId, JsonElement request, CancellationToken token)
     {
