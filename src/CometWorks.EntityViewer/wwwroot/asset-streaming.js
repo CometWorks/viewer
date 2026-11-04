@@ -1,21 +1,14 @@
+import { viewerRequest, viewerSdk, VIEWER_PLUGIN } from "./viewer-sdk.js";
 import { getViewerParams } from "./quasar-api.js";
 import { log } from "./logging.js";
 import { loadStreamedAsset } from "./asset-cache.js";
-
-const STATUS_PATH = "api/assets/status";
-const SESSIONS_PATH = "api/assets/sessions";
 
 let currentStatus = null;
 let remoteAssetSession = null;
 let sessionGeneration = 0;
 
 export async function fetchAssetStreamingStatus() {
-    const response = await fetch(pluginApiUrl(STATUS_PATH), {
-        headers: { "Accept": "application/json" },
-        credentials: "same-origin",
-    });
-    if (!response.ok) throw await createStatusError(response, "Asset streaming status request failed");
-    currentStatus = await response.json();
+    currentStatus = await viewerRequest("assets.status");
     return currentStatus;
 }
 
@@ -28,25 +21,10 @@ export async function prepareRemoteAssetSession(scene, target = null) {
     }
 
     const { agentId, entityId } = target || getViewerParams();
-    const sessionUrl = pluginApiUrl(SESSIONS_PATH);
-    log(`Creating server asset streaming session: POST ${sessionUrl.pathname}.`);
-    const response = await fetch(sessionUrl, {
-        method: "POST",
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        credentials: "same-origin",
-        body: JSON.stringify({
-            agentId,
-            entityId,
-            mods: Array.isArray(scene?.mods) ? scene.mods : [],
-        }),
+    log("Creating server asset streaming session through Quasar SDK.");
+    const body = await viewerRequest("assets.session.create", {
+        agentId, entityId, mods: Array.isArray(scene?.mods) ? scene.mods : [],
     });
-    log(`Server asset streaming session response: HTTP ${response.status}.`);
-    if (!response.ok) throw await createStatusError(response, "Asset streaming session request failed");
-
-    const body = await response.json();
     if (generation !== sessionGeneration) return { active: false, changed: false };
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
     if (!sessionId) {
@@ -67,22 +45,16 @@ export function getRemoteAssetSessionKey() {
 export async function resolveRemoteAssetFile(logicalPath, options = {}) {
     if (!remoteAssetSession?.sessionId) return null;
 
-    const response = await fetch(pluginApiUrl(`${SESSIONS_PATH}/${encodeURIComponent(remoteAssetSession.sessionId)}/resolve`), {
-        method: "POST",
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        credentials: "same-origin",
-        body: JSON.stringify({
-            logicalPath,
-            rootId: options.rootId || options.RootId || "",
-            sourceKind: options.sourceKind || options.SourceKind || "",
-        }),
-    });
-    if (!response.ok) return null;
-
-    const resolved = await response.json();
+    let resolved;
+    try {
+        resolved = await viewerRequest("assets.resolve", {
+            sessionId: remoteAssetSession.sessionId,
+            asset: { logicalPath, rootId: options.rootId || options.RootId || "", sourceKind: options.sourceKind || options.SourceKind || "" },
+        });
+    } catch (error) {
+        if (error.status >= 400 && error.status < 500) return null;
+        throw error;
+    }
     if (!resolved?.found || !resolved.assetToken) return null;
 
     return {
@@ -97,12 +69,9 @@ export async function resolveRemoteAssetFile(logicalPath, options = {}) {
 
 async function fetchResolvedRemoteFile(resolved) {
     const blob = await loadStreamedAsset(resolved, async () => {
-        const response = await fetch(pluginApiUrl(`api/assets/files/${encodeURIComponent(resolved.assetToken)}`), {
-            headers: { "Accept": resolved.contentType || "application/octet-stream" },
-            credentials: "same-origin",
-        });
-        if (!response.ok) throw await createStatusError(response, "Asset stream request failed");
-        return await response.blob();
+        const stream = await (await viewerSdk()).openRead(VIEWER_PLUGIN, "assets.file.read", { assetToken: resolved.assetToken });
+        try { return await stream.blob(); }
+        finally { await stream.dispose(); }
     });
     const fileName = String(resolved.logicalPath || "asset").split("/").filter(Boolean).pop() || "asset";
     const lastModified = resolved.lastModifiedUtc ? Date.parse(resolved.lastModifiedUtc) : Date.now();
@@ -116,19 +85,4 @@ async function fetchResolvedRemoteFile(resolved) {
     blob.name = fileName;
     blob.lastModified = Number.isFinite(lastModified) ? lastModified : Date.now();
     return blob;
-}
-
-function pluginApiUrl(path) {
-    return new URL(path, import.meta.url);
-}
-
-async function createStatusError(response, fallback) {
-    let detail = response.statusText;
-    try {
-        const body = await response.json();
-        detail = body.detail || body.title || body.error || detail;
-    } catch {
-    }
-    const url = response.url ? ` ${response.url}` : "";
-    return new Error(`${fallback} (${response.status}): ${detail}${url}`);
 }

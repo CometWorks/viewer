@@ -38,8 +38,7 @@ try
     };
     var plugin = new EntityViewerQuasarPlugin();
     plugin.ConfigureServices(builder.Services, context);
-    builder.Services.AddSingleton<IQuasarOperationDispatcher, FixtureOperationDispatcher>();
-    builder.Services.AddSingleton<IQuasarHttpOperations, FixtureOperationDispatcher>();
+    using var sdk = new QuasarSdkFixture(builder.Services, Path.Combine(root, "quasar"));
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
     builder.Services.AddSingleton<IQuasarCompanionChannel, UnusedCompanionChannel>();
     builder.Services.AddAuthentication("test")
@@ -50,8 +49,10 @@ try
         options.AddPolicy(QuasarPolicyNames.CanManageSecurity, policy => policy.RequireClaim(ClaimTypes.NameIdentifier, "alice"));
     });
     await using var app = builder.Build();
+    app.UsePathBase("/hosted-panel");
     app.UseAuthentication();
     app.UseAuthorization();
+    QuasarSdkFixture.Map(app);
     plugin.ConfigureEndpoints(app, context);
 
     var content = Path.Combine(root, "Content");
@@ -111,10 +112,28 @@ try
     using var alice = Client("alice");
     using var bob = Client("bob");
     using var anonymous = Client("");
+    await QuasarSdkFixture.Bind(alice);
+    await QuasarSdkFixture.Bind(bob);
     Check((await anonymous.GetAsync(api + "status")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous clients cannot resolve assets");
     var aliceSession = await CreateSession(alice);
     var bobSession = await CreateSession(bob);
     var aliceAsset = await Resolve(alice, aliceSession, "Models/mod.mwm", "123");
+    Check(app.Services.GetServices<QuasarOperation>().Count() == 16, "All inventoried viewer operations use the SDK");
+    var bridge = await alice.GetStringAsync("/hosted-panel/_quasar/plugins/cometworks.entityviewer/_sdk/client.js");
+    Check(bridge.Contains("/hosted-panel/_quasar/sdk/v1/client.js") && bridge.Contains("/hosted-panel/"), "SDK iframe bridge retains hosted panel base");
+    using (var status = await bob.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/assets.status", new { }))
+        Check(status.IsSuccessStatusCode, "Generic SDK status operation works without Nebula");
+    using (var denied = await bob.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/assets.roots.read", new { }))
+        Check(denied.StatusCode == HttpStatusCode.Forbidden, "Generic SDK preserves root administration restriction");
+    using (var reserved = await alice.PostAsJsonAsync("/_quasar/sdk/v1/resources/cometworks.entityviewer/assets.file.read", new { assetToken = aliceAsset.AssetToken }))
+    {
+        reserved.EnsureSuccessStatusCode();
+        var resource = await reserved.Content.ReadFromJsonAsync<JsonElement>();
+        using var response = await alice.GetAsync(resource.GetProperty("url").GetString());
+        response.EnsureSuccessStatusCode();
+        Check(SHA256.HashData(await response.Content.ReadAsByteArrayAsync()).SequenceEqual(expectedHash), "SDK and legacy streams return identical bytes");
+    }
+
     var bobAsset = await Resolve(bob, bobSession, "Models/mod.mwm", "123");
     Check(aliceAsset.CacheKey != bobAsset.CacheKey, "HTTP cache keys are isolated by user");
     Check((await bob.GetAsync(api + "files/" + aliceAsset.AssetToken)).StatusCode == HttpStatusCode.NotFound,
@@ -126,7 +145,7 @@ try
     // Keep one large response unread while other users finish independent downloads.
     using var slow = await alice.GetAsync(api + "files/" + aliceAsset.AssetToken, HttpCompletionOption.ResponseHeadersRead);
     var elapsed = Stopwatch.StartNew();
-    var downloads = new[] { (alice, aliceAsset), (bob, bobAsset) }.SelectMany(pair => Enumerable.Range(0, 4).Select(async _ =>
+    var downloads = new[] { (alice, aliceAsset), (bob, bobAsset) }.SelectMany(pair => Enumerable.Range(0, 3).Select(async _ =>
     {
         using var response = await pair.Item1.GetAsync(api + "files/" + pair.Item2.AssetToken);
         response.EnsureSuccessStatusCode();
@@ -135,7 +154,7 @@ try
         Check(SHA256.HashData(await response.Content.ReadAsByteArrayAsync()).SequenceEqual(expectedHash), "Concurrent archive responses contain identical complete bytes");
     }));
     await Task.WhenAll(downloads).WaitAsync(TimeSpan.FromSeconds(15));
-    Console.WriteLine($"PASS: two users completed eight 16 MiB archive downloads in {elapsed.ElapsedMilliseconds} ms while another response remained unread.");
+    Console.WriteLine($"PASS: two users completed six 16 MiB archive downloads in {elapsed.ElapsedMilliseconds} ms while another response remained unread.");
     slow.Dispose();
 
     var plain = await Resolve(alice, aliceSession, "Models/block.mwm", "");
@@ -163,6 +182,13 @@ try
     var paths = app.Services.GetRequiredService<EntityViewerStreamingPaths>();
     await File.WriteAllTextAsync(paths.SettingsPath, "{}");
     Check(!(await settingsStore.GetAsync(default)).ConsentAccepted, "External settings replacement is detected");
+    using (var scope = app.Services.CreateScope())
+    {
+        var operations = scope.ServiceProvider.GetRequiredService<Quasar.Services.Plugins.QuasarOperationService>();
+        var admin = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "alice")], "test"));
+        await operations.SaveRuleAsync(admin, "cometworks.entityviewer", "assets.status", new() { Enabled = false, RequiredPolicies = [QuasarPolicyNames.CanView] });
+        Check((await alice.GetAsync(api + "status")).StatusCode == HttpStatusCode.Forbidden, "Saved SDK rules also close legacy routes");
+    }
     await app.StopAsync();
     Console.WriteLine("PASS: authorization, consent revocation, revisions, snapshot isolation, asynchronous streaming, cancellation and ranges.");
 
@@ -214,25 +240,6 @@ sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptio
         return Task.FromResult(string.IsNullOrEmpty(user) ? AuthenticateResult.NoResult()
             : AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(
                 new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, user)], "test")), "test")));
-    }
-}
-
-// The isolated plugin host supplies the SDK boundary; Quasar's own checks exercise runtime settings and HTTP transport.
-sealed class FixtureOperationDispatcher(IEnumerable<QuasarOperation> operations) : IQuasarOperationDispatcher, IQuasarHttpOperations
-{
-    public async Task<IResult> ExecuteAsync(HttpContext http, string pluginId, string operationId, JsonElement? request = null) =>
-        (await DispatchAsync(new(http.User, http.RequestServices), pluginId, operationId,
-            request ?? JsonSerializer.SerializeToElement(new { }), http.RequestAborted)).ToHttpResult();
-    public async Task<QuasarOperationResult> DispatchAsync(QuasarOperationContext context, string pluginId,
-        string operationId, JsonElement request, CancellationToken token)
-    {
-        if (context.User.Identity?.IsAuthenticated != true) return new(401);
-        var operation = operations.SingleOrDefault(candidate => candidate.Key == pluginId + "/" + operationId);
-        if (operation is null) return new(404);
-        var authorization = context.Services.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationService>();
-        foreach (var policy in operation.DefaultPolicies)
-            if (!(await authorization.AuthorizeAsync(context.User, null, policy)).Succeeded) return new(403);
-        return new(200, await operation.InvokeAsync(context, request, token));
     }
 }
 

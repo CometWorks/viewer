@@ -110,13 +110,13 @@ mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
 
-The first browser SDK slice registers `assets.status` (`CanView`) and
-`assets.roots.read` (`CanManageSecurity`) through Quasar's shared dispatcher.
-Both existing URL prefixes use those same operation rules. Quasar's Security page
-can change their required policies or disable them. The browser modules still
-use their existing fetch calls; binary streaming and the remaining viewer
-operations have not migrated. This development revision needs a matching Quasar
-SDK build; set the manifest's minimum compatible release before publication.
+All 16 scene, asset-setup/streaming and replay operations use Quasar browser SDK
+v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancellation;
+the viewer retains consent, user-bound asset tokens, private caches and history
+rules. Both existing URL prefixes remain compatibility aliases to the same SDK
+handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
+This development manifest requires `browserSdkVersion: 1`; choose the first SDK
+release as the minimum Quasar version before publishing the package.
 
 ## Recording history
 

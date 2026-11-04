@@ -1,3 +1,4 @@
+import { viewerRequest } from "./viewer-sdk.js";
 import * as THREE from "three";
 import { movementState } from "./replay-movement.js";
 import { animateReplayCharacter } from "./replay-character.js";
@@ -107,14 +108,12 @@ const resize = new ResizeObserver(() => {
 });
 resize.observe(viewport);
 
-async function request(path, signal, options = {}) {
-    const response = await fetch(new URL(`./api/replay/${path}`, import.meta.url), { credentials: "same-origin", signal, ...options });
-    if (!response.ok) {
-        if (response.status === 403 || response.status === 401) throw new Error("Administrator access is required to view recording history.");
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.error || `History request failed (${response.status}).`);
+async function request(operation, payload = {}, signal) {
+    try { return await viewerRequest(operation, payload, { signal }); }
+    catch (error) {
+        if (error.status === 403 || error.status === 401) throw new Error("Administrator access is required to view recording history.");
+        throw error;
     }
-    return response.json();
 }
 let incidentIndex = new Map();
 function recordingStatus(status) {
@@ -137,7 +136,7 @@ el("from").max = localTime(new Date());
 async function start() {
     try {
         await Promise.allSettled([restoreContentFolder(), restoreModsFolder(), fetchAssetStreamingStatus()]);
-        const servers = await request("servers");
+        const servers = await request("replay.servers");
         for (const server of servers) {
             const option = new Option(server.displayName || server.serverId, server.serverId);
             option.dataset.agentId = server.agentId || "";
@@ -167,11 +166,11 @@ async function load(range = null) {
     try {
         if (!Number.isFinite(requestedFrom) || requestedTo <= requestedFrom) throw new Error("Choose a start time in the last 24 hours.");
         el("status").textContent = "Loading recorded observations…";
-        const server = encodeURIComponent(el("server").value);
-        const overview = await request(`${server}/overview`, abort.signal);
+        const server = el("server").value;
+        const overview = await request("replay.overview", { serverId: server }, abort.signal);
         if (current !== generation) return;
         recordingStatus(overview);
-        const batches = await request(`${server}?from=${requestedFrom}&to=${requestedTo}`, abort.signal);
+        const batches = await request("replay.query", { serverId: server, from: requestedFrom, to: requestedTo }, abort.signal);
         if (current !== generation) return;
         for (const mesh of meshes.values()) world.remove(mesh); meshes.clear();
         for (const group of grids.values()) { gridRenderer.release(group); world.remove(group); } grids.clear();
@@ -462,7 +461,7 @@ async function saveRecording() {
     el("recordingEnabled").disabled = el("saveRecording").disabled = true;
     el("recordingStatus").textContent = enabled ? "Enabling recording…" : "Stopping recording…";
     try {
-        const result = await request(`${encodeURIComponent(server)}/recording`, undefined, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled, maxIncidentMinutes: Number(el("maxIncidentMinutes").value), maxContextRadius: Number(el("maxContextRadius").value) }) });
+        const result = await request("replay.recording.update", { serverId: server, settings: { enabled, maxIncidentMinutes: Number(el("maxIncidentMinutes").value), maxContextRadius: Number(el("maxContextRadius").value) } });
         if (el("server").value === server) recordingStatus(result);
     } catch (error) {
         if (el("server").value === server) {

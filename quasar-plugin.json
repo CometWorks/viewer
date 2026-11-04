@@ -9,6 +9,7 @@
   "stylesheets": [
     "quasar-plugin.css"
   ],
+  "browserSdkVersion": 1,
   "quasarVersion": ">=1.3.0.4",
   "companionPlugins": [
     {

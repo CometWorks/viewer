@@ -7,4 +7,5 @@
     <Compile Include="../../src/CometWorks.EntityViewer.Magnetar/Replay/ReplayLayoutBuilder.cs" Link="ReplayLayoutBuilder.cs" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
+  <Import Project="../QuasarSdkFixture.props" />
 </Project>
