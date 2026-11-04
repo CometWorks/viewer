@@ -36,5 +36,16 @@ export async function fetchEntityScene() {
         const url = response.url ? ` ${response.url}` : "";
         throw new Error(`Scene request failed (${response.status}): ${detail}${url}`);
     }
-    return await response.json();
+    const scene = await response.json();
+    attachAssetSession(scene, response);
+    return scene;
+}
+
+function attachAssetSession(value, response) {
+    const sessionId = response.headers.get("X-Entity-Viewer-Asset-Session") || "";
+    if (!sessionId || !value || typeof value !== "object") return;
+    Object.defineProperty(value, "assetSession", { value: {
+        sessionId,
+        expiresAtUtc: response.headers.get("X-Entity-Viewer-Asset-Session-Expires") || "",
+    }, enumerable: false });
 }

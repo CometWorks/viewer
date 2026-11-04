@@ -60,6 +60,13 @@ The DIS-0042 Viewer follow-up needs both Quasar's shared browser trusted-princip
 update and this plugin's asset path update. See [asset boundaries and rollout](Docs/EntityViewer.md#asset-boundary).
 The original urgent agent/Host fix remains independent.
 
+Viewer API routes inherit Quasar's host authentication and require either
+`CanView` (scene, streaming status, resolve, file) or `CanManageSecurity`
+(replay, streaming settings, installer). Server asset sessions are issued only
+from companion-produced scenes or validated replay data; the browser cannot
+choose which installed mods a session authorizes. See
+[server asset streaming](Docs/EntityViewer.md#server-asset-streaming).
+
 ## Preview Workflow
 
 Build or run the standalone preview host while developing viewer plugin UI:

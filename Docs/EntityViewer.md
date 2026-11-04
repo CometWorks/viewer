@@ -49,6 +49,15 @@ session and file capabilities expire; final downloads still require authorizatio
 current streaming consent and the owning user/session. The companion has no
 separate listener; it uses Quasar's authenticated agent transport.
 
+Every Viewer API is mapped under both the plugin and static-web-assets route
+prefixes with one of those named Quasar policies. The plugin does not select an
+authentication scheme, so cookie, service-principal, and trusted-network
+authentication continue to come from Quasar's host pipeline. Static HTML,
+JavaScript, CSS, and icons remain public; they contain no scene, replay, settings,
+path, or asset data. Ordinary `CanView` status responses omit active Content paths
+and path-bearing diagnostics. The admin-only root-settings and installer routes
+retain the detailed paths needed for configuration.
+
 The DIS-0042 follow-up requires **both** Quasar's shared trusted-principal update
 and this Viewer Quasar plugin update. Quasar validates intended original/effective
 destinations and same-origin browser context before granting automatic network
@@ -97,13 +106,17 @@ acceptance and installed browser/proxy behavior still need human verification.
 Use the **Server asset streaming** button in the viewer dialog title bar to
 accept consent and configure either SteamCMD-managed assets or a manual server
 Content folder. When streaming is enabled and the Content root is ready, the
-browser creates an asset session and resolves models and textures from the
-server before trying local folders. Local Content and Mods selections are not
-required for streaming.
+server issues an asset session with each companion-produced live scene or
+validated replay query. The response carries the opaque session ID in
+`X-Entity-Viewer-Asset-Session`; the browser cannot create a session or submit
+its own authorized mod list. The session therefore contains only mods present in
+the server-side scene/capture state. The browser activates that session and
+resolves models and textures from the server before trying local folders. Local
+Content and Mods selections are not required for streaming.
 
-A session is ready only after the response supplies a nonempty session ID.
-Failed or malformed session responses clear the previous session and show a
-warning. Model loading always asks the asset resolver for each model; missing
+A session is ready only after the scene or replay response supplies a nonempty
+session ID. A response without a newly issued session clears the previous
+session. Model loading always asks the asset resolver for each model; missing
 assets produce warnings with their logical paths and retain proxy geometry.
 
 Streamed model, texture, and definition files are stored in the browser's Cache
@@ -129,18 +142,22 @@ writes** (when the pending limit is reached).
 Use **Clear Streamed Asset Cache** in the Assets section to remove downloaded
 files from this browser. Browser storage is best-effort and subject to browser
 quota/eviction; private browsing or blocked storage can disable persistence.
-Files larger than 64 MiB are streamed without persistent caching. Storage
-failures do not stop viewing. Asset HTTP responses use `private, no-store` so
-shared proxies cannot cache authenticated downloads; the viewer owns the
-persistent cache explicitly.
+The server rejects individual assets larger than 64 MiB and mod archives larger
+than 2 GiB. Storage failures do not stop viewing. Asset HTTP responses use
+`private, no-store` so shared proxies cannot cache authenticated downloads; the
+viewer owns the persistent cache explicitly.
 
 Multiple users and sessions can stream concurrently. Each download owns its
 file/ZIP stream, and archive entries decompress as the response is sent rather
 than being copied completely into server memory first. Archive metadata indexes
-are cached with a size bound and refreshed when the archive changes. Settings
-reads reuse isolated snapshots until the settings file changes, and session
-lookups check expiry directly without scanning all tokens for every asset.
-Disabling streaming also rejects downloads using previously issued tokens.
+are cached with a size bound, reject archives with more than 32,768 entries, and
+refresh when the archive changes. Resolution is bounded globally and per user
+and session; downloads are bounded per user and session. Resolve rate, cumulative
+session response bytes, active sessions, and issued tokens have fixed caps, with
+oldest-capability eviction. Settings reads reuse isolated snapshots until the
+settings file changes, and session lookups check expiry directly without scanning
+all tokens for every asset. Disabling streaming also rejects downloads using
+previously issued tokens.
 
 ### Streaming regression checks
 
@@ -173,10 +190,13 @@ They verify gravity direction, horizontal heading, vertical-heading fallback,
 world/view coordinate agreement, and absent or invalid gravity. Browser tests
 also cover the captured frame, context clipping, and older scene snapshots.
 
-The standalone HTTP checks exercise the actual plugin endpoints using
-two authenticated users, eight concurrent 16 MiB archive downloads, an unread
+The standalone HTTP checks exercise the actual plugin endpoints using two
+authenticated users, six concurrent 16 MiB archive downloads, an unread
 slow-client response, consent revocation, cache revisions, cancellation, and
-plain-file ranges:
+plain-file ranges. They also inventory every Viewer API route under both route
+prefixes, verify its Quasar policy and default-scheme inheritance, exercise
+anonymous rejection, check viewer/admin status redaction, and prove that an
+installed mod absent from the companion scene cannot be guessed:
 
 ```bash
 dotnet run --project tests/StreamingChecks/StreamingChecks.csproj \
@@ -186,8 +206,8 @@ dotnet run --project tests/StreamingChecks/StreamingChecks.csproj \
 These checks run an isolated loopback test host; they do not start Quasar or
 SteamCMD.
 
-For troubleshooting, the Download Log records the viewer runtime revision, the
-session request path, and its HTTP status without recording session tokens.
+For troubleshooting, the Download Log records the viewer runtime revision and
+asset resolution/download failures without recording session tokens.
 After installing an update, restart Quasar from **Settings → UI Plugins**, then
 reload the viewer. Restarting the Dedicated Server loads the companion but does
 not reload the Quasar UI plugin.
