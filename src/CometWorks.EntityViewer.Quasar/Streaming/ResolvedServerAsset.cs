@@ -38,7 +38,7 @@ public sealed class ResolvedServerAsset
             SourceSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
             (SourceLastModifiedUtc ?? LastModifiedUtc)?.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
 
-    public Stream OpenRead()
+    public Stream OpenRead(IDisposable? responseLease = null)
     {
         if (Size < 0 || Size > AssetStreamingLimits.MaxAssetBytes)
             throw new InvalidDataException("Asset exceeds the streaming size limit.");
@@ -50,7 +50,7 @@ public sealed class ResolvedServerAsset
                 file.Dispose();
                 throw new FileNotFoundException("Asset changed after it was authorized.", FilePath);
             }
-            return new BoundedFileReadStream(file, Size);
+            return new BoundedFileReadStream(file, Size, responseLease);
         }
 
         ZipArchive? archive = null;
@@ -64,7 +64,7 @@ public sealed class ResolvedServerAsset
                 throw new FileNotFoundException($"Archive entry '{ArchiveEntryName}' not found.", FilePath);
             if (entry.Length != Size || entry.Length > AssetStreamingLimits.MaxAssetBytes)
                 throw new InvalidDataException("Asset archive entry exceeds its authorized size.");
-            return new ArchiveReadStream(archive, entry.Open(), entry.Length);
+            return new ArchiveReadStream(archive, entry.Open(), entry.Length, responseLease);
         }
         catch
         {
@@ -76,7 +76,7 @@ public sealed class ResolvedServerAsset
 
     // A source can grow after the initial length check. Expose only the bytes that were
     // fingerprinted and authorized so a concurrent local write cannot bypass the response cap.
-    private sealed class BoundedFileReadStream(FileStream file, long length) : Stream
+    private sealed class BoundedFileReadStream(FileStream file, long length, IDisposable? responseLease) : Stream
     {
         public override bool CanRead => true;
         public override bool CanSeek => true;
@@ -118,12 +118,13 @@ public sealed class ResolvedServerAsset
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         protected override void Dispose(bool disposing)
         {
-            if (disposing) file.Dispose();
+            if (disposing) { try { file.Dispose(); } finally { responseLease?.Dispose(); } }
             base.Dispose(disposing);
         }
         public override async ValueTask DisposeAsync()
         {
-            await file.DisposeAsync().ConfigureAwait(false);
+            try { await file.DisposeAsync().ConfigureAwait(false); }
+            finally { responseLease?.Dispose(); }
             GC.SuppressFinalize(this);
         }
 
@@ -138,10 +139,12 @@ public sealed class ResolvedServerAsset
         private readonly Stream _entry;
         private readonly long _length;
         private long _remaining;
+        private readonly IDisposable? _responseLease;
 
-        public ArchiveReadStream(ZipArchive archive, Stream entry, long length)
+        public ArchiveReadStream(ZipArchive archive, Stream entry, long length, IDisposable? responseLease)
         {
             _archive = archive;
+            _responseLease = responseLease;
             _entry = entry;
             _length = length;
             _remaining = length;
@@ -181,14 +184,14 @@ public sealed class ResolvedServerAsset
             if (disposing)
             {
                 try { _entry.Dispose(); }
-                finally { _archive.Dispose(); }
+                finally { try { _archive.Dispose(); } finally { _responseLease?.Dispose(); } }
             }
             base.Dispose(disposing);
         }
         public override async ValueTask DisposeAsync()
         {
             try { await _entry.DisposeAsync().ConfigureAwait(false); }
-            finally { _archive.Dispose(); }
+            finally { try { _archive.Dispose(); } finally { _responseLease?.Dispose(); } }
             GC.SuppressFinalize(this);
         }
 

@@ -1,20 +1,25 @@
 using System.Security.Claims;
 using System.Text.Json;
 using CometWorks.EntityViewer.Replay;
-using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Quasar.Plugin.Abstractions.Operations;
 
 namespace CometWorks.EntityViewer.Quasar.Streaming;
 
 internal static class ViewerAssetSessionProtocol
 {
-    internal const string SessionHeader = "X-Entity-Viewer-Asset-Session";
-    internal const string ExpiresHeader = "X-Entity-Viewer-Asset-Session-Expires";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    internal sealed record Grant(string SessionId, DateTimeOffset ExpiresAtUtc);
+    internal sealed record Response<T>(T Data, Grant? AssetSession);
 
-    internal static void WriteHeaders(HttpResponse response, ViewerAssetSession session)
+    internal static async Task<Response<T>> AttachAsync<T>(QuasarOperationContext caller, T data,
+        string agentId, string entityId, IEnumerable<AssetSessionModDto> mods, CancellationToken token)
     {
-        response.Headers[SessionHeader] = session.Id;
-        response.Headers[ExpiresHeader] = session.ExpiresAtUtc.ToString("O");
+        var settings = await caller.Services.GetRequiredService<IEntityViewerStreamingSettingsStore>().GetAsync(token);
+        if (!settings.StreamingEnabled || !settings.HasCurrentConsent) return new(data, null);
+        await caller.EnsureAuthorizedAsync(token);
+        var session = caller.Services.GetRequiredService<ViewerAssetSessionStore>().CreateSession(UserId(caller.User), agentId, entityId, mods);
+        return new(data, new(session.Id, session.ExpiresAtUtc));
     }
 
     internal static string UserId(ClaimsPrincipal user) =>

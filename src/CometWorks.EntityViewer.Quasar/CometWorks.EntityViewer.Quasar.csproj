@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>CometWorks.EntityViewer.Quasar</AssemblyName>
     <RootNamespace>CometWorks.EntityViewer.Quasar</RootNamespace>
+    <QuasarPluginAbstractionsProject Condition="'$(QuasarPluginAbstractionsProject)' == '' and Exists('../../../quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj')">../../../quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj</QuasarPluginAbstractionsProject>
     <QuasarPluginAbstractionsProject Condition="'$(QuasarPluginAbstractionsProject)' == ''">../../../Quasar/Quasar.Plugin.Abstractions/Quasar.Plugin.Abstractions.csproj</QuasarPluginAbstractionsProject>
   </PropertyGroup>
 

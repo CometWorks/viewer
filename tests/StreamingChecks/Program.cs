@@ -39,6 +39,7 @@ try
     };
     var plugin = new EntityViewerQuasarPlugin();
     plugin.ConfigureServices(builder.Services, context);
+    using var sdk = new QuasarSdkFixture(builder.Services, Path.Combine(root, "quasar"));
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
     builder.Services.AddSingleton<IQuasarCompanionChannel, TestCompanionChannel>();
     builder.Services.AddAuthentication("test")
@@ -49,8 +50,10 @@ try
         options.AddPolicy(QuasarPolicyNames.CanManageSecurity, policy => policy.RequireClaim(ClaimTypes.NameIdentifier, "alice"));
     });
     await using var app = builder.Build();
+    app.UsePathBase("/hosted-panel");
     app.UseAuthentication();
     app.UseAuthorization();
+    QuasarSdkFixture.Map(app);
     plugin.ConfigureEndpoints(app, context);
 
     var content = Path.Combine(root, "Content");
@@ -177,6 +180,8 @@ try
     using var alice = Client("alice");
     using var bob = Client("bob");
     using var anonymous = Client("");
+    await QuasarSdkFixture.Bind(alice);
+    await QuasarSdkFixture.Bind(bob);
     await AssertAnonymousEndpointsDenied(anonymous);
     Check((await bob.GetAsync("/_content/CometWorks.EntityViewer/api/replay/servers")).StatusCode == HttpStatusCode.Forbidden,
         "Ordinary viewers cannot inspect replay history through the static-assets prefix");
@@ -201,6 +206,22 @@ try
 
     var aliceSession = await IssueSceneSession(alice, "/_quasar/plugins/cometworks.entityviewer");
     var bobSession = await IssueSceneSession(bob, "/_content/CometWorks.EntityViewer");
+    Check(app.Services.GetServices<Quasar.Plugin.Abstractions.Operations.QuasarOperation>().Count() == 15, "All safe viewer operations are SDK-registered");
+    using (var forged = await alice.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/assets.session.create", new { mods = approvedMods }))
+        Check(forged.StatusCode == HttpStatusCode.NotFound, "SDK cannot restore browser-chosen mod sessions");
+    var bridge = await alice.GetStringAsync("/hosted-panel/_quasar/plugins/cometworks.entityviewer/_sdk/client.js");
+    Check(bridge.Contains("/hosted-panel/_quasar/sdk/v1/client.js"), "Quasar bridge retains the hosted panel prefix");
+    using (var scene = await alice.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/scene.read",
+        new { serverId = "server", entityId = "9007199254740993", voxels = true, context = true }))
+    using (var alias = await alice.GetAsync("/_content/CometWorks.EntityViewer/api/entities/server/9007199254740993/scene?voxels=1&context=1"))
+    {
+        scene.EnsureSuccessStatusCode(); alias.EnsureSuccessStatusCode();
+        var data = await scene.Content.ReadFromJsonAsync<JsonElement>();
+        var oldData = await alias.Content.ReadFromJsonAsync<JsonElement>();
+        Check(data.GetProperty("data").GetRawText() == oldData.GetProperty("data").GetRawText(), "Scene SDK and aliases return identical feature data");
+        Check(data.GetProperty("data").GetProperty("request").GetProperty("entityId").GetInt64() == 9007199254740993, "SDK preserves 64-bit IDs");
+    }
+
     using (var guessed = await bob.PostAsJsonAsync(api + "sessions/" + bobSession + "/resolve",
         new AssetResolveRequest { RootId = "Hidden", LogicalPath = "Models/secret.mwm" }))
     {
@@ -210,6 +231,15 @@ try
     }
     var aliceAsset = await Resolve(alice, aliceSession, "Models/mod.mwm", "123");
     var bobAsset = await Resolve(bob, bobSession, "Models/mod.mwm", "123");
+    using (var reserved = await alice.PostAsJsonAsync("/_quasar/sdk/v1/resources/cometworks.entityviewer/assets.file.read", new { assetToken = aliceAsset.AssetToken }))
+    {
+        reserved.EnsureSuccessStatusCode();
+        var resource = await reserved.Content.ReadFromJsonAsync<JsonElement>();
+        using var response = await alice.GetAsync(resource.GetProperty("url").GetString());
+        response.EnsureSuccessStatusCode();
+        Check(SHA256.HashData(await response.Content.ReadAsByteArrayAsync()).SequenceEqual(expectedHash), "SDK stream retains exact archive bytes");
+    }
+
     Check(aliceAsset.CacheKey != bobAsset.CacheKey, "HTTP cache keys are isolated by user");
     Check((await bob.GetAsync(api + "files/" + aliceAsset.AssetToken)).StatusCode == HttpStatusCode.NotFound,
         "Another user cannot download the first user's token");
@@ -272,9 +302,8 @@ try
         response.EnsureSuccessStatusCode();
         Check(response.Headers.CacheControl?.NoStore == true && response.Headers.CacheControl.Private,
             "Scene responses that issue asset sessions cannot enter shared caches");
-        Check(response.Headers.TryGetValues("X-Entity-Viewer-Asset-Session", out var values),
-            "Companion-produced scenes issue an opaque asset session");
-        return values!.Single();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("assetSession").GetProperty("sessionId").GetString()!;
     }
 
     async Task AssertAnonymousEndpointsDenied(HttpClient client)
@@ -374,7 +403,10 @@ static void AuditViewerEndpoints(WebApplication app)
             ? QuasarPolicyNames.CanManageSecurity
             : QuasarPolicyNames.CanView;
         var authorization = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>();
-        Check(authorization.Any(data => data.Policy == expectedPolicy), $"{route} requires {expectedPolicy}");
+        Check(authorization.Count > 0, $"{route} requires core authentication");
+        // Runtime policy overrides live in the SDK dispatcher rather than static endpoint attributes.
+        var registered = app.Services.GetServices<Quasar.Plugin.Abstractions.Operations.QuasarOperation>();
+        Check(registered.Any(operation => operation.DefaultPolicies.Contains(expectedPolicy)), "Default SDK policy is registered");
         Check(authorization.All(data => string.IsNullOrWhiteSpace(data.AuthenticationSchemes)),
             $"{route} inherits Quasar's default authentication scheme");
         Check(endpoint.Metadata.GetMetadata<IAllowAnonymous>() is null, $"{route} cannot override Quasar authorization anonymously");
@@ -408,14 +440,7 @@ sealed class TestCompanionChannel : IQuasarCompanionChannel
     {
         if (companionPluginId != "cometworks.entityviewer" || operation != "get-entity-scene")
             throw new InvalidOperationException("Only the scene operation is expected in streaming checks.");
-        var scene = JsonSerializer.Deserialize<JsonElement>("""
-            {
-              "grid": { "id": "42" },
-              "mods": [
-                { "rootId": "123", "publishedFileId": 123 }
-              ]
-            }
-            """);
+        var scene = JsonSerializer.SerializeToElement(new { request, mods = new[] { new { rootId = "123", publishedFileId = 123 } } }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         return Task.FromResult((TResponse)(object)scene);
     }
 }

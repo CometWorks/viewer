@@ -159,6 +159,7 @@ try
     Throws(() => ReplayHistoryService.Decode(invalidIncident), "Out-of-bounds context rejected at collection boundary");
     incidentRecord.Incident.Radius = 500;
     var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
+    using var sdk = new QuasarSdkFixture(builder.Services, Path.Combine(root, "quasar"));
     var context = new QuasarPluginContext
     {
         InstallDirectory = Path.Combine(root, "quasar"), PluginDirectory = root, CacheDirectory = root,
@@ -175,7 +176,7 @@ try
         options.AddPolicy(QuasarPolicyNames.CanView, policy => policy.RequireAuthenticatedUser());
         options.AddPolicy(QuasarPolicyNames.CanManageSecurity, policy => policy.RequireClaim(ClaimTypes.NameIdentifier, "admin"));
     });
-    await using var app = builder.Build(); app.UseAuthentication(); app.UseAuthorization(); plugin.ConfigureEndpoints(app, context);
+    await using var app = builder.Build(); app.UseAuthentication(); app.UseAuthorization(); QuasarSdkFixture.Map(app); plugin.ConfigureEndpoints(app, context);
     await app.StartAsync();
     var history = app.Services.GetRequiredService<ReplayHistoryService>();
     await history.StartAsync(default);
@@ -192,6 +193,7 @@ try
     Check((await client.GetAsync(api + "server?from=" + (now - 3000) + "&to=" + now)).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot access player history directly");
     Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true })).StatusCode == HttpStatusCode.Forbidden, "Ordinary viewers cannot enable server recording");
     client.DefaultRequestHeaders.Remove("X-Test-User"); client.DefaultRequestHeaders.Add("X-Test-User", "admin");
+    await QuasarSdkFixture.Bind(client);
     Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxIncidentMinutes = 61 })).StatusCode == HttpStatusCode.BadRequest, "Incident cap validated");
     Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxContextRadius = 10001 })).StatusCode == HttpStatusCode.BadRequest, "Context cap validated");
     Check((await client.PutAsJsonAsync(api + "server/recording", new { enabled = true, maxIncidentMinutes = 60, maxContextRadius = 5000 })).IsSuccessStatusCode, "Admin can enable recording");
@@ -202,7 +204,7 @@ try
     Check(channel.Acknowledged && channel.Recording, "Enabled background collector ingests and acknowledges without browser polling");
     var response = await client.GetAsync(api + "agent?from=" + (now - 3000) + "&to=" + now);
     Check(response.IsSuccessStatusCode && response.Headers.CacheControl!.NoStore, "Admin history works through current agent id and cannot be cached");
-    var stored = await response.Content.ReadFromJsonAsync<List<ReplayBatch>>(json);
+    var stored = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").Deserialize<List<ReplayBatch>>(json);
     Check(stored!.SelectMany(b => b.Geometry).Single().Value.Single().Definition.EndsWith("LargeBlockArmorBlock"), "Admin queries must include historical geometry dependencies");
     Check(stored!.SelectMany(b => b.Records).Single(r => r.Kind == "sample").Entity == "9223372036854775807", "Entity IDs remain lossless");
     Check((await client.GetAsync(api + "server?from=" + (now - 61 * 60000) + "&to=" + now)).StatusCode == HttpStatusCode.BadRequest, "Large queries must be bounded");

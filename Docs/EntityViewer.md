@@ -108,7 +108,7 @@ accept consent and configure either SteamCMD-managed assets or a manual server
 Content folder. When streaming is enabled and the Content root is ready, the
 server issues an asset session with each companion-produced live scene or
 validated replay query. The response carries the opaque session ID in
-`X-Entity-Viewer-Asset-Session`; the browser cannot create a session or submit
+`assetSession.sessionId`; the browser cannot create a session or submit
 its own authorized mod list. The session therefore contains only mods present in
 the server-side scene/capture state. The browser activates that session and
 resolves models and textures from the server before trying local folders. Local
@@ -398,3 +398,5 @@ LODs, textures or lighting refresh them.
 The scene snapshot is captured by the `CometWorks.EntityViewer.Magnetar` companion plugin. The Quasar UI adapter maps the plugin-owned HTTP route to `IQuasarCompanionChannel` operation `get-entity-scene`; Quasar core transports that as `ServerCommandType.PluginRequest` and `Quasar.Agent` dispatches it to the loaded Magnetar plugin implementing `IQuasarCompanionRequestHandler`. Viewer scene DTOs and scene-capture code live in the companion plugin, not in Quasar core. The companion plugin resolves the requested entity on the Space Engineers game thread, then runs viewer scene capture on a single background worker so large grid/context/voxel snapshots do not block simulation updates while the DTO payload is collected and serialized.
 
 The dedicated-server agent deliberately does not reference client render assemblies to resolve skin texture-change payloads. It sends `SkinSubtypeId` and other block metadata; local browser-side content handling resolves base-game armor skin texture overrides from the selected Content folder.
+
+The viewer now uses [Quasar browser SDK v1](BrowserSdk.md) for all live feature operations.

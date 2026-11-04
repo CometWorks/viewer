@@ -8,4 +8,5 @@
   <ItemGroup>
     <ProjectReference Include="../../src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj" />
   </ItemGroup>
+  <Import Project="../QuasarSdkFixture.props" />
 </Project>

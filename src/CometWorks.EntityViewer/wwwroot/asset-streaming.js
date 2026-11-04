@@ -1,38 +1,30 @@
+import { viewerRequest, viewerSdk, VIEWER_PLUGIN } from "./viewer-sdk.js";
 import { loadStreamedAsset } from "./asset-cache.js";
-
-const STATUS_PATH = "api/assets/status";
-const SESSIONS_PATH = "api/assets/sessions";
 
 let currentStatus = null;
 let remoteAssetSession = null;
-let sessionGeneration = 0;
 
 export async function fetchAssetStreamingStatus() {
-    const response = await fetch(pluginApiUrl(STATUS_PATH), {
-        headers: { "Accept": "application/json" },
-        credentials: "same-origin",
-    });
-    if (!response.ok) throw await createStatusError(response, "Asset streaming status request failed");
-    currentStatus = await response.json();
+    currentStatus = await viewerRequest("assets.status");
     return currentStatus;
 }
 
+// A grant arrives only with an authorized companion scene or retained history query.
+export function unpackAssetResponse(response) {
+    const data = response.data;
+    if (data && typeof data === "object" && response.assetSession)
+        Object.defineProperty(data, "assetSession", { value: response.assetSession, enumerable: false });
+    return data;
+}
+
 export async function prepareRemoteAssetSession(scene) {
-    const generation = ++sessionGeneration;
     const previousId = remoteAssetSession?.sessionId || "";
     remoteAssetSession = null;
-    if (!currentStatus?.streamingEnabled || !currentStatus?.fileStreamingReady) {
-        return { active: false, changed: !!previousId };
-    }
-
-    if (generation !== sessionGeneration) return { active: false, changed: false };
+    if (!currentStatus?.streamingEnabled || !currentStatus?.fileStreamingReady) return { active: false, changed: !!previousId };
     const sessionId = typeof scene?.assetSession?.sessionId === "string" ? scene.assetSession.sessionId.trim() : "";
     if (!sessionId) return { active: false, changed: !!previousId };
-    remoteAssetSession = {
-        sessionId,
-        expiresAtUtc: scene.assetSession.expiresAtUtc || "",
-    };
-    return { active: true, changed: previousId !== remoteAssetSession.sessionId };
+    remoteAssetSession = { sessionId, expiresAtUtc: scene.assetSession.expiresAtUtc || "" };
+    return { active: true, changed: previousId !== sessionId };
 }
 
 export function getRemoteAssetSessionKey() {
@@ -42,22 +34,16 @@ export function getRemoteAssetSessionKey() {
 export async function resolveRemoteAssetFile(logicalPath, options = {}) {
     if (!remoteAssetSession?.sessionId) return null;
 
-    const response = await fetch(pluginApiUrl(`${SESSIONS_PATH}/${encodeURIComponent(remoteAssetSession.sessionId)}/resolve`), {
-        method: "POST",
-        headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        credentials: "same-origin",
-        body: JSON.stringify({
-            logicalPath,
-            rootId: options.rootId || options.RootId || "",
-            sourceKind: options.sourceKind || options.SourceKind || "",
-        }),
-    });
-    if (!response.ok) return null;
-
-    const resolved = await response.json();
+    let resolved;
+    try {
+        resolved = await viewerRequest("assets.resolve", {
+            sessionId: remoteAssetSession.sessionId,
+            asset: { logicalPath, rootId: options.rootId || options.RootId || "", sourceKind: options.sourceKind || options.SourceKind || "" },
+        });
+    } catch (error) {
+        if (error.status >= 400 && error.status < 500) return null;
+        throw error;
+    }
     if (!resolved?.found || !resolved.assetToken) return null;
 
     return {
@@ -72,12 +58,9 @@ export async function resolveRemoteAssetFile(logicalPath, options = {}) {
 
 async function fetchResolvedRemoteFile(resolved) {
     const blob = await loadStreamedAsset(resolved, async () => {
-        const response = await fetch(pluginApiUrl(`api/assets/files/${encodeURIComponent(resolved.assetToken)}`), {
-            headers: { "Accept": resolved.contentType || "application/octet-stream" },
-            credentials: "same-origin",
-        });
-        if (!response.ok) throw await createStatusError(response, "Asset stream request failed");
-        return await response.blob();
+        const stream = await (await viewerSdk()).openRead(VIEWER_PLUGIN, "assets.file.read", { assetToken: resolved.assetToken });
+        try { return await stream.blob(); }
+        finally { await stream.dispose(); }
     });
     const fileName = String(resolved.logicalPath || "asset").split("/").filter(Boolean).pop() || "asset";
     const lastModified = resolved.lastModifiedUtc ? Date.parse(resolved.lastModifiedUtc) : Date.now();
@@ -91,19 +74,4 @@ async function fetchResolvedRemoteFile(resolved) {
     blob.name = fileName;
     blob.lastModified = Number.isFinite(lastModified) ? lastModified : Date.now();
     return blob;
-}
-
-function pluginApiUrl(path) {
-    return new URL(path, import.meta.url);
-}
-
-async function createStatusError(response, fallback) {
-    let detail = response.statusText;
-    try {
-        const body = await response.json();
-        detail = body.detail || body.title || body.error || detail;
-    } catch {
-    }
-    const url = response.url ? ` ${response.url}` : "";
-    return new Error(`${fallback} (${response.status}): ${detail}${url}`);
 }

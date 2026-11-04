@@ -56,7 +56,7 @@ public sealed class ReplayHistoryService : BackgroundService
                 || s.Settings.MaxContextRadius != first.Settings.MaxContextRadius), first.Settings);
     }
 
-    public string AgentId(string serverId) => Find(serverId).Info.AgentId;
+    public string AgentId(string serverId) => FindGroup(serverId).OrderBy(node => node.Info.ServerId, StringComparer.OrdinalIgnoreCase).First().Info.AgentId;
 
     public object Overview(string serverId)
     {

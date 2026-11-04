@@ -117,6 +117,14 @@ mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
 
+All 15 scene, asset-setup/streaming and replay operations use Quasar browser SDK
+v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancellation;
+the viewer retains consent, user-bound asset tokens, private caches and history
+rules. Both existing URL prefixes remain compatibility aliases to the same SDK
+handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
+Entity Viewer 0.1.13 requires Quasar 1.6.0 and `browserSdkVersion: 1`. Upgrade
+Quasar before publishing/installing this viewer revision.
+
 ## Recording history
 
 Recording is off by default. Administrators enable it per server in the Entity

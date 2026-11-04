@@ -1,3 +1,6 @@
+import { unpackAssetResponse } from "./asset-streaming.js";
+import { viewerRequest } from "./viewer-sdk.js";
+
 export function getViewerParams() {
     const params = new URLSearchParams(window.location.search);
     const agentId = params.get("agentId") || "";
@@ -20,32 +23,5 @@ export function parseContextFlag(params = new URLSearchParams(window.location.se
 
 export async function fetchEntityScene() {
     const { agentId, entityId, voxels, context } = getViewerParams();
-    const query = new URLSearchParams({ voxels: voxels.enabled ? "1" : "0", context: context.enabled ? "1" : "0" });
-    const sceneUrl = new URL(`./api/entities/${encodeURIComponent(agentId)}/${encodeURIComponent(entityId)}/scene?${query}`, import.meta.url);
-    const response = await fetch(sceneUrl, {
-        headers: { "Accept": "application/json" },
-        credentials: "same-origin",
-    });
-    if (!response.ok) {
-        let detail = response.statusText;
-        try {
-            const body = await response.json();
-            detail = body.detail || body.title || detail;
-        } catch {
-        }
-        const url = response.url ? ` ${response.url}` : "";
-        throw new Error(`Scene request failed (${response.status}): ${detail}${url}`);
-    }
-    const scene = await response.json();
-    attachAssetSession(scene, response);
-    return scene;
-}
-
-function attachAssetSession(value, response) {
-    const sessionId = response.headers.get("X-Entity-Viewer-Asset-Session") || "";
-    if (!sessionId || !value || typeof value !== "object") return;
-    Object.defineProperty(value, "assetSession", { value: {
-        sessionId,
-        expiresAtUtc: response.headers.get("X-Entity-Viewer-Asset-Session-Expires") || "",
-    }, enumerable: false });
+    return unpackAssetResponse(await viewerRequest("scene.read", { serverId: agentId, entityId, voxels: voxels.enabled, context: context.enabled }));
 }

@@ -13,13 +13,14 @@ using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
 using Quasar.Plugin.Abstractions.Extensions;
 using Quasar.Plugin.Abstractions.Navigation;
+using Quasar.Plugin.Abstractions.Operations;
 using Quasar.Plugin.Abstractions.Security;
 using CometWorks.EntityViewer.Components;
 using CometWorks.EntityViewer.Services;
 
 namespace CometWorks.EntityViewer.Quasar;
 
-public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
+public sealed partial class EntityViewerQuasarPlugin : IQuasarPlugin
 {
     private const string CompanionPluginId = "cometworks.entityviewer";
     private const string GetEntitySceneOperation = "get-entity-scene";
@@ -42,70 +43,12 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         services.AddSingleton<ViewerAssetSessionStore>();
         services.AddSingleton<ServerAssetResolver>();
         services.AddHostedService<SteamCmdHourlyUpdateService>();
+        RegisterOperations(services);
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
     {
-        foreach (var routePrefix in ViewerRoutePrefixes)
-        {
-            ReplayEndpoints.Map(endpoints, routePrefix);
-            var sceneEndpoint = MapSceneEndpoint(endpoints, routePrefix);
-            sceneEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
-        }
-
-        foreach (var routePrefix in ViewerRoutePrefixes)
-            MapAssetStreamingEndpoints(endpoints, routePrefix);
-    }
-
-    private static RouteHandlerBuilder MapSceneEndpoint(IEndpointRouteBuilder endpoints, string routePrefix)
-    {
-        return endpoints.MapGet(
-            $"{routePrefix}/api/entities/{{serverId}}/{{entityId:long}}/scene",
-            async (
-                string serverId,
-                long entityId,
-                HttpContext httpContext,
-                IQuasarCompanionChannel companionChannel,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                ViewerAssetSessionStore sessionStore,
-                CancellationToken cancellationToken) =>
-            {
-                try
-                {
-                    var request = new EntityViewerSceneRequest
-                    {
-                        EntityId = entityId,
-                        IncludeVoxels = IsTrueLikeQueryFlag(httpContext.Request.Query["voxels"]),
-                        IncludeContext = IsTrueLikeQueryFlag(httpContext.Request.Query["context"]),
-                    };
-                    var scene = await companionChannel.SendAsync<EntityViewerSceneRequest, JsonElement>(
-                        serverId,
-                        CompanionPluginId,
-                        GetEntitySceneOperation,
-                        request,
-                        cancellationToken);
-                    httpContext.Response.Headers.CacheControl = "private, no-store";
-                    var settings = await settingsStore.GetAsync(cancellationToken);
-                    if (settings.StreamingEnabled && settings.HasCurrentConsent)
-                    {
-                        var session = sessionStore.CreateSession(
-                            ViewerAssetSessionProtocol.UserId(httpContext.User),
-                            serverId,
-                            entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            ViewerAssetSessionProtocol.SceneMods(scene));
-                        ViewerAssetSessionProtocol.WriteHeaders(httpContext.Response, session);
-                    }
-                    return Results.Json(scene);
-                }
-                catch (TimeoutException exception)
-                {
-                    return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
-                }
-                catch (InvalidOperationException exception)
-                {
-                    return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest);
-                }
-            });
+        foreach (var prefix in ViewerRoutePrefixes) MapOperations(endpoints, prefix);
     }
 
     public IEnumerable<Assembly> GetRazorAssemblies()
@@ -149,230 +92,21 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void MapAssetStreamingEndpoints(IEndpointRouteBuilder endpoints, string routePrefix)
+    private static async Task<AssetStreamingStatusResponse> ReadAssetStatusAsync(QuasarOperationContext caller,
+        JsonElement request, CancellationToken token)
     {
-        var statusEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/status",
-            async (
-                HttpContext httpContext,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                IAuthorizationService authorizationService,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                var canManage = (await authorizationService.AuthorizeAsync(
-                    httpContext.User,
-                    resource: null,
-                    QuasarPolicyNames.CanManageSecurity)).Succeeded;
-                return Results.Json(BuildAssetStreamingStatus(settings, paths, canManage));
-            });
+        var settings = await caller.Services.GetRequiredService<IEntityViewerStreamingSettingsStore>().GetAsync(token);
+        var paths = caller.Services.GetRequiredService<EntityViewerStreamingPaths>();
+        var canManage = (await caller.Services.GetRequiredService<IAuthorizationService>()
+            .AuthorizeAsync(caller.User, null, QuasarPolicyNames.CanManageSecurity)).Succeeded;
+        return BuildAssetStreamingStatus(settings, paths, canManage);
+    }
 
-        statusEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
-
-        var consentEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/settings/consent",
-            async (
-                AssetStreamingConsentRequest request,
-                HttpContext httpContext,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                CancellationToken cancellationToken) =>
-            {
-                if (request.StreamingEnabled && !request.ConsentAccepted)
-                    return Results.BadRequest(new { error = "Consent must be accepted before server asset streaming can be enabled." });
-
-                var userId = UserId(httpContext.User);
-                var settings = await settingsStore.UpdateAsync(current =>
-                {
-                    current.StreamingEnabled = request.StreamingEnabled && request.ConsentAccepted;
-                    if (request.ConsentAccepted)
-                    {
-                        current.ConsentAccepted = true;
-                        current.ConsentVersion = EntityViewerStreamingSettings.CurrentConsentVersion;
-                        current.ConsentAcceptedAtUtc = DateTimeOffset.UtcNow;
-                        current.ConsentAcceptedByUserId = userId;
-                    }
-                    else
-                    {
-                        current.ConsentAccepted = false;
-                        current.ConsentVersion = string.Empty;
-                        current.ConsentAcceptedAtUtc = null;
-                        current.ConsentAcceptedByUserId = string.Empty;
-                        current.StreamingEnabled = false;
-                    }
-
-                    return current;
-                }, cancellationToken);
-
-                return Results.Json(BuildAssetStreamingStatus(settings, paths, canManageStreaming: true));
-            });
-
-        consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var rootSettingsGetEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/settings/roots",
-            async (
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                return Results.Json(BuildRootSettingsResponse(settings, paths));
-            });
-
-        rootSettingsGetEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var rootSettingsSaveEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/settings/roots",
-            async (
-                AssetStreamingRootSettingsRequest request,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.UpdateAsync(current =>
-                {
-                    current.BaseGameSourceMode = EntityViewerStreamingSettings.NormalizeSourceMode(request.BaseGameSourceMode);
-                    current.BaseGameContentPath = current.UsesManagedSteamCmd
-                        ? string.Empty
-                        : paths.ToStoredPath(request.BaseGameContentPath);
-                    current.DedicatedServerModsPath = paths.ToStoredPath(request.DedicatedServerModsPath);
-                    return current;
-                }, cancellationToken);
-                return Results.Json(BuildRootSettingsResponse(settings, paths));
-            });
-
-        rootSettingsSaveEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var installerStatusEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/installer/status",
-            (SteamCmdInstallerService installerService) => Results.Json(installerService.GetStatus()));
-
-        installerStatusEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var installerStartEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/installer/start",
-            async (
-                SteamCmdInstallRequest request,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                SteamCmdInstallerService installerService,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                if (!settings.UsesManagedSteamCmd)
-                    return Results.Conflict(new { error = "SteamCMD install is disabled while manual Content mode is selected." });
-
-                var status = await installerService.StartAsync(request, automatic: false, cancellationToken);
-                return Results.Json(status);
-            });
-
-        installerStartEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var installerInputEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/installer/input",
-            async (
-                SteamCmdInputRequest request,
-                SteamCmdInstallerService installerService,
-                CancellationToken cancellationToken) =>
-            {
-                var status = await installerService.SendInputAsync(request, cancellationToken);
-                return Results.Json(status);
-            });
-
-        installerInputEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var installerCancelEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/installer/cancel",
-            async (SteamCmdInstallerService installerService) =>
-            {
-                var status = await installerService.CancelAsync();
-                return Results.Json(status);
-            });
-
-        installerCancelEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
-
-        var resolveEndpoint = endpoints.MapPost(
-            $"{routePrefix}/api/assets/sessions/{{sessionId}}/resolve",
-            async (
-                string sessionId,
-                AssetResolveRequest request,
-                HttpContext httpContext,
-                ViewerAssetSessionStore sessionStore,
-                ServerAssetResolver resolver,
-                CancellationToken cancellationToken) =>
-            {
-                var userId = UserId(httpContext.User);
-                var session = sessionStore.TryGetSession(sessionId, userId);
-                if (session is null)
-                    return Results.NotFound(new AssetResolveResponse { Found = false, Message = "Asset session not found or expired." });
-                if (!sessionStore.TryBeginResolve(session, out var resolveLease))
-                    return Results.Json(new AssetResolveResponse { Found = false, Message = "Asset resolve limit reached." }, statusCode: StatusCodes.Status429TooManyRequests);
-
-                using var lease = resolveLease;
-                var asset = await resolver.ResolveAsync(session, request, cancellationToken);
-                if (asset is null)
-                    return Results.Json(new AssetResolveResponse { Found = false, LogicalPath = request.LogicalPath, Message = "Asset not found." });
-
-                var token = sessionStore.CreateAssetToken(userId, session.Id, asset);
-                if (token is null)
-                    return Results.NotFound(new AssetResolveResponse { Found = false, Message = "Asset session not found or expired." });
-                return Results.Json(new AssetResolveResponse
-                {
-                    Found = true,
-                    AssetToken = token.Id,
-                    CacheKey = asset.CacheKeyForUser(userId),
-                    ContentHash = asset.ContentHash,
-                    ExpiresAtUtc = token.ExpiresAtUtc,
-                    LogicalPath = asset.LogicalPath,
-                    RootId = asset.RootId,
-                    RootKind = asset.RootKind,
-                    Size = asset.Size,
-                    LastModifiedUtc = asset.LastModifiedUtc,
-                    ContentType = asset.ContentType,
-                });
-            });
-
-        resolveEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
-
-        var fileEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/files/{{assetToken}}",
-            async (string assetToken, HttpContext httpContext, ViewerAssetSessionStore sessionStore,
-                IEntityViewerStreamingSettingsStore settingsStore, CancellationToken cancellationToken) =>
-            {
-                // Authenticated bytes must never enter Cloudflare or another shared HTTP cache.
-                httpContext.Response.Headers.CacheControl = "private, no-store";
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                if (!settings.StreamingEnabled || !settings.HasCurrentConsent)
-                    return Results.Problem("Server asset streaming is not enabled.", statusCode: StatusCodes.Status409Conflict);
-                var token = sessionStore.TryGetAssetToken(assetToken, UserId(httpContext.User));
-                if (token is null)
-                    return Results.NotFound();
-                if (!sessionStore.TryBeginStream(token, out var streamLease))
-                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
-
-                try
-                {
-                    var asset = token.Asset;
-                    var stream = asset.OpenRead();
-                    httpContext.Response.RegisterForDispose(streamLease!);
-                    if (asset.IsArchiveEntry)
-                        httpContext.Response.ContentLength = asset.Size;
-                    return Results.File(
-                        stream,
-                        contentType: asset.ContentType,
-                        lastModified: asset.LastModifiedUtc,
-                        entityTag: new EntityTagHeaderValue($"\"{asset.CacheKeyForUser(token.UserId)}\""),
-                        enableRangeProcessing: !asset.IsArchiveEntry);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    streamLease!.Dispose();
-                    return Results.NotFound();
-                }
-            });
-
-        fileEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+    private static async Task<AssetStreamingRootSettingsResponse> ReadAssetRootsAsync(QuasarOperationContext caller,
+        JsonElement request, CancellationToken token)
+    {
+        var settings = await caller.Services.GetRequiredService<IEntityViewerStreamingSettingsStore>().GetAsync(token);
+        return BuildRootSettingsResponse(settings, caller.Services.GetRequiredService<EntityViewerStreamingPaths>());
     }
 
     private static AssetStreamingStatusResponse BuildAssetStreamingStatus(
@@ -400,16 +134,13 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             BaseGameContentConfigured = baseGameContentConfigured,
             ManagedGameContentExists = content.ClientProbe.IsUsable,
             ManagedDedicatedServerContentExists = content.DedicatedServerProbe.IsUsable,
-            ActiveBaseGameContentDirectory = canManageStreaming ? activeContentDirectory : string.Empty,
+            ActiveBaseGameContentDirectory = canManageStreaming ? activeContentDirectory : "",
             ManagedContentSource = content.Source,
-            BaseGameContentMessage = canManageStreaming
-                ? contentMessage
-                : baseGameContentConfigured ? "Space Engineers Content is ready." : "Space Engineers Content is not ready.",
+            BaseGameContentMessage = canManageStreaming ? contentMessage : baseGameContentConfigured ? "Space Engineers Content is ready." : "Space Engineers Content is not ready.",
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
                 : settings.LastInstallStatus,
-            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured,
-                canManageStreaming ? contentMessage : "Space Engineers Content is not ready."),
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured, canManageStreaming ? contentMessage : "Space Engineers Content is not ready."),
             ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
         };
     }

@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <QuasarRuntimeProject Condition="'$(QuasarRuntimeProject)' == '' and Exists('$(MSBuildThisFileDirectory)../../quasar/Quasar/Quasar.csproj')">$(MSBuildThisFileDirectory)../../quasar/Quasar/Quasar.csproj</QuasarRuntimeProject>
+    <QuasarRuntimeProject Condition="'$(QuasarRuntimeProject)' == ''">$(MSBuildThisFileDirectory)../../Quasar/Quasar/Quasar.csproj</QuasarRuntimeProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(QuasarRuntimeProject)" />
+    <Compile Include="$(MSBuildThisFileDirectory)QuasarSdkFixture.cs" Link="QuasarSdkFixture.cs" />
+  </ItemGroup>
+</Project>

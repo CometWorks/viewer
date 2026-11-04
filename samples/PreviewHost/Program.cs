@@ -21,69 +21,9 @@ app.UseStaticFiles();
 UseViewerVendorAssets(app);
 app.UseAntiforgery();
 
-app.MapGet("/_content/CometWorks.EntityViewer/api/entities/{agentId}/{entityId:long}/scene", () =>
-    Results.NotFound("Preview host does not provide live Quasar scene data."));
-app.MapGet("/_content/CometWorks.EntityViewer/api/assets/status", () => Results.Json(new
-{
-    mode = "local",
-    streamingEnabled = false,
-    consentAccepted = false,
-    consentRequired = false,
-    consentVersion = "server-asset-streaming-v1",
-    canManageStreaming = true,
-    fileStreamingReady = false,
-    baseGameSourceMode = "ExternalInstall",
-    baseGameContentConfigured = false,
-    managedGameContentExists = false,
-    lastInstallStatus = "NotStarted",
-    message = "Preview host asset streaming is not configured.",
-}));
-app.MapGet("/_content/CometWorks.EntityViewer/api/assets/installer/status", () => Results.Json(new
-{
-    state = "Idle",
-    isRunning = false,
-    message = "Preview host does not run SteamCMD.",
-    steamCmdPath = "",
-    installDirectory = "",
-    contentDirectory = "",
-    loginName = "",
-    validate = true,
-    exitCode = (int?)null,
-    startedAtUtc = (DateTimeOffset?)null,
-    completedAtUtc = (DateTimeOffset?)null,
-    lastSequence = 0,
-    log = Array.Empty<object>(),
-}));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/start", () =>
-    Results.BadRequest(new { error = "Preview host does not run SteamCMD." }));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/input", () =>
-    Results.BadRequest(new { error = "Preview host does not run SteamCMD." }));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/installer/cancel", () =>
-    Results.Json(new { state = "Idle", isRunning = false, message = "Preview host does not run SteamCMD." }));
-app.MapGet("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () => Results.Json(new
-{
-    baseGameSourceMode = "ExternalInstall",
-    baseGameContentPath = "ManagedRuntime/Tools/SpaceEngineersClient",
-    dedicatedServerModsPath = "",
-    managedGameClientDirectory = "",
-    managedGameContentDirectory = "",
-    managedDedicatedServerContentDirectory = "",
-    activeBaseGameContentDirectory = "",
-    managedContentSource = "ExternalInstall",
-    baseGameContentConfigured = false,
-    managedGameContentExists = false,
-    managedDedicatedServerContentExists = false,
-    baseGameContentMessage = "Manual client Content not ready.",
-    dedicatedServerModsPathExists = false,
-}));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/settings/roots", () =>
-    Results.BadRequest(new { error = "Preview host does not persist asset root settings." }));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions", () =>
-    Results.Problem("Preview host does not stream server assets.", statusCode: StatusCodes.Status409Conflict));
-app.MapPost("/_content/CometWorks.EntityViewer/api/assets/sessions/{sessionId}/resolve", () =>
-    Results.Json(new { found = false, message = "Preview host does not stream server assets." }));
-app.MapGet("/_content/CometWorks.EntityViewer/api/assets/files/{assetToken}", () =>
-    Results.NotFound());
+// Explicit UI-only SDK adapter. No Quasar credentials or live server access.
+app.MapGet("/_content/CometWorks.EntityViewer/_sdk/client.js", () => Results.Content(
+    "export { client } from '../preview-sdk.js';", "text/javascript"));
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
