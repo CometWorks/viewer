@@ -17,6 +17,7 @@ using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
 using Quasar.Plugin.Abstractions.Manifests;
 using Quasar.Plugin.Abstractions.Security;
+using Quasar.Plugin.Abstractions.Operations;
 
 var root = Path.Combine(Path.GetTempPath(), $"viewer-streaming-checks-{Guid.NewGuid():N}");
 Directory.CreateDirectory(root);
@@ -37,6 +38,7 @@ try
     };
     var plugin = new EntityViewerQuasarPlugin();
     plugin.ConfigureServices(builder.Services, context);
+    builder.Services.AddSingleton<IQuasarOperationDispatcher, FixtureOperationDispatcher>();
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
     builder.Services.AddSingleton<IQuasarCompanionChannel, UnusedCompanionChannel>();
     builder.Services.AddAuthentication("test")
@@ -211,6 +213,22 @@ sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptio
         return Task.FromResult(string.IsNullOrEmpty(user) ? AuthenticateResult.NoResult()
             : AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(
                 new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, user)], "test")), "test")));
+    }
+}
+
+// The isolated plugin host supplies the SDK boundary; Quasar's own checks exercise runtime settings and HTTP transport.
+sealed class FixtureOperationDispatcher(IEnumerable<QuasarOperation> operations) : IQuasarOperationDispatcher
+{
+    public async Task<QuasarOperationResult> DispatchAsync(QuasarOperationContext context, string pluginId,
+        string operationId, JsonElement request, CancellationToken token)
+    {
+        if (context.User.Identity?.IsAuthenticated != true) return new(401);
+        var operation = operations.SingleOrDefault(candidate => candidate.Key == pluginId + "/" + operationId);
+        if (operation is null) return new(404);
+        var authorization = context.Services.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationService>();
+        foreach (var policy in operation.DefaultPolicies)
+            if (!(await authorization.AuthorizeAsync(context.User, null, policy)).Succeeded) return new(403);
+        return new(200, await operation.InvokeAsync(context, request, token));
     }
 }
 

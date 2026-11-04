@@ -110,6 +110,14 @@ mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
 
+The first browser SDK slice registers `assets.status` (`CanView`) and
+`assets.roots.read` (`CanManageSecurity`) through Quasar's shared dispatcher.
+Both existing URL prefixes use those same operation rules. Quasar's Security page
+can change their required policies or disable them. The browser modules still
+use their existing fetch calls; binary streaming and the remaining viewer
+operations have not migrated. This development revision needs a matching Quasar
+SDK build; set the manifest's minimum compatible release before publication.
+
 ## Recording history
 
 Recording is off by default. Administrators enable it per server in the Entity

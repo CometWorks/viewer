@@ -13,6 +13,7 @@ using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
 using Quasar.Plugin.Abstractions.Extensions;
 using Quasar.Plugin.Abstractions.Navigation;
+using Quasar.Plugin.Abstractions.Operations;
 using Quasar.Plugin.Abstractions.Security;
 using CometWorks.EntityViewer.Components;
 using CometWorks.EntityViewer.Services;
@@ -42,6 +43,10 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
         services.AddSingleton<ViewerAssetSessionStore>();
         services.AddSingleton<ServerAssetResolver>();
         services.AddHostedService<SteamCmdHourlyUpdateService>();
+        services.AddQuasarOperation<JsonElement, AssetStreamingStatusResponse>(Id, "assets.status",
+            [QuasarPolicyNames.CanView], ReadAssetStatusAsync);
+        services.AddQuasarOperation<JsonElement, AssetStreamingRootSettingsResponse>(Id, "assets.roots.read",
+            [QuasarPolicyNames.CanManageSecurity], ReadAssetRootsAsync);
     }
 
     public void ConfigureEndpoints(IEndpointRouteBuilder endpoints, QuasarPluginContext context)
@@ -138,24 +143,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
     private static void MapAssetStreamingEndpoints(IEndpointRouteBuilder endpoints, string routePrefix)
     {
-        var statusEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/status",
-            async (
-                HttpContext httpContext,
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                IAuthorizationService authorizationService,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                var canManage = (await authorizationService.AuthorizeAsync(
-                    httpContext.User,
-                    resource: null,
-                    QuasarPolicyNames.CanManageSecurity)).Succeeded;
-                return Results.Json(BuildAssetStreamingStatus(settings, paths, canManage));
-            });
-
-        statusEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+        endpoints.MapQuasarOperationRead($"{routePrefix}/api/assets/status", CompanionPluginId, "assets.status");
 
         var consentEndpoint = endpoints.MapPost(
             $"{routePrefix}/api/assets/settings/consent",
@@ -197,18 +185,7 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
 
         consentEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
 
-        var rootSettingsGetEndpoint = endpoints.MapGet(
-            $"{routePrefix}/api/assets/settings/roots",
-            async (
-                IEntityViewerStreamingSettingsStore settingsStore,
-                EntityViewerStreamingPaths paths,
-                CancellationToken cancellationToken) =>
-            {
-                var settings = await settingsStore.GetAsync(cancellationToken);
-                return Results.Json(BuildRootSettingsResponse(settings, paths));
-            });
-
-        rootSettingsGetEndpoint.RequireAuthorization(QuasarPolicyNames.CanManageSecurity);
+        endpoints.MapQuasarOperationRead($"{routePrefix}/api/assets/settings/roots", CompanionPluginId, "assets.roots.read");
 
         var rootSettingsSaveEndpoint = endpoints.MapPost(
             $"{routePrefix}/api/assets/settings/roots",
@@ -374,6 +351,23 @@ public sealed class EntityViewerQuasarPlugin : IQuasarPlugin
             });
 
         fileEndpoint.RequireAuthorization(QuasarPolicyNames.CanView);
+    }
+
+    private static async Task<AssetStreamingStatusResponse> ReadAssetStatusAsync(QuasarOperationContext caller,
+        JsonElement request, CancellationToken token)
+    {
+        var settings = await caller.Services.GetRequiredService<IEntityViewerStreamingSettingsStore>().GetAsync(token);
+        var paths = caller.Services.GetRequiredService<EntityViewerStreamingPaths>();
+        var canManage = (await caller.Services.GetRequiredService<IAuthorizationService>()
+            .AuthorizeAsync(caller.User, null, QuasarPolicyNames.CanManageSecurity)).Succeeded;
+        return BuildAssetStreamingStatus(settings, paths, canManage);
+    }
+
+    private static async Task<AssetStreamingRootSettingsResponse> ReadAssetRootsAsync(QuasarOperationContext caller,
+        JsonElement request, CancellationToken token)
+    {
+        var settings = await caller.Services.GetRequiredService<IEntityViewerStreamingSettingsStore>().GetAsync(token);
+        return BuildRootSettingsResponse(settings, caller.Services.GetRequiredService<EntityViewerStreamingPaths>());
     }
 
     private static AssetStreamingStatusResponse BuildAssetStreamingStatus(
