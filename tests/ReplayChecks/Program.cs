@@ -204,7 +204,7 @@ try
     Check(channel.Acknowledged && channel.Recording, "Enabled background collector ingests and acknowledges without browser polling");
     var response = await client.GetAsync(api + "agent?from=" + (now - 3000) + "&to=" + now);
     Check(response.IsSuccessStatusCode && response.Headers.CacheControl!.NoStore, "Admin history works through current agent id and cannot be cached");
-    var stored = await response.Content.ReadFromJsonAsync<List<ReplayBatch>>(json);
+    var stored = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").Deserialize<List<ReplayBatch>>(json);
     Check(stored!.SelectMany(b => b.Geometry).Single().Value.Single().Definition.EndsWith("LargeBlockArmorBlock"), "Admin queries must include historical geometry dependencies");
     Check(stored!.SelectMany(b => b.Records).Single(r => r.Kind == "sample").Entity == "9223372036854775807", "Entity IDs remain lossless");
     Check((await client.GetAsync(api + "server?from=" + (now - 61 * 60000) + "&to=" + now)).StatusCode == HttpStatusCode.BadRequest, "Large queries must be bounded");

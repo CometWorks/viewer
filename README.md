@@ -60,6 +60,13 @@ The DIS-0042 Viewer follow-up needs both Quasar's shared browser trusted-princip
 update and this plugin's asset path update. See [asset boundaries and rollout](Docs/EntityViewer.md#asset-boundary).
 The original urgent agent/Host fix remains independent.
 
+Viewer API routes inherit Quasar's host authentication and require either
+`CanView` (scene, streaming status, resolve, file) or `CanManageSecurity`
+(replay, streaming settings, installer). Server asset sessions are issued only
+from companion-produced scenes or validated replay data; the browser cannot
+choose which installed mods a session authorizes. See
+[server asset streaming](Docs/EntityViewer.md#server-asset-streaming).
+
 ## Preview Workflow
 
 Build or run the standalone preview host while developing viewer plugin UI:
@@ -110,13 +117,13 @@ mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
 
-All 16 scene, asset-setup/streaming and replay operations use Quasar browser SDK
+All 15 scene, asset-setup/streaming and replay operations use Quasar browser SDK
 v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancellation;
 the viewer retains consent, user-bound asset tokens, private caches and history
 rules. Both existing URL prefixes remain compatibility aliases to the same SDK
 handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
-This development manifest requires `browserSdkVersion: 1`; choose the first SDK
-release as the minimum Quasar version before publishing the package.
+Entity Viewer 0.1.13 requires Quasar 1.6.0 and `browserSdkVersion: 1`. Upgrade
+Quasar before publishing/installing this viewer revision.
 
 ## Recording history
 

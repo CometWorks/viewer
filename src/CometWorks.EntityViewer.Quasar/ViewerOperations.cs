@@ -21,13 +21,15 @@ public sealed partial class EntityViewerQuasarPlugin
 
     private void RegisterOperations(IServiceCollection services)
     {
-        services.AddQuasarOperation<SceneRequest, JsonElement>(Id, "scene.read", [QuasarPolicyNames.CanView], async (caller, input, token) =>
+        services.AddQuasarOperation<SceneRequest, object>(Id, "scene.read", [QuasarPolicyNames.CanView], async (caller, input, token) =>
         {
             try
             {
-                return await caller.Services.GetRequiredService<IQuasarCompanionChannel>().SendAsync<EntityViewerSceneRequest, JsonElement>(
+                var scene = await caller.Services.GetRequiredService<IQuasarCompanionChannel>().SendAsync<EntityViewerSceneRequest, JsonElement>(
                     input.ServerId, CompanionPluginId, GetEntitySceneOperation,
                     new() { EntityId = input.EntityId, IncludeVoxels = input.Voxels, IncludeContext = input.Context }, token);
+                return await ViewerAssetSessionProtocol.AttachAsync(caller, scene, input.ServerId,
+                    input.EntityId.ToString(CultureInfo.InvariantCulture), ViewerAssetSessionProtocol.SceneMods(scene), token);
             }
             catch (TimeoutException error) { throw new QuasarOperationException(504, error.Message); }
             catch (InvalidOperationException error) { throw new QuasarOperationException(400, error.Message); }
@@ -75,24 +77,19 @@ public sealed partial class EntityViewerQuasarPlugin
         { await caller.EnsureAuthorizedAsync(token); return await caller.Services.GetRequiredService<SteamCmdInstallerService>().SendInputAsync(input, token); });
         services.AddQuasarOperation<JsonElement, SteamCmdInstallerStatusResponse>(Id, "assets.installer.cancel", [QuasarPolicyNames.CanManageSecurity], async (caller, input, token) =>
         { await caller.EnsureAuthorizedAsync(token); return await caller.Services.GetRequiredService<SteamCmdInstallerService>().CancelAsync(); });
-        services.AddQuasarOperation<AssetSessionRequest, AssetSessionResponse>(Id, "assets.session.create", [QuasarPolicyNames.CanView], async (caller, input, token) =>
-        {
-            await RequireStreamingAsync(caller, token);
-            await caller.EnsureAuthorizedAsync(token);
-            var session = caller.Services.GetRequiredService<ViewerAssetSessionStore>().CreateSession(UserId(caller.User), input);
-            return new() { SessionId = session.Id, ExpiresAtUtc = session.ExpiresAtUtc };
-        });
         services.AddQuasarOperation<ResolveRequest, AssetResolveResponse>(Id, "assets.resolve", [QuasarPolicyNames.CanView], async (caller, input, token) =>
         {
             ArgumentNullException.ThrowIfNull(input.Asset);
             var user = UserId(caller.User);
             var store = caller.Services.GetRequiredService<ViewerAssetSessionStore>();
             var session = store.TryGetSession(input.SessionId, user) ?? throw new QuasarOperationException(404, "Asset session not found or expired.");
+            if (!store.TryBeginResolve(session, out var resolveLease)) throw new QuasarOperationException(429, "Asset resolve limit reached.");
+            using var resolving = resolveLease;
             var asset = await caller.Services.GetRequiredService<ServerAssetResolver>().ResolveAsync(session, input.Asset, token);
             if (asset is null) return new() { Found = false, LogicalPath = input.Asset.LogicalPath, Message = "Asset not found." };
             await RequireStreamingAsync(caller, token);
             await caller.EnsureAuthorizedAsync(token);
-            var access = store.CreateAssetToken(user, session.Id, asset);
+            var access = store.CreateAssetToken(user, session.Id, asset) ?? throw new QuasarOperationException(404, "Asset session not found or expired.");
             return new() { Found = true, AssetToken = access.Id, CacheKey = asset.CacheKeyForUser(user), ContentHash = asset.ContentHash,
                 ExpiresAtUtc = access.ExpiresAtUtc, LogicalPath = asset.LogicalPath, RootId = asset.RootId, RootKind = asset.RootKind,
                 Size = asset.Size, LastModifiedUtc = asset.LastModifiedUtc, ContentType = asset.ContentType };
@@ -110,9 +107,11 @@ public sealed partial class EntityViewerQuasarPlugin
             var asset = store.TryGetAssetToken(input.AssetToken, user)!.Asset;
             return new(_ =>
             {
-                try { return Task.FromResult(asset.OpenRead()); }
+                var access = store.TryGetAssetToken(input.AssetToken, user) ?? throw new QuasarOperationException(404, "Asset token expired.");
+                if (!store.TryBeginStream(access, out var streamLease)) throw new QuasarOperationException(429, "Asset stream limit reached.");
+                try { return Task.FromResult(asset.OpenRead(streamLease)); }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
-                { throw new QuasarOperationException(404, "Asset not found."); }
+                { streamLease!.Dispose(); throw new QuasarOperationException(404, "Asset not found."); }
             }, asset.ContentType, Length: asset.Size, EnableRanges: !asset.IsArchiveEntry,
                 LastModified: asset.LastModifiedUtc, EntityTag: "\"" + asset.CacheKeyForUser(user) + "\"", ValidateAsync: Validate);
         });
@@ -136,8 +135,7 @@ public sealed partial class EntityViewerQuasarPlugin
             ("status", "GET", "assets.status"), ("settings/consent", "POST", "assets.consent.update"),
             ("settings/roots", "GET", "assets.roots.read"), ("settings/roots", "POST", "assets.roots.update"),
             ("installer/status", "GET", "assets.installer.status"), ("installer/start", "POST", "assets.installer.start"),
-            ("installer/input", "POST", "assets.installer.input"), ("installer/cancel", "POST", "assets.installer.cancel"),
-            ("sessions", "POST", "assets.session.create") })
+            ("installer/input", "POST", "assets.installer.input"), ("installer/cancel", "POST", "assets.installer.cancel") })
             endpoints.MapQuasarOperation(prefix + "/api/assets/" + route.Path, [route.Method], CompanionPluginId, route.Operation, route.Operation == "assets.installer.cancel"
                 ? _ => ValueTask.FromResult(JsonSerializer.SerializeToElement(new { })) : null);
         endpoints.MapQuasarOperation(prefix + "/api/assets/sessions/{sessionId}/resolve", ["POST"], CompanionPluginId, "assets.resolve", async http =>

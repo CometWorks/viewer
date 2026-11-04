@@ -9,7 +9,7 @@ import { replayViewRotation, diagnosticText, updateReplaySun } from "./replay-sc
 import { SUN_SHADOW_MAP_SIZE } from "./scene.js";
 import { startQuasarThemeSync, themeColor } from "./theme.js";
 
-import { fetchAssetStreamingStatus, prepareRemoteAssetSession, getRemoteAssetSessionKey } from "./asset-streaming.js";
+import { fetchAssetStreamingStatus, prepareRemoteAssetSession, getRemoteAssetSessionKey, unpackAssetResponse } from "./asset-streaming.js";
 import { ReplayTerrain } from "./replay-terrain.js";
 import { ReplayGrids } from "./replay-grids.js";
 import { restoreContentFolder, restoreModsFolder, pickContentFolder, pickModsFolder, clearAssetFolderCaches, getAssetFolderCacheGeneration, setSceneModRoots } from "./content-folder.js";
@@ -109,7 +109,10 @@ const resize = new ResizeObserver(() => {
 resize.observe(viewport);
 
 async function request(operation, payload = {}, signal) {
-    try { return await viewerRequest(operation, payload, { signal }); }
+    try {
+        const result = await viewerRequest(operation, payload, { signal });
+        return operation === "replay.query" ? unpackAssetResponse(result) : result;
+    }
     catch (error) {
         if (error.status === 403 || error.status === 401) throw new Error("Administrator access is required to view recording history.");
         throw error;
@@ -190,7 +193,7 @@ async function load(range = null) {
         const retainedMods = [...assetMods.values()];
         await setSceneModRoots(retainedMods);
         if (current !== generation) return;
-        try { await prepareRemoteAssetSession({ mods: retainedMods }, { agentId: el("server").selectedOptions[0]?.dataset.agentId || "", entityId: selected }); } catch { /* Local assets and explicit proxies remain available. */ }
+        try { await prepareRemoteAssetSession(batches); } catch { /* Local assets and explicit proxies remain available. */ }
         if (current !== generation) return;
         const remoteActive = !!getRemoteAssetSessionKey();
         if (remoteActive !== remoteAssetsActive) {

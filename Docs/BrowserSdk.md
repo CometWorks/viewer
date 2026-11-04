@@ -2,8 +2,8 @@
 
 Entity Viewer requires Quasar browser SDK v1 (`browserSdkVersion: 1` in
 `quasar-plugin.json`). Publish the adapter and browser assets together, after
-setting `quasarVersion` to the first released Quasar version containing SDK v1.
-The current development version constraint alone is not a release guarantee.
+Quasar 1.6.0 or later. This candidate is Entity Viewer 0.1.13; publish its catalog
+pin only after the compatible Quasar release and canary checks succeed.
 New Quasar rejects unsupported SDK versions before loading the plugin assembly;
 the viewer also reports a clear update error if its browser host is incompatible.
 
@@ -12,7 +12,7 @@ the plugin asset URL. Quasar supplies the exact panel base, including hosted
 `/<panel-id>/` prefixes. The viewer never discovers network addresses, manages
 credentials, checks reachability or selects a fallback transport.
 
-The 16 registered operations are:
+The 15 registered operations are:
 
 | Operation | Default permission |
 | --- | --- |
@@ -20,7 +20,7 @@ The 16 registered operations are:
 | `assets.status` | `CanView` |
 | `assets.roots.read`, `assets.roots.update`, `assets.consent.update` | `CanManageSecurity` |
 | `assets.installer.status`, `.start`, `.input`, `.cancel` | `CanManageSecurity` |
-| `assets.session.create`, `assets.resolve`, `assets.file.read` | `CanView` |
+| `assets.resolve`, `assets.file.read` | `CanView` |
 | `replay.servers`, `replay.overview`, `replay.query`, `replay.recording.update` | `CanManageSecurity` |
 
 Every call passes plugin ID `cometworks.entityviewer`. Asset resolution takes
@@ -61,3 +61,20 @@ background collection and offline archives. Node checks cover SDK calls, cache
 reauthorization, version errors and preview behavior. UI checks cover both URL
 prefixes and the setup dialog. Real Steam and hosted browser acceptance remains
 a release gate; these checks never start the user's Quasar service.
+
+## Rollout security integration
+
+This candidate includes upstream viewer security fix `4eb0fd0`. The unsafe
+`assets.session.create` operation and legacy POST session-creation route are
+removed: browsers cannot select trusted mod roots. `scene.read` and `replay.query`
+return `{ data, assetSession }`, where the opaque grant is created from the actual
+companion scene or authorized retained history. Browser callers unpack `data`
+and attach the grant as a nonenumerable `assetSession` property. Rendering data
+and the two URL prefixes remain the same. The aliases return this same envelope;
+clients must update their viewer adapter and assets together.
+
+Asset-size/archive caps, bounded session/token counts, resolve concurrency/rate,
+stream concurrency and session byte budgets remain enforced for SDK and aliases.
+Quota leases belong to the opened stream and release on SDK cancellation/disposal.
+Non-administrators receive no host filesystem paths in status diagnostics.
+These are feature checks in addition to the SDK authorization/lifetime boundary.

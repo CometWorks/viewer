@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Quasar.Plugin.Abstractions.Operations;
 using Quasar.Plugin.Abstractions.Security;
 using CometWorks.EntityViewer.Replay;
+using CometWorks.EntityViewer.Quasar.Streaming;
 
 namespace CometWorks.EntityViewer.Quasar.Replay;
 
@@ -18,7 +19,19 @@ internal static class ReplayEndpoints
     {
         Add("replay.servers", (history, input, token) => Task.FromResult<object>(history.Servers()));
         Add("replay.overview", (history, input, token) => Task.FromResult<object>(history.Overview(input.ServerId)));
-        Add("replay.query", async (history, input, token) => await history.Query(input.ServerId, input.From, input.To, token));
+        services.AddQuasarOperation<Request, object>(pluginId, "replay.query", [QuasarPolicyNames.CanManageSecurity], async (caller, input, token) =>
+        {
+            try
+            {
+                var history = caller.Services.GetRequiredService<ReplayHistoryService>();
+                var batches = await history.Query(input.ServerId, input.From, input.To, token);
+                return await ViewerAssetSessionProtocol.AttachAsync(caller, batches, history.AgentId(input.ServerId), "",
+                    ViewerAssetSessionProtocol.ReplayMods(batches), token);
+            }
+            catch (KeyNotFoundException error) { throw new QuasarOperationException(404, error.Message); }
+            catch (Exception error) when (error is ArgumentException or InvalidDataException)
+            { throw new QuasarOperationException(400, error.Message); }
+        });
         Add("replay.recording.update", async (history, input, token) => await history.SetRecording(input.ServerId,
             input.Settings ?? throw new ArgumentException("Recording settings are required."), token), write: true);
 

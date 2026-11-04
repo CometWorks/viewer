@@ -1,14 +1,5 @@
 namespace CometWorks.EntityViewer.Quasar.Streaming;
 
-public sealed class AssetSessionRequest
-{
-    public string AgentId { get; init; } = string.Empty;
-
-    public string EntityId { get; init; } = string.Empty;
-
-    public IReadOnlyList<AssetSessionModDto> Mods { get; init; } = [];
-}
-
 public sealed class AssetSessionModDto
 {
     public string RootId { get; init; } = string.Empty;
@@ -20,13 +11,6 @@ public sealed class AssetSessionModDto
     public string PublishedServiceName { get; init; } = string.Empty;
 
     public string FriendlyName { get; init; } = string.Empty;
-}
-
-public sealed class AssetSessionResponse
-{
-    public string SessionId { get; init; } = string.Empty;
-
-    public DateTimeOffset ExpiresAtUtc { get; init; }
 }
 
 public sealed class AssetResolveRequest

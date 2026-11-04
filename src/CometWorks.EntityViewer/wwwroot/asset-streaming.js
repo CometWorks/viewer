@@ -1,41 +1,30 @@
 import { viewerRequest, viewerSdk, VIEWER_PLUGIN } from "./viewer-sdk.js";
-import { getViewerParams } from "./quasar-api.js";
-import { log } from "./logging.js";
 import { loadStreamedAsset } from "./asset-cache.js";
 
 let currentStatus = null;
 let remoteAssetSession = null;
-let sessionGeneration = 0;
 
 export async function fetchAssetStreamingStatus() {
     currentStatus = await viewerRequest("assets.status");
     return currentStatus;
 }
 
-export async function prepareRemoteAssetSession(scene, target = null) {
-    const generation = ++sessionGeneration;
+// A grant arrives only with an authorized companion scene or retained history query.
+export function unpackAssetResponse(response) {
+    const data = response.data;
+    if (data && typeof data === "object" && response.assetSession)
+        Object.defineProperty(data, "assetSession", { value: response.assetSession, enumerable: false });
+    return data;
+}
+
+export async function prepareRemoteAssetSession(scene) {
     const previousId = remoteAssetSession?.sessionId || "";
     remoteAssetSession = null;
-    if (!currentStatus?.streamingEnabled || !currentStatus?.fileStreamingReady) {
-        return { active: false, changed: !!previousId };
-    }
-
-    const { agentId, entityId } = target || getViewerParams();
-    log("Creating server asset streaming session through Quasar SDK.");
-    const body = await viewerRequest("assets.session.create", {
-        agentId, entityId, mods: Array.isArray(scene?.mods) ? scene.mods : [],
-    });
-    if (generation !== sessionGeneration) return { active: false, changed: false };
-    const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
-    if (!sessionId) {
-        const fields = body && typeof body === "object" ? Object.keys(body).join(", ") : "none";
-        throw new Error(`Asset streaming session response has no valid session ID (fields: ${fields}).`);
-    }
-    remoteAssetSession = {
-        sessionId,
-        expiresAtUtc: body.expiresAtUtc || "",
-    };
-    return { active: true, changed: previousId !== remoteAssetSession.sessionId };
+    if (!currentStatus?.streamingEnabled || !currentStatus?.fileStreamingReady) return { active: false, changed: !!previousId };
+    const sessionId = typeof scene?.assetSession?.sessionId === "string" ? scene.assetSession.sessionId.trim() : "";
+    if (!sessionId) return { active: false, changed: !!previousId };
+    remoteAssetSession = { sessionId, expiresAtUtc: scene.assetSession.expiresAtUtc || "" };
+    return { active: true, changed: previousId !== sessionId };
 }
 
 export function getRemoteAssetSessionKey() {

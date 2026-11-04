@@ -134,13 +134,13 @@ public sealed partial class EntityViewerQuasarPlugin : IQuasarPlugin
             BaseGameContentConfigured = baseGameContentConfigured,
             ManagedGameContentExists = content.ClientProbe.IsUsable,
             ManagedDedicatedServerContentExists = content.DedicatedServerProbe.IsUsable,
-            ActiveBaseGameContentDirectory = activeContentDirectory,
+            ActiveBaseGameContentDirectory = canManageStreaming ? activeContentDirectory : "",
             ManagedContentSource = content.Source,
-            BaseGameContentMessage = contentMessage,
+            BaseGameContentMessage = canManageStreaming ? contentMessage : baseGameContentConfigured ? "Space Engineers Content is ready." : "Space Engineers Content is not ready.",
             LastInstallStatus = string.IsNullOrWhiteSpace(settings.LastInstallStatus)
                 ? "NotStarted"
                 : settings.LastInstallStatus,
-            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured, contentMessage),
+            Message = StatusMessage(streamingEnabled, consentAccepted, canManageStreaming, baseGameContentConfigured, canManageStreaming ? contentMessage : "Space Engineers Content is not ready."),
             ConsentAcceptedAtUtc = settings.ConsentAcceptedAtUtc,
         };
     }

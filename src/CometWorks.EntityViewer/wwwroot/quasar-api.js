@@ -1,3 +1,4 @@
+import { unpackAssetResponse } from "./asset-streaming.js";
 import { viewerRequest } from "./viewer-sdk.js";
 
 export function getViewerParams() {
@@ -22,5 +23,5 @@ export function parseContextFlag(params = new URLSearchParams(window.location.se
 
 export async function fetchEntityScene() {
     const { agentId, entityId, voxels, context } = getViewerParams();
-    return viewerRequest("scene.read", { serverId: agentId, entityId, voxels: voxels.enabled, context: context.enabled });
+    return unpackAssetResponse(await viewerRequest("scene.read", { serverId: agentId, entityId, voxels: voxels.enabled, context: context.enabled }));
 }
