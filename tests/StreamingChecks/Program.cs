@@ -40,7 +40,7 @@ try
     plugin.ConfigureServices(builder.Services, context);
     using var sdk = new QuasarSdkFixture(builder.Services, Path.Combine(root, "quasar"));
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
-    builder.Services.AddSingleton<IQuasarCompanionChannel, UnusedCompanionChannel>();
+    builder.Services.AddSingleton<IQuasarCompanionChannel, FixtureCompanionChannel>();
     builder.Services.AddAuthentication("test")
         .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ => { });
     builder.Services.AddAuthorization(options =>
@@ -115,8 +115,20 @@ try
     await QuasarSdkFixture.Bind(alice);
     await QuasarSdkFixture.Bind(bob);
     Check((await anonymous.GetAsync(api + "status")).StatusCode == HttpStatusCode.Unauthorized, "Anonymous clients cannot resolve assets");
+    using (var scene = await alice.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/scene.read",
+        new { serverId = "test-server", entityId = "9007199254740993", voxels = true, context = true }))
+    using (var alias = await alice.GetAsync("/_content/CometWorks.EntityViewer/api/entities/test-server/9007199254740993/scene?voxels=1&context=1"))
+    {
+        scene.EnsureSuccessStatusCode(); alias.EnsureSuccessStatusCode();
+        Check(await scene.Content.ReadAsStringAsync() == await alias.Content.ReadAsStringAsync(), "Scene SDK and legacy results agree, preserving 64-bit IDs and capture flags");
+        Check((await scene.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("request").GetProperty("entityId").GetInt64() == 9007199254740993,
+            "Scene entity ID is not rounded in JavaScript");
+    }
     var aliceSession = await CreateSession(alice);
     var bobSession = await CreateSession(bob);
+    using (var malformed = await alice.PostAsJsonAsync("/_quasar/sdk/v1/operations/cometworks.entityviewer/assets.resolve",
+        new { sessionId = aliceSession, asset = (object?)null }))
+        Check(malformed.StatusCode == HttpStatusCode.BadRequest, "Missing asset request fails with a bounded input error");
     var aliceAsset = await Resolve(alice, aliceSession, "Models/mod.mwm", "123");
     Check(app.Services.GetServices<QuasarOperation>().Count() == 16, "All inventoried viewer operations use the SDK");
     var bridge = await alice.GetStringAsync("/hosted-panel/_quasar/plugins/cometworks.entityviewer/_sdk/client.js");
@@ -243,8 +255,9 @@ sealed class TestAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptio
     }
 }
 
-sealed class UnusedCompanionChannel : IQuasarCompanionChannel
+sealed class FixtureCompanionChannel : IQuasarCompanionChannel
 {
     public Task<TResponse> SendAsync<TRequest, TResponse>(string serverId, string companionPluginId, string operation,
-        TRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
+        TRequest request, CancellationToken cancellationToken) => Task.FromResult((TResponse)(object)
+            JsonSerializer.SerializeToElement(new { serverId, request }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 }

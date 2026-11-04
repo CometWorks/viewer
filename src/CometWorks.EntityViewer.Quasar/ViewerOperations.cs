@@ -84,6 +84,7 @@ public sealed partial class EntityViewerQuasarPlugin
         });
         services.AddQuasarOperation<ResolveRequest, AssetResolveResponse>(Id, "assets.resolve", [QuasarPolicyNames.CanView], async (caller, input, token) =>
         {
+            ArgumentNullException.ThrowIfNull(input.Asset);
             var user = UserId(caller.User);
             var store = caller.Services.GetRequiredService<ViewerAssetSessionStore>();
             var session = store.TryGetSession(input.SessionId, user) ?? throw new QuasarOperationException(404, "Asset session not found or expired.");
