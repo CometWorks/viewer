@@ -78,3 +78,41 @@ stream concurrency and session byte budgets remain enforced for SDK and aliases.
 Quota leases belong to the opened stream and release on SDK cancellation/disposal.
 Non-administrators receive no host filesystem paths in status diagnostics.
 These are feature checks in addition to the SDK authorization/lifetime boundary.
+
+## Direct transport development proof
+
+The `t3/webrtc-rewrite` branch adds `tests/DirectChecks`, which uses the actual
+Viewer browser modules and 15 safe handlers, real Quasar cookie/session/SDK
+runtime and native peer, and a real isolated Caddy boundary. Nebula-hosted SDK
+clients automatically select RTC; no viewer setting or transport branch is added.
+The shipped SDK-first 1.6.0/0.1.13 metadata stays unchanged.
+
+Chromium/Firefox checks cover a large scene envelope, nonenumerable trusted grant,
+consent/setup, archive integrity, range reads, iframe initialization, user-bound
+resolve/file tokens, history/settings denial, removed session-creation refusal,
+feature consent revocation and unavailable-direct failure without HTTP replay.
+For a 16 MiB archive asset, each browser records 16,785,936 direct received bytes
+including framing. Caddy records 290 bytes of SDK session metadata and **zero asset
+body bytes** during the transfer. Server native counters independently record
+more than 16 MiB sent, with buffers below 256 KiB. Scene grant metadata remains
+HTTPS-free after setup; session/signaling/module loads still use HTTPS.
+
+Run from the Viewer checkout with the RTC Quasar sibling and built peer:
+
+```bash
+MagnetarBin=/path/to/released/MagnetarInterim \
+QUASAR_RTC_TEST_PEER=/path/to/quasar-peer-race \
+QUASAR_RTC_TEST_WEBROOT=/path/to/quasar/Quasar/wwwroot \
+NEBULA_CADDY=/path/to/verified/caddy \
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs \
+CHROME_PATH=/opt/google/chrome/chrome \
+dotnet run --project tests/DirectChecks
+```
+
+This fixture does not start the user's Quasar service, SteamCMD or game servers.
+Its scene comes from an isolated companion fixture; its hosting-lease provider
+is fake. It proves actual feature/SDK transport and proxy byte accounting, not a
+live Steam login, Internet NAT, real game rendering, retained-history RTC replay
+or the full Nebula manager/frp chain. Those remain completion/acceptance gates.
+Local content-folder and background recording behavior remain covered by the
+existing Node, streaming and replay checks independently of Nebula.
