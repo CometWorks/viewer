@@ -4,12 +4,14 @@ import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 const { chromium, firefox } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
 const base = process.env.VIEWER_RTC_URL, key = process.env.VIEWER_RTC_KEY;
-for (const [name, engine] of [["chromium", chromium], ["firefox", firefox]]) test(`actual Viewer over direct SDK with Caddy accounting: ${name}`, { timeout: 100000 }, async () => {
+const expectedPath = process.env.NEBULA_RTC_TEST_MANAGER ? "relayed" : "direct";
+for (const [name, engine] of [["chromium", chromium], ["firefox", firefox]].filter(([name]) => !process.env.RTC_BROWSER || name === process.env.RTC_BROWSER)) test(`actual Viewer over direct SDK with Caddy accounting: ${name}`, { timeout: 100000 }, async () => {
     const browser = await engine.launch({ headless: true, ...(name === "chromium" ? { executablePath: process.env.CHROME_PATH,
-        args: ["--disable-features=WebRtcHideLocalIpsWithMdns"] } : {}) });
+        args: ["--disable-features=WebRtcHideLocalIpsWithMdns"] } : { firefoxUserPrefs: { "media.peerconnection.ice.loopback": true, "media.peerconnection.ice.obfuscate_host_addresses": false } }) });
     try {
         const context = await browser.newContext({ extraHTTPHeaders: { "X-Fixture-Key": key } });
         const page = await context.newPage(), payloadHttp = [], peerIds = [];
+        page.on("console", message => { if (message.type() === "error") console.log("BROWSER", name, message.text()); });
         page.on("request", request => {
             if (/\/(operations|resources)\//.test(request.url()) || /\/api\/assets\/files\//.test(request.url())) payloadHttp.push(request.url());
         });
@@ -42,16 +44,18 @@ for (const [name, engine] of [["chromium", chromium], ["firefox", firefox]]) tes
         // reverse proxy access log across that exact interval, alongside both peers.
         await new Promise(resolve => setTimeout(resolve, 100));
         const before = (await readFile(process.env.VIEWER_RTC_ACCESS_LOG, "utf8")).trim().split("\n").length;
-        const stats = await page.evaluate(async () => {
+        const relayBefore = process.env.NEBULA_RTC_TEST_MANAGER
+            ? await (await fetch(new URL("fixture/status", process.env.NEBULA_RTC_TEST_MANAGER))).json() : null;
+        const stats = await page.evaluate(async expectedPath => {
             const before = globalThis.sdk.transport;
             const file = await globalThis.resolvedFile.getFile();
             const bytes = new Uint8Array(await file.arrayBuffer());
             if (bytes.length !== 16 * 1024 * 1024) throw new Error("Archive length mismatch");
             for (let i = 0; i < bytes.length; i++) if (bytes[i] !== (i & 255)) throw new Error("Archive corrupted");
             const after = globalThis.sdk.transport;
-            if (after.path !== "direct" || after.receivedBytes - before.receivedBytes < bytes.length || after.maximumQueuedBytes > 256 * 1024) throw new Error("Direct counters/bounds missing");
+            if (after.path !== expectedPath || after.receivedBytes - before.receivedBytes < bytes.length || after.maximumQueuedBytes > 256 * 1024) throw new Error("Direct counters/bounds missing");
             return { bytes: bytes.length, peerReceived: after.receivedBytes - before.receivedBytes, maximumQueued: after.maximumQueuedBytes };
-        });
+        }, expectedPath);
         await new Promise(resolve => setTimeout(resolve, 100));
         const records = (await readFile(process.env.VIEWER_RTC_ACCESS_LOG, "utf8")).trim().split("\n");
         const during = records.slice(before).map(line => JSON.parse(line));
@@ -61,21 +65,21 @@ for (const [name, engine] of [["chromium", chromium], ["firefox", firefox]]) tes
         // Sample native server counters after its one-second status interval.
         await new Promise(resolve => setTimeout(resolve, 1100));
         const server = await page.evaluate(async id => (await fetch(new URL(`_quasar/sdk/v1/rtc/attempts/${id}`, location.href))).json(), peerIds[0]);
-        assert.equal(server.path, "direct"); assert.ok(server.sentBytes >= stats.bytes); assert.ok(server.maximumBufferedBytes <= 256 * 1024);
+        assert.equal(server.path, expectedPath); assert.ok(server.sentBytes >= stats.bytes); assert.ok(server.maximumBufferedBytes <= 256 * 1024);
         await page.evaluate(() => {
             for (let i = 0; i < 2; i++) { const frame = document.createElement("iframe"); frame.src = new URL("?agentId=server&entityId=42&frame=" + i, location.href).href; document.body.append(frame); }
         });
         await page.waitForFunction(() => document.querySelectorAll("iframe").length === 2);
         for (const frame of page.frames().slice(1)) {
             await frame.waitForLoadState();
-            await frame.evaluate(async () => {
+            await frame.evaluate(async expectedPath => {
                 const url = new URL("_quasar/plugins/cometworks.entityviewer/", location.href);
                 const { viewerSdk } = await import(new URL("viewer-sdk.js", url));
                 const { fetchEntityScene } = await import(new URL("quasar-api.js", url));
                 const sdk = await viewerSdk();
-                if (!(await fetchEntityScene()).assetSession || sdk.transport.path !== "direct") throw new Error("Iframe did not initialize direct viewer");
+                if (!(await fetchEntityScene()).assetSession || sdk.transport.path !== expectedPath) throw new Error("Iframe did not initialize direct viewer");
                 sdk.dispose();
-            });
+            }, expectedPath);
         }
         await page.evaluate(() => document.querySelectorAll("iframe").forEach(frame => frame.remove()));
         const userToken = await page.evaluate(async () => {
@@ -125,6 +129,11 @@ for (const [name, engine] of [["chromium", chromium], ["firefox", firefox]]) tes
         });
         await unavailable.close();
         assert.deepEqual(payloadHttp, []);
+        if (relayBefore) {
+            const relayAfter = await (await fetch(new URL("fixture/status", process.env.NEBULA_RTC_TEST_MANAGER))).json();
+            assert.ok(relayAfter.payloadBytes - relayBefore.payloadBytes >= stats.bytes, "Asset bytes must cross the actual TURN process");
+            console.log(JSON.stringify({ browser: name, path: expectedPath, relay: process.env.NEBULA_RTC_TEST_PROTOCOL, relayPayloadBytes: relayAfter.payloadBytes - relayBefore.payloadBytes }));
+        }
         console.log(JSON.stringify({ browser: name, ...stats, proxyMetadataResponseBytesDuringAsset: proxyBytes, proxyAssetBodyBytes: 0, serverSent: server.sentBytes, serverMaximumBuffered: server.maximumBufferedBytes }));
     } finally { await browser.close(); }
 });

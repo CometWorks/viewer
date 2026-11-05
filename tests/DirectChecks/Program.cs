@@ -46,9 +46,10 @@ try
     builder.Services.AddAuthorization(options => typeof(Quasar.Program).GetMethod("ConfigureAuthorizationPolicies", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [options]));
     builder.Services.AddSingleton<IAuthorizationPolicyProvider, QuasarAuthorizationPolicyProvider>();
     builder.Services.AddQuasarRtc(builder.Configuration);
-    builder.Services.PostConfigure<QuasarRtcOptions>(options => options.PeerExecutable = Environment.GetEnvironmentVariable("QUASAR_RTC_TEST_PEER")!);
-    builder.Services.AddHttpClient("Nebula").ConfigurePrimaryHttpMessageHandler(() => new Leases());
-    await HostedPanelState.SaveAsync(new HostedPanelState { Choice = "hosted", PanelId = prefix[1..], Credential = prefix[1..] + "." + new string('a', 64) });
+    builder.Services.PostConfigure<QuasarRtcOptions>(options => { options.StunUrls = []; options.PeerExecutable = Environment.GetEnvironmentVariable("QUASAR_RTC_TEST_PEER")!; });
+    var manager = Environment.GetEnvironmentVariable("NEBULA_RTC_TEST_MANAGER");
+    builder.Services.AddHttpClient("Nebula").ConfigurePrimaryHttpMessageHandler(() => manager is null ? new Leases() : new FixtureManager(new Uri(manager)));
+    await HostedPanelState.SaveAsync(new HostedPanelState { Choice = "hosted", PanelId = prefix[1..], Credential = Environment.GetEnvironmentVariable("NEBULA_RTC_TEST_CREDENTIAL") ?? prefix[1..] + "." + new string('a', 64) });
     await using var app = builder.Build();
     await app.Services.GetRequiredService<RbacConfigCatalog>().UpdateAsync(config => {
         config.SubjectRoleMappings = [new() { Subject = alice, Roles = [QuasarRoles.Admin] }, new() { Subject = bob, Roles = [QuasarRoles.Viewer] }]; return Task.CompletedTask;
@@ -61,6 +62,16 @@ try
     // Explicit paths work for a separate runtime checkout too.
     var runtimeWeb = Environment.GetEnvironmentVariable("QUASAR_RTC_TEST_WEBROOT") ?? quasarWeb;
     app.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(runtimeWeb) });
+    app.Use(async (http, next) => {
+        if (manager is not null && http.Request.Path == "/_quasar/sdk/v1/rtc/attempts" && http.Request.Method == "POST")
+        {
+            http.Request.EnableBuffering();
+            using var offer = await JsonDocument.ParseAsync(http.Request.Body);
+            http.Request.Body.Position = 0;
+            if (!offer.RootElement.TryGetProperty("relayTicket", out _)) { http.Response.StatusCode = 503; return; }
+        }
+        await next(http);
+    });
     app.UseRouting(); app.UseAuthentication(); app.UseAuthorization();
     app.MapQuasarSdk(); app.MapQuasarRtc(); plugin.ConfigureEndpoints(app, context);
     app.MapGet("/", () => Results.Content("<!doctype html><title>Viewer direct fixture</title>", "text/html"));
@@ -121,7 +132,9 @@ try
     start.ArgumentList.Add("--test"); start.ArgumentList.Add(Path.GetFullPath("../../../../../tests/DirectChecks/browser.test.mjs", AppContext.BaseDirectory));
     start.Environment["VIEWER_RTC_URL"] = $"http://127.0.0.1:{number}{prefix}/"; start.Environment["VIEWER_RTC_KEY"] = key; start.Environment["VIEWER_RTC_ACCESS_LOG"] = log;
     using var node = Process.Start(start)!; var output = node.StandardOutput.ReadToEndAsync(); var error = node.StandardError.ReadToEndAsync();
-    await node.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(4)); Console.Write(await output); Console.Error.Write(await error);
+    try { await node.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(4)); }
+    finally { if (!node.HasExited) { node.Kill(entireProcessTree: true); await node.WaitForExitAsync(); } }
+    Console.Write(await output); Console.Error.Write(await error);
     if (node.ExitCode != 0) throw new Exception("Viewer direct browser checks failed.");
 }
 finally { if (proxy is { HasExited: false }) { proxy.Kill(true); await proxy.WaitForExitAsync(); } proxy?.Dispose(); try { Directory.Delete(root, true); } catch (IOException) { } }
@@ -139,5 +152,14 @@ sealed class Leases : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(request.Method == HttpMethod.Delete ? HttpStatusCode.NoContent : HttpStatusCode.OK) {
             Content = JsonContent.Create(new { id = path.EndsWith("/leases") ? Guid.NewGuid().ToString("N") : path.Split('/')[^2], version = 1,
                 grant = path.EndsWith("/leases") ? new string('A',64) : null, validForSeconds = path.EndsWith("/leases") ? 30 : 120 }) });
+    }
+}
+
+sealed class FixtureManager(Uri manager) : DelegatingHandler(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false })
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+    {
+        request.RequestUri = new Uri(manager, request.RequestUri!.PathAndQuery);
+        return base.SendAsync(request, token);
     }
 }
