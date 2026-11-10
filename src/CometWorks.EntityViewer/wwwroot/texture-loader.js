@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { disposeCachedTexture, getAssetFolderCacheGeneration, resolveAssetFile } from "./content-folder.js";
 import { state } from "./state.js";
 import { getRemoteAssetSessionKey } from "./asset-streaming.js";
+import { createAsyncQueue } from "./async-queue.js";
 
 const MAX_CONCURRENT_TEXTURE_RESOLVES = 24;
 const MAX_CONCURRENT_TEXTURE_READS = 6;
@@ -532,30 +533,6 @@ function ensureTexturePathCacheGeneration() {
         texturePathCacheGeneration = generation;
     }
     return generation;
-}
-
-function createAsyncQueue(limit) {
-    let active = 0;
-    const queued = [];
-
-    function runNext() {
-        while (active < limit && queued.length) {
-            const item = queued.shift();
-            active++;
-            Promise.resolve()
-                .then(item.operation)
-                .then(item.resolve, item.reject)
-                .finally(() => {
-                    active--;
-                    runNext();
-                });
-        }
-    }
-
-    return operation => new Promise((resolve, reject) => {
-        queued.push({ operation, resolve, reject });
-        runNext();
-    });
 }
 
 function ddsLogLabel(info) {

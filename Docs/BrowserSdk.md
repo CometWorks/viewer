@@ -40,7 +40,15 @@ Archive entries remain non-seekable streams; plain files retain ranges.
 
 Browser callers use only `request`/`openRead`; Quasar queues at most four active
 transfers per panel across same-origin plugin frames and limits pending work.
-Only explicit capacity rejection during resource reservation may retry. Scene,
+The viewer additionally queues remote resolves and downloads together, with at
+most two active asset operations per frame. Model/LOD, texture and font loads
+share this queue; local folder loads keep their existing parallelism. This
+matches the feature's resolve limit and leaves room for other direct SDK calls.
+Explicit `429` rejection of an asset resolve or read opening retries with bounded
+backoff for about one minute, allowing shared user rate limits to reset. Exhausted
+throttling remains an error and is never cached as an absent asset. An opened
+download body is consumed once and its handle is disposed before releasing capacity.
+Interrupted downloads and other transport failures are never replayed. Scene,
 recording, consent, installer and upload mutations are never replayed.
 
 PreviewHost explicitly serves the bridge to `preview-sdk.js`, a UI-only adapter
