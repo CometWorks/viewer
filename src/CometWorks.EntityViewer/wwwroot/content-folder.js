@@ -2,6 +2,7 @@ import * as zip from "zip.js";
 import { state } from "./state.js";
 import { log } from "./logging.js";
 import { getRemoteAssetSessionKey, resolveRemoteAssetFile } from "./asset-streaming.js";
+import { createAsyncQueue } from "./async-queue.js";
 
 const DB_NAME = "quasar-viewer";
 const STORE_NAME = "handles";
@@ -991,30 +992,6 @@ async function timedQueue(queue, timingKey, operation) {
     } finally {
         addTiming(timingKey, performance.now() - start);
     }
-}
-
-function createAsyncQueue(limit) {
-    let active = 0;
-    const queued = [];
-
-    function runNext() {
-        while (active < limit && queued.length) {
-            const item = queued.shift();
-            active++;
-            Promise.resolve()
-                .then(item.operation)
-                .then(item.resolve, item.reject)
-                .finally(() => {
-                    active--;
-                    runNext();
-                });
-        }
-    }
-
-    return operation => new Promise((resolve, reject) => {
-        queued.push({ operation, resolve, reject });
-        runNext();
-    });
 }
 
 function addTiming(key, durationMs) {

@@ -1,5 +1,10 @@
 import { viewerRequest, viewerSdk, VIEWER_PLUGIN } from "./viewer-sdk.js";
 import { loadStreamedAsset } from "./asset-cache.js";
+import { createAsyncQueue } from "./async-queue.js";
+
+// Models, their LODs, textures and fonts share the server's two-resolve limit.
+// Keep a read's slot until its body and SDK handle have both been released.
+const remoteAssetQueue = createAsyncQueue(2);
 
 let currentStatus = null;
 let remoteAssetSession = null;
@@ -33,15 +38,16 @@ export function getRemoteAssetSessionKey() {
 
 export async function resolveRemoteAssetFile(logicalPath, options = {}) {
     if (!remoteAssetSession?.sessionId) return null;
+    const sessionId = remoteAssetSession.sessionId;
 
     let resolved;
     try {
-        resolved = await viewerRequest("assets.resolve", {
-            sessionId: remoteAssetSession.sessionId,
+        resolved = await remoteAssetQueue(() => retryThrottled(() => viewerRequest("assets.resolve", {
+            sessionId,
             asset: { logicalPath, rootId: options.rootId || options.RootId || "", sourceKind: options.sourceKind || options.SourceKind || "" },
-        });
+        })));
     } catch (error) {
-        if (error.status >= 400 && error.status < 500) return null;
+        if (error.status >= 400 && error.status < 500 && error.status !== 429) return null;
         throw error;
     }
     if (!resolved?.found || !resolved.assetToken) return null;
@@ -57,11 +63,12 @@ export async function resolveRemoteAssetFile(logicalPath, options = {}) {
 }
 
 async function fetchResolvedRemoteFile(resolved) {
-    const blob = await loadStreamedAsset(resolved, async () => {
-        const stream = await (await viewerSdk()).openRead(VIEWER_PLUGIN, "assets.file.read", { assetToken: resolved.assetToken });
+    const blob = await loadStreamedAsset(resolved, () => remoteAssetQueue(async () => {
+        const sdk = await viewerSdk();
+        const stream = await retryThrottled(() => sdk.openRead(VIEWER_PLUGIN, "assets.file.read", { assetToken: resolved.assetToken }));
         try { return await stream.blob(); }
         finally { await stream.dispose(); }
-    });
+    }));
     const fileName = String(resolved.logicalPath || "asset").split("/").filter(Boolean).pop() || "asset";
     const lastModified = resolved.lastModifiedUtc ? Date.parse(resolved.lastModifiedUtc) : Date.now();
     if (typeof File === "function") {
@@ -74,4 +81,16 @@ async function fetchResolvedRemoteFile(resolved) {
     blob.name = fileName;
     blob.lastModified = Number.isFinite(lastModified) ? lastModified : Date.now();
     return blob;
+}
+
+async function retryThrottled(operation) {
+    for (let attempt = 0; ; attempt++) {
+        try { return await operation(); }
+        catch (error) {
+            // Other frames share user quotas. Allow the minute rate window to reset,
+            // but never replay a failed body transfer or any non-capacity failure.
+            if (error.status !== 429 || attempt >= 8) throw error;
+            await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** attempt, 30000)));
+        }
+    }
 }
