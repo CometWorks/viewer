@@ -30,6 +30,8 @@
 /* Legacy Quasar table rows force descendant colors through this inherited token. */
 .entity-viewer-button:hover:not(:disabled), .entity-viewer-icon-button:hover:not(:disabled) { --quasar-table-hover-text: var(--quasar-palette-hover-contrast-text, var(--quasar-palette-text-primary, #e6e9ee)); background: var(--quasar-palette-hover-background, #ffffff12); color: var(--quasar-palette-hover-contrast-text, var(--quasar-palette-text-primary, #e6e9ee)); }
 .entity-viewer-button:disabled, .entity-viewer-icon-button:disabled { opacity: .45; cursor: default; }
+/* Keep unavailable eyes neutral even when the host highlights the containing row. */
+.entity-viewer-icon-button:disabled { --quasar-table-hover-text: var(--quasar-palette-text-secondary, #9ca5b3); color: var(--quasar-table-hover-text) !important; opacity: 1; }
 .entity-viewer-native-dialog :focus-visible, .entity-viewer-icon-button:focus-visible { outline: 2px solid var(--quasar-palette-primary, #56c8dc); outline-offset: 2px; }
 .entity-viewer-notice { border-left: 3px solid var(--quasar-palette-info, #56c8dc); padding: 10px 12px; background: var(--viewer-bg); margin: 0; }
 .entity-viewer-chip { border: 1px solid var(--viewer-border); padding: 3px 7px; border-radius: 4px; font-size: 11px; }

@@ -1,7 +1,7 @@
 
 <td data-label="" class="mud-table-cell quasar-actions-column">
-    <span @onclick:stopPropagation="true">
-        <button type="button" class="entity-viewer-icon-button" title="@TooltipText" aria-label="@TooltipText" disabled="@(!CanOpenViewer)" @onclick="OpenViewerAsync"><ViewerIcon Icon="@ViewerIcons.Visibility" /></button>
+    <span title="@TooltipText" @onclick:stopPropagation="true">
+        <button type="button" class="entity-viewer-icon-button" aria-label="@TooltipText" disabled="@(!CanOpenViewer)" @onclick="OpenViewerAsync"><ViewerIcon Icon="@(CanOpenViewer ? ViewerIcons.Visibility : ViewerIcons.VisibilityOff)" /></button>
     </span>
     @if (_open)
     {
@@ -64,9 +64,22 @@
                                       || !string.IsNullOrWhiteSpace(ViewerUrl)
                                       || OpenEntityViewer.HasDelegate);
 
-    private string TooltipText => CanOpenViewer
-        ? "Open viewer"
-        : "Entity is not viewable";
+    private string TooltipText
+    {
+        get
+        {
+            if (CanOpenViewer)
+                return "Open viewer";
+            if (!CanViewEntity)
+            {
+                if (string.Equals(EntityType, "Voxel", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(EntitySubType, "Planet", StringComparison.OrdinalIgnoreCase))
+                    return "Viewer unavailable: planets are not supported.";
+                return "Viewer unavailable for this entity type.";
+            }
+            return "Viewer unavailable: no connected server or viewer link.";
+        }
+    }
 
     private async Task OpenViewerAsync()
     {
