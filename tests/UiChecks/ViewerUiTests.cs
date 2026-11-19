@@ -41,6 +41,39 @@ public sealed class ViewerUiTests
         Assert.Contains(js.Calls, x => x.Name == "close");
         cell.Render(p => p.Add(x => x.CanViewEntity, false));
         Assert.True(cell.Find("button").HasAttribute("disabled"));
+        Assert.Single(cell.FindAll("button svg path[stroke='currentColor']"));
+        cell.Render(p => p.Add(x => x.CanViewEntity, true));
+        Assert.False(cell.Find("button").HasAttribute("disabled"));
+        Assert.Empty(cell.FindAll("button svg path[stroke='currentColor']"));
+        Assert.Equal("Open viewer", cell.Find("button").GetAttribute("aria-label"));
+    }
+
+    [Theory]
+    [InlineData("Grid", null, true, "agent", null, "Open viewer")]
+    [InlineData("Voxel", "Asteroid", true, "agent", null, "Open viewer")]
+    [InlineData("Grid", null, true, null, "/viewer", "Open viewer")]
+    [InlineData("Voxel", "Planet", false, "agent", null, "Viewer unavailable: planets are not supported.")]
+    [InlineData("voxel", "planet", false, "agent", null, "Viewer unavailable: planets are not supported.")]
+    [InlineData("Character", null, false, "agent", null, "Viewer unavailable for this entity type.")]
+    [InlineData("Grid", null, true, null, null, "Viewer unavailable: no connected server or viewer link.")]
+    public void ColumnExplainsAvailabilityWithoutOpeningUnavailableEntities(
+        string entityType, string? subType, bool canView, string? agentId, string? viewerUrl, string tooltip)
+    {
+        using var context = new BunitContext();
+        var cell = context.Render<EntityViewerColumnCell>(p => p.Add(x => x.EntityId, 42)
+            .Add(x => x.EntityType, entityType).Add(x => x.EntitySubType, subType)
+            .Add(x => x.CanViewEntity, canView).Add(x => x.AgentId, agentId).Add(x => x.ViewerUrl, viewerUrl));
+        var button = cell.Find("button");
+        var disabled = tooltip != "Open viewer";
+        Assert.Equal(disabled, button.HasAttribute("disabled"));
+        Assert.Equal(tooltip, button.GetAttribute("aria-label"));
+        Assert.Equal(tooltip, button.ParentElement!.GetAttribute("title"));
+        Assert.Equal(disabled ? 1 : 0, button.QuerySelectorAll("svg path[stroke='currentColor']").Length);
+        if (disabled)
+        {
+            button.Click();
+            Assert.Empty(cell.FindAll("dialog"));
+        }
     }
 
     [Theory]
