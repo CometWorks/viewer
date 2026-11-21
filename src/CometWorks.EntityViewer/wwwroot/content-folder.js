@@ -34,7 +34,11 @@ const metadataQueue = createAsyncQueue(METADATA_CONCURRENCY);
 export async function restoreContentFolder() {
     const saved = readFolderStorage(CONTENT_STORAGE_KEY);
     if (saved?.name) state.contentFolderName = saved.name;
-    return await restoreStoredContentFolder(hasPersistentFileSystemAccess());
+    if (hasPersistentFileSystemAccess()) return await restoreStoredContentFolder(true);
+
+    const folder = restorePickedFolder(CONTENT_STORAGE_KEY, "Content");
+    if (folder) activateContentFolder(folder, folder.name);
+    return folder;
 }
 
 export async function pickContentFolder() {
@@ -59,7 +63,11 @@ export async function pickContentFolder() {
 export async function restoreModsFolder() {
     const saved = readFolderStorage(MODS_STORAGE_KEY);
     if (saved?.name) state.modsFolderName = saved.name;
-    return await restoreStoredModsFolder(hasPersistentFileSystemAccess());
+    if (hasPersistentFileSystemAccess()) return await restoreStoredModsFolder(true);
+
+    const folder = restorePickedFolder(MODS_STORAGE_KEY, "Mods");
+    if (folder) await activateModsFolder(folder, folder.name);
+    return folder;
 }
 
 export async function pickModsFolder() {
@@ -143,6 +151,7 @@ async function pickContentFolderFromFileList() {
     }
 
     activateContentFolder(handle, handle.name || "Content");
+    rememberPickedFolder(CONTENT_STORAGE_KEY, files);
     writeFolderStorage(CONTENT_STORAGE_KEY, state.contentFolderName, "folder-input");
     log(`Selected local Content folder: ${state.contentFolderName} (${files.length.toLocaleString()} files).`);
     return handle;
@@ -154,6 +163,7 @@ async function pickModsFolderFromFileList() {
     const handle = createFileListDirectoryHandle(files, "Mods");
     await validateModsFolder(handle);
     await activateModsFolder(handle, handle.name || "Mods");
+    rememberPickedFolder(MODS_STORAGE_KEY, files);
     writeFolderStorage(MODS_STORAGE_KEY, state.modsFolderName, "folder-input");
     log(`Selected local Mods folder: ${state.modsFolderName} (${files.length.toLocaleString()} files).`);
     return handle;
@@ -200,6 +210,34 @@ export async function looksLikeModsFolder(handle) {
     }
 }
 
+function folderSelectionScope() {
+    // A new grid replaces its iframe. The same-origin Entities table outlives it.
+    const frame = window.frameElement;
+    if (!frame?.matches("iframe.entity-viewer-frame")) return null;
+    const source = new URL(frame.src);
+    if (source.origin !== window.location.origin || source.pathname !== window.location.pathname) return null;
+    return frame.closest("table");
+}
+
+function rememberPickedFolder(key, files) {
+    const scope = folderSelectionScope();
+    if (!scope) return;
+
+    const slot = Symbol.for(key);
+    try {
+        // File snapshots and relative paths only, with no references to the old viewer.
+        scope[slot] = scope.ownerDocument.defaultView.structuredClone(files);
+    } catch (error) {
+        delete scope[slot];
+        log(`Could not retain the selected folder for another grid: ${error.message}`, true);
+    }
+}
+
+function restorePickedFolder(key, fallbackName) {
+    const files = folderSelectionScope()?.[Symbol.for(key)];
+    return files ? createFileListDirectoryHandle(files, fallbackName) : null;
+}
+
 function selectFolderFiles(inputId) {
     return new Promise(resolve => {
         const input = document.getElementById(inputId) || createFolderPickerInput(inputId);
@@ -219,7 +257,7 @@ function selectFolderFiles(inputId) {
             if (!input.id) input.remove();
             resolve(files);
         };
-        const handleChange = () => finish(Array.from(input.files || []));
+        const handleChange = () => finish(Array.from(input.files || [], file => [fileListRelativePath(file), file]));
         const handleCancel = () => finish(null);
 
         input.addEventListener("change", handleChange);
@@ -237,9 +275,10 @@ function createFolderPickerInput(id = "") {
 }
 
 function createFileListDirectoryHandle(files, fallbackName) {
-    const root = createVirtualDirectoryHandle(fileListRootName(files) || fallbackName);
-    for (const file of files) {
-        const parts = fileListRelativeParts(file);
+    const rootName = files[0]?.[0].split("/").find(Boolean);
+    const root = createVirtualDirectoryHandle(rootName || fallbackName);
+    for (const [path, file] of files) {
+        const parts = path.split("/").filter(Boolean);
         if (parts.length < 2) continue;
 
         let directory = root;
@@ -251,18 +290,8 @@ function createFileListDirectoryHandle(files, fallbackName) {
     return root;
 }
 
-function fileListRootName(files) {
-    const firstPath = fileListRelativePath(files[0] || null);
-    const firstPart = firstPath.split("/").filter(Boolean)[0];
-    return firstPart || "";
-}
-
-function fileListRelativeParts(file) {
-    return fileListRelativePath(file).split("/").filter(Boolean);
-}
-
 function fileListRelativePath(file) {
-    return String(file && (file.webkitRelativePath || file.relativePath || file.name) || "").replaceAll("\\", "/");
+    return String(file.webkitRelativePath || file.relativePath || file.name).replaceAll("\\", "/");
 }
 
 function getOrCreateVirtualDirectory(parent, name) {
@@ -1086,7 +1115,7 @@ function buildFileAccessWarning(support) {
     if (!support.hasHandlePermissions) missing.push("file handle permission prompts");
 
     const reason = missing.length ? ` Missing: ${missing.join(", ")}.` : "";
-    return `Persistent local folder access needs Chrome, Brave, Edge, or another Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+ browser with File System Access permissions. Brave may require enabling the File System Access API.${reason} Using backup folder picker; select Content and Mods folders again after every browser reload.`;
+    return `Persistent local folder access needs Chrome, Brave, Edge, or another Chromium ${MIN_PERSISTENT_PERMISSION_CHROMIUM_MAJOR}+ browser with File System Access permissions. Brave may require enabling the File System Access API.${reason} Using the backup folder picker. Selections can be reused while the Quasar Entities list stays open. Select the folders again after reloading the page.`;
 }
 
 function detectChromiumMajorVersion() {
