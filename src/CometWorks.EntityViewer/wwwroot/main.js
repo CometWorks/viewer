@@ -192,8 +192,8 @@ function savedContentFolderStatus() {
     const support = getFileAccessSupport();
     if (!support.persistent) {
         return name
-            ? `Backup folder picker active. Last Content folder: ${name}. Select it again after reload.`
-            : "Backup folder picker active. Select Content folder for this session.";
+            ? `Last Content folder: ${name}. Select it again to grant browser access.`
+            : "Select a Content folder to use local assets.";
     }
     return name ? `Last saved Content folder: ${name}. Select it again to grant browser access.` : "No Content folder selected.";
 }
@@ -203,8 +203,8 @@ function savedModsFolderStatus() {
     const support = getFileAccessSupport();
     if (!support.persistent) {
         return name
-            ? `Backup folder picker active. Last Mods folder: ${name}. Select it again after reload.`
-            : "Backup folder picker active. Select Mods folder for this session.";
+            ? `Last Mods folder: ${name}. Select it again to grant browser access.`
+            : "Select a Mods folder to use local mod assets.";
     }
     return name ? `Last saved Mods folder: ${name}. Select it again to grant browser access.` : "No Mods folder selected.";
 }

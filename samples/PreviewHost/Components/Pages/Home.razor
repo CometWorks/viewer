@@ -3,7 +3,7 @@
 <PageTitle>Entity Viewer Preview</PageTitle>
 <h1>Entity Viewer Preview</h1>
 <p>This host renders native plugin components with Quasar appearance tokens.</p>
-<div class="preview-grid"><section class="preview-panel"><h2>Entities Column</h2><div class="preview-table-scroll"><table class="preview-table"><thead><tr><th scope="col">Type</th><th scope="col">Entity ID</th><th scope="col">Name</th><EntityViewerColumnHeader /></tr></thead><tbody>@foreach (var entity in _entities) { <tr @key="entity.EntityId"><td>@entity.Type</td><td class="mono">@entity.EntityId</td><td>@entity.Name</td><EntityViewerColumnCell ServerName="Preview Server" EntityId="@entity.EntityId" EntityType="@entity.Type" EntitySubType="@entity.SubType" EntityDisplayName="@entity.Name" CanViewEntity="@entity.CanView" ViewerUrl="@ViewerAssetUrl" AssetSetupModuleUrl="@AssetSetupModuleUrl" AssetSetupApiBasePath="@AssetSetupApiBasePath" AutoOpenAssetSetup="false" /></tr> }</tbody></table></div></section><section class="preview-panel"><h2>Static Runtime</h2><a href="@ViewerAssetUrl" target="_blank" rel="noopener">Open viewer</a><div class="preview-frame-host"><iframe src="@ViewerAssetUrl" title="Entity Viewer static runtime" class="preview-frame"></iframe></div></section></div>
+<div class="preview-grid"><section class="preview-panel"><h2>Entities Column</h2><div class="preview-table-scroll"><table class="preview-table"><thead><tr><th scope="col">Type</th><th scope="col">Entity ID</th><th scope="col">Name</th><EntityViewerColumnHeader /></tr></thead><tbody>@foreach (var entity in _entities) { <tr @key="entity.EntityId"><td>@entity.Type</td><td class="mono">@entity.EntityId</td><td>@entity.Name</td><EntityViewerColumnCell ServerName="Preview Server" EntityId="@entity.EntityId" EntityType="@entity.Type" EntitySubType="@entity.SubType" EntityDisplayName="@entity.Name" CanViewEntity="@entity.CanView" ViewerUrl="@ViewerUrl(entity)" AssetSetupModuleUrl="@AssetSetupModuleUrl" AssetSetupApiBasePath="@AssetSetupApiBasePath" AutoOpenAssetSetup="false" /></tr> }</tbody></table></div></section><section class="preview-panel"><h2>Static Runtime</h2><a href="@ViewerAssetUrl" target="_blank" rel="noopener">Open viewer</a><div class="preview-frame-host"><iframe src="@ViewerAssetUrl" title="Entity Viewer static runtime" class="preview-frame"></iframe></div></section></div>
 
 @code
 {
@@ -16,7 +16,10 @@
         new(281474976710681, "Grid", "LargeShip", "Mining Platform", true),
         new(281474976710682, "VoxelMap", "Asteroid", "Asteroid Cluster", true),
         new(281474976710683, "Character", "Player", "Engineer", false),
+        new(281474976710684, "Grid", "SmallShip", "Survey Ship", true),
     ];
+
+    private static string ViewerUrl(PreviewEntity entity) => $"{ViewerAssetUrl}?agentId=preview&entityId={entity.EntityId}";
 
     private sealed record PreviewEntity(long EntityId, string Type, string SubType, string Name, bool CanView);
 }

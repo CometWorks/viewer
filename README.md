@@ -87,8 +87,9 @@ import-map URLs. This keeps the viewer working when Quasar serves it from
 
 Chrome, Edge, and other Chromium 122+ browsers can persist selected local
 Content and Mods folder handles through the File System Access API and
-IndexedDB. Other browsers use the backup folder-input viewer path and warn that
-folder selections must be repeated after reload.
+IndexedDB. Other browsers use the backup folder picker. Selections carry across
+grid dialogs while the Quasar Entities list stays open and must be made again
+after a page reload.
 
 Viewer releases are installed from pinned QuasarHub revisions. Publish the
 adapter and static assets together; no Quasar submodule update is required.
@@ -116,6 +117,16 @@ saves, and read-only management controls. Browser tests cover native/legacy them
 mapping, live appearance changes, standalone fallback, and observer cleanup.
 Real Quasar circuits and authenticated asset streaming still need integration
 acceptance with the matching installed plugin package.
+
+To check local Content reuse across grid dialogs in Firefox, start PreviewHost in
+development mode and run the browser test with an installed Playwright module
+and its Firefox build. The test uses temporary files and a fixture scene SDK.
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project samples/PreviewHost --urls http://127.0.0.1:5109
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs VIEWER_PREVIEW_URL=http://127.0.0.1:5109/ \
+  node --test tests/LocalFolderChecks/browser.test.mjs
+```
 
 All 15 scene, asset-setup/streaming and replay operations use Quasar browser SDK
 v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancellation;
