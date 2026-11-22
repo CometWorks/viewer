@@ -94,6 +94,56 @@ after a page reload.
 Viewer releases are installed from pinned QuasarHub revisions. Publish the
 adapter and static assets together; no Quasar submodule update is required.
 
+### Blazor WebAssembly dashboard integration
+
+The root `quasar-plugin.json` declares `"browserAssembly": "CometWorks.EntityViewer.dll"`.
+Quasar resolves that filename beside the server entry assembly. In a normal
+Release install the package-relative path is
+`src/CometWorks.EntityViewer.Quasar/bin/Release/net10.0/CometWorks.EntityViewer.dll`. It uses
+the .NET 10 Blazor component packages and the dashboard's JS interop runtime.
+The adapter and the Magnetar companion run on the server. The UI DLL and the
+existing static asset tree can be installed independently of a dashboard publish.
+Only `quasar-plugin.css` is needed from the static assets when the table renders. Opening a
+viewer creates its iframe and loads the selected scene or history module.
+
+The current server catalog obtains the assembly from `GetRazorAssemblies()`
+and the component types and policies from `GetExtensions()`. Entity Viewer
+replaces `quasar.entities.viewer-column-header` and
+`quasar.entities.viewer-column-cell` at priority 100 with `CanView`. The
+dashboard supplies the existing typed row parameters, including the 64-bit entity
+and owner IDs. The Entity history navigation item requires `CanManageSecurity`.
+
+The panel-scoped client catalog must validate the declared assembly against
+`GetRazorAssemblies()`, serve the enabled installation's DLL, and render the authorized
+contributions in the named outlets. The trimmed test host preserves
+`Microsoft.AspNetCore.Components`, `Microsoft.AspNetCore.Components.Web`,
+`Microsoft.JSInterop`, and framework methods for local timestamps and cancellable
+polling. Quasar needs to retain a compatible framework surface across dashboard
+releases. The panel-relative static asset mount and generated `_sdk/client.js`
+bridge are also required in WASM. Hosted tunnel
+availability, switching new operations to direct WebRTC when ready, and the
+aggregate 20 Mbit/s limit on tunneled bulk belong to the SDK. Local and
+self-hosted SDK calls use HTTP(S). Live transport acceptance belongs in the
+integrated host and SDK tests.
+
+To exercise the independent installation, publish the test host, then build
+the plugin and run the Chromium check from this checkout. Supply the Quasar
+abstractions assembly path when a sibling Quasar checkout is unavailable.
+
+```bash
+dotnet publish tests/WasmChecks -c Release
+dotnet build src/CometWorks.EntityViewer.Quasar -c Release \
+  -p:QuasarPluginAbstractionsAssembly=/path/to/Quasar.Plugin.Abstractions.dll
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROME_PATH=/path/to/chrome \
+  node --test tests/WasmChecks/browser.test.mjs
+```
+
+The test loads the adapter's UI DLL into the already published WASM runtime at
+both the application root and a hosted panel prefix. Chromium exercises the table,
+lazy renderer, SDK scene request, consent prompt, root settings, installer
+polling, and dialog lifecycle using a fixture SDK. StreamingChecks separately
+exercises the real SDK authorization, consent, and asset-read handlers.
+
 When Quasar embeds the viewer in its fullscreen entity dialog, the viewer reads
 `--quasar-palette-*` variables from the enclosing Quasar shell and maps them onto
 its CSS/Three.js theme tokens. It observes appearance changes and releases its
@@ -133,8 +183,8 @@ v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancell
 the viewer retains consent, user-bound asset tokens, private caches and history
 rules. Both existing URL prefixes remain compatibility aliases to the same SDK
 handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
-Entity Viewer 0.1.13 requires Quasar 1.6.0 and `browserSdkVersion: 1`. Upgrade
-Quasar before publishing/installing this viewer revision.
+Entity Viewer 0.1.14 requires Quasar 1.7.0 or later for its independently
+installed Razor components and uses browser SDK v1 for all viewer operations.
 
 ## Recording history
 

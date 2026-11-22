@@ -1,4 +1,3 @@
-@using System.Text.Json.Serialization
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
@@ -213,7 +212,7 @@
         : _installer.Message;
 
     private string InstallerLogText => _installer?.Log is { Count: > 0 } log
-        ? string.Join(Environment.NewLine, log.Select(entry =>
+        ? string.Join("\n", log.Select(entry =>
         {
             var timestamp = entry.TimestampUtc.HasValue
                 ? entry.TimestampUtc.Value.ToLocalTime().ToString("T")
@@ -434,14 +433,13 @@
     {
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
+            while (_installer?.IsRunning == true)
             {
+                await Task.Delay(2000, cancellationToken);
                 var module = await GetModuleAsync();
                 SetInstaller(await module.InvokeAsync<SteamCmdInstallerStatusDto>("fetchInstallerStatus", cancellationToken, Navigation.ApplicationUrl(ApiBasePath)));
                 if (_installer?.IsRunning != true)
                 {
-                    StopPolling();
                     _status = await module.InvokeAsync<AssetStreamingStatusDto>("fetchAssetStatus", cancellationToken, Navigation.ApplicationUrl(ApiBasePath));
                     _roots = await module.InvokeAsync<AssetRootSettingsDto>("fetchRootSettings", cancellationToken, Navigation.ApplicationUrl(ApiBasePath));
                     SyncRootFields();
@@ -457,6 +455,11 @@
         {
             _error = exception.Message;
             await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            if (_pollingCts?.Token == cancellationToken)
+                StopPolling();
         }
     }
 
@@ -483,133 +486,95 @@
 
     private sealed class AssetStreamingStatusDto
     {
-        [JsonPropertyName("streamingEnabled")]
         public bool StreamingEnabled { get; set; }
 
-        [JsonPropertyName("consentAccepted")]
         public bool ConsentAccepted { get; set; }
 
-        [JsonPropertyName("consentRequired")]
         public bool ConsentRequired { get; set; }
 
-        [JsonPropertyName("canManageStreaming")]
         public bool CanManageStreaming { get; set; }
 
-        [JsonPropertyName("fileStreamingReady")]
         public bool FileStreamingReady { get; set; }
 
-        [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
 
-        [JsonPropertyName("activeBaseGameContentDirectory")]
         public string ActiveBaseGameContentDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("baseGameContentMessage")]
         public string BaseGameContentMessage { get; set; } = string.Empty;
     }
 
     private sealed class AssetRootSettingsDto
     {
-        [JsonPropertyName("baseGameSourceMode")]
         public string BaseGameSourceMode { get; set; } = ManagedSteamCmdSourceMode;
 
-        [JsonPropertyName("baseGameContentPath")]
         public string BaseGameContentPath { get; set; } = string.Empty;
 
-        [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
 
-        [JsonPropertyName("managedGameContentDirectory")]
         public string ManagedGameContentDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("managedDedicatedServerContentDirectory")]
         public string ManagedDedicatedServerContentDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("activeBaseGameContentDirectory")]
         public string ActiveBaseGameContentDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("managedContentSource")]
         public string ManagedContentSource { get; set; } = "ManagedSteamCmd";
 
-        [JsonPropertyName("baseGameContentConfigured")]
         public bool BaseGameContentConfigured { get; set; }
 
-        [JsonPropertyName("managedDedicatedServerContentExists")]
         public bool ManagedDedicatedServerContentExists { get; set; }
 
-        [JsonPropertyName("baseGameContentMessage")]
         public string BaseGameContentMessage { get; set; } = string.Empty;
 
-        [JsonPropertyName("dedicatedServerModsPathExists")]
         public bool DedicatedServerModsPathExists { get; set; }
     }
 
     private sealed class AssetRootSettingsRequest
     {
-        [JsonPropertyName("baseGameSourceMode")]
         public string BaseGameSourceMode { get; set; } = ManagedSteamCmdSourceMode;
 
-        [JsonPropertyName("baseGameContentPath")]
         public string BaseGameContentPath { get; set; } = string.Empty;
 
-        [JsonPropertyName("dedicatedServerModsPath")]
         public string DedicatedServerModsPath { get; set; } = string.Empty;
     }
 
     private sealed class SteamCmdInstallRequest
     {
-        [JsonPropertyName("loginName")]
         public string LoginName { get; set; } = string.Empty;
 
-        [JsonPropertyName("validate")]
         public bool Validate { get; set; } = true;
     }
 
     private sealed class SteamCmdInstallerStatusDto
     {
-        [JsonPropertyName("state")]
         public string State { get; set; } = "Idle";
 
-        [JsonPropertyName("isRunning")]
         public bool IsRunning { get; set; }
 
-        [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
 
-        [JsonPropertyName("lastSequence")]
         public int LastSequence { get; set; }
 
-        [JsonPropertyName("installDirectory")]
         public string InstallDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("contentDirectory")]
         public string ContentDirectory { get; set; } = string.Empty;
 
-        [JsonPropertyName("contentReady")]
         public bool ContentReady { get; set; }
 
-        [JsonPropertyName("contentDiagnostics")]
         public string ContentDiagnostics { get; set; } = string.Empty;
 
-        [JsonPropertyName("loginName")]
         public string LoginName { get; set; } = string.Empty;
 
-        [JsonPropertyName("validate")]
         public bool Validate { get; set; } = true;
 
-        [JsonPropertyName("log")]
         public List<SteamCmdLogEntryDto> Log { get; set; } = [];
     }
 
     private sealed class SteamCmdLogEntryDto
     {
-        [JsonPropertyName("timestampUtc")]
         public DateTimeOffset? TimestampUtc { get; set; }
 
-        [JsonPropertyName("stream")]
         public string Stream { get; set; } = string.Empty;
 
-        [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
     }
 }

@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using CometWorks.EntityViewer.Components;
 using CometWorks.EntityViewer.Quasar;
 using CometWorks.EntityViewer.Quasar.Streaming;
 using Microsoft.AspNetCore.Authentication;
@@ -17,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Quasar.Plugin.Abstractions;
 using Quasar.Plugin.Abstractions.Companion;
+using Quasar.Plugin.Abstractions.Extensions;
 using Quasar.Plugin.Abstractions.Manifests;
 using Quasar.Plugin.Abstractions.Security;
 
@@ -38,6 +40,18 @@ try
         },
     };
     var plugin = new EntityViewerQuasarPlugin();
+    Check(plugin.GetRazorAssemblies().SequenceEqual([typeof(EntityViewerColumnCell).Assembly]),
+        "The installed Razor payload is the viewer presentation assembly");
+    var columns = plugin.GetExtensions().ToDictionary(extension => extension.TargetKey);
+    foreach (var (target, component) in new[]
+    {
+        (QuasarExtensionTargets.EntityViewerColumnHeader, typeof(EntityViewerColumnHeader)),
+        (QuasarExtensionTargets.EntityViewerColumnCell, typeof(EntityViewerColumnCell)),
+    })
+    {
+        Check(columns[target] == new QuasarExtensionContribution(target, component, QuasarPatchMode.Replace,
+            100, plugin.Id, QuasarPolicyNames.CanView), $"Viewer column contribution: {target}");
+    }
     plugin.ConfigureServices(builder.Services, context);
     using var sdk = new QuasarSdkFixture(builder.Services, Path.Combine(root, "quasar"));
     builder.Services.RemoveAll<IHostedService>(); // No SteamCMD background work in these checks.
