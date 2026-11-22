@@ -1,11 +1,11 @@
 # Browser SDK integration
 
-Entity Viewer requires Quasar browser SDK v1 (`browserSdkVersion: 1` in
-`quasar-plugin.json`). Publish the adapter and browser assets together, after
-Quasar 1.6.0 or later. This candidate is Entity Viewer 0.1.13; publish its catalog
-pin only after the compatible Quasar release and canary checks succeed.
-New Quasar rejects unsupported SDK versions before loading the plugin assembly;
-the viewer also reports a clear update error if its browser host is incompatible.
+Entity Viewer 0.1.14 requires Quasar 1.7.0 or later for the WASM dashboard's
+plugin catalog. Its package declares `CometWorks.EntityViewer.dll` as the browser
+assembly and uses Quasar browser SDK v1. Publish the adapter, browser assembly,
+and static assets together after the compatible Quasar release and canary checks.
+Quasar rejects unsupported SDK versions before loading the plugin assembly.
+The viewer also reports an update error if its browser host is incompatible.
 
 `viewer-sdk.js` imports the Quasar-generated `./_sdk/client.js` bridge relative to
 the plugin asset URL. Quasar supplies the exact panel base, including hosted
@@ -93,7 +93,7 @@ The `t3/webrtc-rewrite` branch adds `tests/DirectChecks`, which uses the actual
 Viewer browser modules and 15 safe handlers, real Quasar cookie/session/SDK
 runtime and native peer, and a real isolated Caddy boundary. Nebula-hosted SDK
 clients automatically select RTC; no viewer setting or transport branch is added.
-The shipped SDK-first 1.6.0/0.1.13 metadata stays unchanged.
+That proof used Entity Viewer 0.1.13 with Quasar 1.6.0.
 
 Chromium/Firefox checks cover a large scene envelope, nonenumerable trusted grant,
 consent/setup, archive integrity, range reads, iframe initialization, user-bound

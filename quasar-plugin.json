@@ -1,7 +1,7 @@
 {
   "id": "cometworks.entityviewer",
   "displayName": "Entity Viewer",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "entryAssembly": "CometWorks.EntityViewer.Quasar.dll",
   "browserAssembly": "CometWorks.EntityViewer.dll",
   "entryType": "CometWorks.EntityViewer.Quasar.EntityViewerQuasarPlugin",
@@ -11,7 +11,7 @@
     "quasar-plugin.css"
   ],
   "browserSdkVersion": 1,
-  "quasarVersion": ">=1.6.0",
+  "quasarVersion": ">=1.7.0",
   "companionPlugins": [
     {
       "id": "cometworks.entityviewer",

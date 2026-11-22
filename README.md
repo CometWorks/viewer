@@ -183,8 +183,8 @@ v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancell
 the viewer retains consent, user-bound asset tokens, private caches and history
 rules. Both existing URL prefixes remain compatibility aliases to the same SDK
 handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
-Entity Viewer 0.1.13 requires Quasar 1.6.0 and `browserSdkVersion: 1`. Upgrade
-Quasar before publishing/installing this viewer revision.
+Entity Viewer 0.1.14 requires Quasar 1.7.0 or later for its independently
+installed Razor components and uses browser SDK v1 for all viewer operations.
 
 ## Recording history
 
