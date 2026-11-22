@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
 using Quasar.Plugin.Abstractions.Operations;
+using Quasar.Services.Audit;
 using Quasar.Services.Auth;
 using Quasar.Services.Plugins;
 
@@ -20,6 +21,8 @@ internal sealed class QuasarSdkFixture : IDisposable
         services.AddSingleton<RbacConfigCatalog>();
         services.AddSingleton(new QuasarAuthOptions());
         services.AddSingleton<QuasarRoleMapper>();
+        services.AddSingleton(new QuasarAuditOptions { Directory = Path.Combine(root, "audit") });
+        services.AddSingleton<QuasarAuditLog>();
         services.AddScoped<QuasarOperationService>();
         services.AddScoped<IQuasarOperationDispatcher>(provider => provider.GetRequiredService<QuasarOperationService>());
         services.AddScoped<QuasarHttpOperations>();

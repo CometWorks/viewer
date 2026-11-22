@@ -1,0 +1,12 @@
+<linker>
+  <!-- Installed components can format local timestamps and poll with cancellation. -->
+  <assembly fullname="System.Private.CoreLib">
+    <type fullname="System.DateTimeOffset">
+      <method name="ToLocalTime" />
+      <method signature="System.String ToString(System.String)" />
+    </type>
+    <type fullname="System.Threading.Tasks.Task">
+      <method signature="System.Threading.Tasks.Task Delay(System.Int32,System.Threading.CancellationToken)" />
+    </type>
+  </assembly>
+</linker>

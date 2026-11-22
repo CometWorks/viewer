@@ -1,0 +1,38 @@
+@using System.Reflection
+@using Microsoft.AspNetCore.Components
+@inject NavigationManager Navigation
+
+@if (_header is not null && _cell is not null)
+{
+    <table>
+        <thead><tr><DynamicComponent Type="_header" /></tr></thead>
+        <tbody><tr><DynamicComponent Type="_cell" Parameters="Row" /></tr></tbody>
+    </table>
+}
+
+@code {
+    private Type? _header;
+    private Type? _cell;
+
+    // Quasar's Entities.CreateEntityExtensionParameters supplies these values locally.
+    private static readonly Dictionary<string, object> Row = new()
+    {
+        ["AgentId"] = "agent/one",
+        ["ServerName"] = "Preview",
+        ["EntityId"] = 9007199254740993L,
+        ["EntityType"] = "Grid",
+        ["EntitySubType"] = "LargeShip",
+        ["EntityDisplayName"] = "Freighter",
+        ["OwnerSteamId"] = 76561198000000000UL,
+        ["CanViewEntity"] = true,
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Test input is the installed adapter's UI dependency, supplied after host publish.
+        using var http = new HttpClient();
+        var assembly = Assembly.Load(await http.GetByteArrayAsync(Navigation.ToAbsoluteUri("fixture-ui.dll")));
+        _header = assembly.GetType("CometWorks.EntityViewer.Components.EntityViewerColumnHeader", throwOnError: true);
+        _cell = assembly.GetType("CometWorks.EntityViewer.Components.EntityViewerColumnCell", throwOnError: true);
+    }
+}
