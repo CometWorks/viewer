@@ -96,8 +96,10 @@ adapter and static assets together; no Quasar submodule update is required.
 
 ### Blazor WebAssembly dashboard integration
 
-The normal adapter build produces `CometWorks.EntityViewer.dll` beside
-`CometWorks.EntityViewer.Quasar.dll`. The former is the browser payload. It uses
+The root `quasar-plugin.json` declares `"browserAssembly": "CometWorks.EntityViewer.dll"`.
+Quasar resolves that filename beside the server entry assembly. In a normal
+Release install the package-relative path is
+`src/CometWorks.EntityViewer.Quasar/bin/Release/net10.0/CometWorks.EntityViewer.dll`. It uses
 the .NET 10 Blazor component packages and the dashboard's JS interop runtime.
 The adapter and the Magnetar companion run on the server. The UI DLL and the
 existing static asset tree can be installed independently of a dashboard publish.
@@ -111,8 +113,8 @@ replaces `quasar.entities.viewer-column-header` and
 dashboard supplies the existing typed row parameters, including the 64-bit entity
 and owner IDs. The Entity history navigation item requires `CanManageSecurity`.
 
-Quasar still needs to identify the enabled installation's UI DLL in its client
-catalog, serve and verify the corresponding bytes, and render the authorized
+The panel-scoped client catalog must validate the declared assembly against
+`GetRazorAssemblies()`, serve the enabled installation's DLL, and render the authorized
 contributions in the named outlets. The trimmed test host preserves
 `Microsoft.AspNetCore.Components`, `Microsoft.AspNetCore.Components.Web`,
 `Microsoft.JSInterop`, and framework methods for local timestamps and cancellable

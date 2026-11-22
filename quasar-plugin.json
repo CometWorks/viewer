@@ -3,6 +3,7 @@
   "displayName": "Entity Viewer",
   "version": "0.1.13",
   "entryAssembly": "CometWorks.EntityViewer.Quasar.dll",
+  "browserAssembly": "CometWorks.EntityViewer.dll",
   "entryType": "CometWorks.EntityViewer.Quasar.EntityViewerQuasarPlugin",
   "projectPath": "src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj",
   "staticAssets": "src/CometWorks.EntityViewer/wwwroot",

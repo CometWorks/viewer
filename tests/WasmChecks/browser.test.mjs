@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
 const webroot = fileURLToPath(new URL("./bin/Release/net10.0/publish/wwwroot/", import.meta.url));
 const assets = fileURLToPath(new URL("../../src/CometWorks.EntityViewer/wwwroot/", import.meta.url));
-const uiDll = fileURLToPath(new URL("../../src/CometWorks.EntityViewer.Quasar/bin/Release/net10.0/CometWorks.EntityViewer.dll", import.meta.url));
 const plugin = "_quasar/plugins/cometworks.entityviewer/";
 
 test("independently built Razor columns open the renderer in Blazor WASM", async t => {
+    const manifestUrl = new URL("../../quasar-plugin.json", import.meta.url);
+    const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
+    assert.equal(manifest.browserAssembly, "CometWorks.EntityViewer.dll");
+    const adapterProject = fileURLToPath(new URL(manifest.projectPath, manifestUrl));
+    const uiDll = join(dirname(adapterProject), "bin/Release/net10.0", manifest.browserAssembly);
     const restored = JSON.parse(await readFile(new URL("../../src/CometWorks.EntityViewer/obj/project.assets.json", import.meta.url), "utf8"));
     const framework = restored.project.frameworks["net10.0"].frameworkReferences;
     assert.ok(!Object.hasOwn(framework, "Microsoft.AspNetCore.App"), "The UI must also be consumable by a browser-wasm project");
