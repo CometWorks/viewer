@@ -1,5 +1,6 @@
 @using System.Reflection
 @using Microsoft.AspNetCore.Components
+@using Quasar.Components.Shared
 @inject NavigationManager Navigation
 
 @if (_header is not null && _cell is not null)
@@ -9,6 +10,10 @@
         <tbody><tr><DynamicComponent Type="_cell" Parameters="Row" /></tr></tbody>
     </table>
 }
+
+@* The dashboard shell mounts these beside the routed page; plugin dialogs render here. *@
+<QuasarDialogHost />
+<QuasarToastHost />
 
 @code {
     private Type? _header;

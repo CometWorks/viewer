@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
+using Quasar.Client.Ui;
 
 internal static class HostedPrefixChecks
 {
@@ -15,6 +16,8 @@ internal static class HostedPrefixChecks
             services.AddLogging();
             services.AddSingleton<NavigationManager>(new PanelNavigation("https://dash.test" + prefix));
             services.AddSingleton<IJSRuntime>(new NoScriptRuntime());
+            // The viewer dialog asks Quasar's dialog host for the stacked asset setup dialog.
+            services.AddQuasarUi();
             await using var provider = services.BuildServiceProvider();
             await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
             var html = await renderer.Dispatcher.InvokeAsync(async () =>

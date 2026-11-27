@@ -3,6 +3,11 @@
 <div class="quasar-preview" data-theme="@(_dark ? "dark" : "light")">
     <header class="preview-topbar"><strong>Entity Viewer Preview</strong><NavLink href="/" Match="NavLinkMatch.All"><ViewerIcon Icon="@ViewerIcons.ViewInAr" />Preview</NavLink><button type="button" aria-label="Toggle preview theme" aria-pressed="@(_dark ? "true" : "false")" @onclick="@(() => _dark = !_dark)"><ViewerIcon Icon="@(_dark ? ViewerIcons.LightMode : ViewerIcons.DarkMode)" />@(_dark ? "Light mode" : "Dark mode")</button></header>
     <main class="preview-content">@Body</main>
+    @* Quasar defines its dialog tokens on .quasar-shell; display: contents keeps the preview layout. *@
+    <div class="quasar-shell" style="display: contents">
+        <Quasar.Components.Shared.QuasarDialogHost />
+        <Quasar.Components.Shared.QuasarToastHost />
+    </div>
 </div>
 
 @code { private bool _dark = true; }

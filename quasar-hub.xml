@@ -5,11 +5,11 @@
     <FriendlyName>Entity Viewer</FriendlyName>
     <Author>CometWorks</Author>
     <Tooltip>Quasar entity viewer column and browser-side Space Engineers entity viewer.</Tooltip>
-    <Description>Entity Viewer contributes the viewer column on Quasar's Entities page, opens a fullscreen MudBlazor dialog, and serves the browser-side Space Engineers entity viewer runtime.</Description>
+    <Description>Entity Viewer contributes the viewer column on Quasar's Entities page, opens a fullscreen viewer through Quasar's native dialog host, and serves the browser-side Space Engineers entity viewer runtime.</Description>
     <PluginKind>QuasarUiPlugin</PluginKind>
     <ProjectPath>src/CometWorks.EntityViewer.Quasar/CometWorks.EntityViewer.Quasar.csproj</ProjectPath>
     <PackageManifest>quasar-plugin.json</PackageManifest>
-    <QuasarVersion>&gt;=1.7.0</QuasarVersion>
+    <QuasarVersion>&gt;=1.7.1</QuasarVersion>
     <ImplicitLoading>true</ImplicitLoading>
     <CompanionPluginIds>
         <CompanionPluginId>cometworks.entityviewer</CompanionPluginId>

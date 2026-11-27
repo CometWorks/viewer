@@ -1,35 +1,52 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject IQuasarDialogService Dialogs
 @inject Microsoft.AspNetCore.Components.NavigationManager Navigation
 
-<ViewerModal @ref="_dialog" Title="@Title" Fullscreen="true" ModuleUrl="@DialogModuleUrl" Closed="Closed">
-    <Header>
-        @if (!string.IsNullOrWhiteSpace(Subtitle)) { <span class="entity-viewer-subtitle">@Subtitle</span> }
-        <button type="button" class="entity-viewer-icon-button" title="Server asset streaming" aria-label="Server asset streaming" @onclick="OpenAssetSetup"><ViewerIcon Icon="@ViewerIcons.CloudSync" /></button>
-        <button type="button" class="entity-viewer-icon-button" title="Close viewer" aria-label="Close viewer" @onclick="Close"><ViewerIcon Icon="@ViewerIcons.Close" /></button>
-    </Header>
-    <ChildContent>
-        @if (!string.IsNullOrWhiteSpace(_notice)) { <p class="entity-viewer-notice" role="status">@_notice</p> }
-        @if (string.IsNullOrWhiteSpace(ViewerUrl)) { <p class="entity-viewer-notice entity-viewer-tone-error">Viewer URL missing.</p> }
-        else
-        {
-            <div class="entity-viewer-frame-shell"><iframe class="entity-viewer-frame" @key="_viewerRevision" src="@Navigation.ApplicationUrl(ViewerUrl)" title="@Title" allow="fullscreen"></iframe></div>
-        }
-        @if (_assetSetupOpen)
-        {
-            <EntityViewerAssetSetupDialog AssetSetupModuleUrl="@AssetSetupModuleUrl" ApiBasePath="@AssetSetupApiBasePath" Closed="AssetSetupClosed" />
-        }
-    </ChildContent>
-</ViewerModal>
+<header class="quasar-dialog-header entity-viewer-dialog-header">
+    <h2 class="quasar-dialog-title">@ViewerTitle</h2>
+    @if (!string.IsNullOrWhiteSpace(Subtitle)) { <span class="entity-viewer-subtitle">@Subtitle</span> }
+    <button type="button" class="entity-viewer-icon-button" title="Server asset streaming" aria-label="Server asset streaming" @onclick="OpenAssetSetupAsync"><ViewerIcon Icon="@ViewerIcons.CloudSync" /></button>
+    <button type="button" class="entity-viewer-icon-button" title="Close viewer" aria-label="Close viewer" @onclick="Close"><ViewerIcon Icon="@ViewerIcons.Close" /></button>
+</header>
+<div class="quasar-dialog-content entity-viewer-dialog-body">
+    @if (!string.IsNullOrWhiteSpace(_notice)) { <p class="entity-viewer-notice" role="status">@_notice</p> }
+    @if (string.IsNullOrWhiteSpace(ViewerUrl)) { <p class="entity-viewer-notice entity-viewer-tone-error">Viewer URL missing.</p> }
+    else
+    {
+        <div class="entity-viewer-frame-shell"><iframe class="entity-viewer-frame" @key="_viewerRevision" src="@Navigation.ApplicationUrl(ViewerUrl)" title="@ViewerTitle" allow="fullscreen"></iframe></div>
+    }
+</div>
 
 @code
 {
-    [Parameter] public EventCallback Closed { get; set; }
-    private ViewerModal? _dialog;
+    /// <summary>
+    /// Host dialog options for the viewer: the largest Quasar width, stretched by
+    /// <c>entity-viewer-fullscreen</c> in quasar-plugin.css to fill the viewport.
+    /// </summary>
+    public static QuasarDialogOptions Options => new()
+    {
+        MaxWidth = QuasarDialogWidth.ExtraLarge,
+        FullWidth = true,
+        // Clicks that miss the 3D canvas must not throw away the camera position.
+        BackdropClick = false,
+        Class = "entity-viewer-native-dialog entity-viewer-fullscreen",
+    };
+
+    private static QuasarDialogOptions AssetSetupOptions => new()
+    {
+        FullWidth = true,
+        Class = "entity-viewer-native-dialog",
+        Style = "--quasar-dialog-max-width:760px",
+    };
+
+    // Cascaded by Quasar's dialog host. Null only when the component is rendered outside a dialog.
+    [CascadingParameter] private IQuasarDialogInstance? Dialog { get; set; }
     private bool _assetSetupOpen;
+    private bool _assetSetupChanged;
     private string _notice = string.Empty;
-    private string DialogModuleUrl => AssetSetupModuleUrl[..(AssetSetupModuleUrl.LastIndexOf('/') + 1)] + "viewer-dialog.js";
+    private string ViewerTitle => string.IsNullOrWhiteSpace(Dialog?.Title) ? Title : Dialog.Title;
 
     [Parameter]
     public string ViewerUrl { get; set; } = string.Empty;
@@ -66,8 +83,7 @@
             if (status.CanManageStreaming &&
                 (status.ConsentRequired || (status.StreamingEnabled && !status.FileStreamingReady)))
             {
-                OpenAssetSetup();
-                StateHasChanged();
+                await OpenAssetSetupAsync();
             }
         }
         catch
@@ -76,15 +92,37 @@
         }
     }
 
-    private void OpenAssetSetup() => _assetSetupOpen = true;
-
-    private void AssetSetupClosed(bool changed)
+    private async Task OpenAssetSetupAsync()
     {
-        _assetSetupOpen = false;
-        if (changed)
+        if (_assetSetupOpen)
+            return;
+
+        _assetSetupOpen = true;
+        _assetSetupChanged = false;
+        try
+        {
+            var parameters = new QuasarDialogParameters<EntityViewerAssetSetupDialog>
+            {
+                { dialog => dialog.AssetSetupModuleUrl, AssetSetupModuleUrl },
+                { dialog => dialog.ApiBasePath, AssetSetupApiBasePath },
+                { dialog => dialog.Changed, EventCallback.Factory.Create(this, () => _assetSetupChanged = true) },
+            };
+            var reference = await Dialogs.ShowAsync<EntityViewerAssetSetupDialog>(
+                EntityViewerAssetSetupDialog.DefaultTitle, parameters, AssetSetupOptions);
+            // Escape and the backdrop cancel the dialog, so track changes separately from the result.
+            await reference.Result;
+        }
+        finally
+        {
+            _assetSetupOpen = false;
+        }
+
+        if (_assetSetupChanged)
         {
             _viewerRevision++;
             _notice = "Reloading viewer asset session.";
+            // The auto-open path runs from OnAfterRenderAsync, which does not re-render on completion.
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -94,7 +132,7 @@
         return _assetSetupModule;
     }
 
-    private Task Close() => _dialog?.CloseAsync() ?? Task.CompletedTask;
+    private void Close() => Dialog?.Cancel();
 
     public async ValueTask DisposeAsync()
     {

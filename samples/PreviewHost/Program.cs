@@ -2,12 +2,15 @@ using CometWorks.EntityViewer.Components;
 using CometWorks.EntityViewer.Services;
 using Microsoft.Extensions.FileProviders;
 using PreviewHost.Components;
+using Quasar.Client.Ui;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddEntityViewerUi();
+// The plugin opens its dialogs through Quasar's native dialog host, as in the dashboard.
+builder.Services.AddQuasarUi();
 
 var app = builder.Build();
 
@@ -19,6 +22,8 @@ if (!app.Environment.IsDevelopment())
 
 app.UseStaticFiles();
 UseViewerVendorAssets(app);
+// Quasar's dialog host script and styles, copied beside the build output.
+UseStaticDirectory(app, Path.Combine(AppContext.BaseDirectory, "quasar-ui"), "");
 app.UseAntiforgery();
 
 // Explicit UI-only SDK adapter. No Quasar credentials or live server access.
