@@ -7,11 +7,26 @@
     <AssemblyName>CometWorks.EntityViewer</AssemblyName>
     <RootNamespace>CometWorks.EntityViewer</RootNamespace>
     <PackageId>CometWorks.EntityViewer</PackageId>
+    <QuasarUiAbstractionsProject Condition="'$(QuasarUiAbstractionsProject)' == '' and Exists('$(MSBuildThisFileDirectory)../../../quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj')">$(MSBuildThisFileDirectory)../../../quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj</QuasarUiAbstractionsProject>
+    <QuasarUiAbstractionsProject Condition="'$(QuasarUiAbstractionsProject)' == ''">$(MSBuildThisFileDirectory)../../../Quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj</QuasarUiAbstractionsProject>
   </PropertyGroup>
 
   <ItemGroup>
     <SupportedPlatform Include="browser" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.13" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.14" />
+  </ItemGroup>
+
+  <!-- The Quasar host supplies Quasar.Ui.Abstractions at runtime; never ship a copy with the plugin.
+       QuasarHub passes the running worker's DLL; a source checkout falls back to the sibling project. -->
+  <ItemGroup Condition="'$(QuasarUiAbstractionsAssembly)' != '' and Exists('$(QuasarUiAbstractionsAssembly)')">
+    <Reference Include="Quasar.Ui.Abstractions">
+      <HintPath>$(QuasarUiAbstractionsAssembly)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="('$(QuasarUiAbstractionsAssembly)' == '' or !Exists('$(QuasarUiAbstractionsAssembly)')) and Exists('$(QuasarUiAbstractionsProject)')">
+    <ProjectReference Include="$(QuasarUiAbstractionsProject)" Private="false" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

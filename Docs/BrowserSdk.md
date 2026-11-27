@@ -1,7 +1,7 @@
 # Browser SDK integration
 
-Entity Viewer 0.1.14 requires Quasar 1.7.0 or later for the WASM dashboard's
-plugin catalog. Its package declares `CometWorks.EntityViewer.dll` as the browser
+Entity Viewer 0.1.15 requires Quasar 1.7.1 or later for the WASM dashboard's
+plugin catalog and the native dialog host (`IQuasarDialogService`). Its package declares `CometWorks.EntityViewer.dll` as the browser
 assembly and uses Quasar browser SDK v1. Publish the adapter, browser assembly,
 and static assets together after the compatible Quasar release and canary checks.
 Quasar rejects unsupported SDK versions before loading the plugin assembly.

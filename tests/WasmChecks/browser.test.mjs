@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,6 +8,11 @@ const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).h
 const webroot = fileURLToPath(new URL("./bin/Release/net10.0/publish/wwwroot/", import.meta.url));
 const assets = fileURLToPath(new URL("../../src/CometWorks.EntityViewer/wwwroot/", import.meta.url));
 const plugin = "_quasar/plugins/cometworks.entityviewer/";
+// Quasar's dialogs scale in on open; measure the settled box.
+const settledBox = async dialog => {
+    await dialog.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+    return dialog.boundingBox();
+};
 
 test("independently built Razor columns open the renderer in Blazor WASM", async t => {
     const manifestUrl = new URL("../../quasar-plugin.json", import.meta.url);
@@ -19,7 +24,9 @@ test("independently built Razor columns open the renderer in Blazor WASM", async
     const framework = restored.project.frameworks["net10.0"].frameworkReferences;
     assert.ok(!Object.hasOwn(framework, "Microsoft.AspNetCore.App"), "The UI must also be consumable by a browser-wasm project");
     const bootFiles = await readdir(join(webroot, "_framework"));
-    assert.ok(bootFiles.every(file => !/EntityViewer|Quasar|Magnetar/i.test(file)));
+    assert.ok(bootFiles.every(file => !/EntityViewer|Magnetar/i.test(file)));
+    // Quasar.Ui.Abstractions comes from the host; a plugin copy would split the dialog service's type identity.
+    await assert.rejects(access(join(dirname(uiDll), "Quasar.Ui.Abstractions.dll")));
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH });
     t.after(() => browser.close());
 
@@ -49,7 +56,7 @@ test("independently built Razor columns open the renderer in Blazor WASM", async
                 return route.fulfill({ path: join(assets, asset) });
             }
             if (path === "fixture-ui.dll") return route.fulfill({ path: uiDll });
-            if (!path || path.startsWith("_framework/"))
+            if (!path || path.startsWith("_framework/") || path === "quasar-ui.js" || path === "quasar-ui.css")
                 return route.fulfill({ path: join(webroot, path || "index.html") });
             return route.abort();
         });
@@ -59,6 +66,11 @@ test("independently built Razor columns open the renderer in Blazor WASM", async
         assert.equal(await page.getByRole("columnheader").textContent(), "Viewer");
         assert.deepEqual(pluginRequests, ["quasar-plugin.css"]);
         await open.click();
+        const viewer = page.getByRole("dialog", { name: "Freighter" });
+        await viewer.waitFor();
+        const viewport = page.viewportSize();
+        const viewerBox = await settledBox(viewer);
+        assert.deepEqual([viewerBox.x, viewerBox.y, viewerBox.width, viewerBox.height], [0, 0, viewport.width, viewport.height]);
         const frame = page.frameLocator("iframe.entity-viewer-frame");
         await frame.locator("#log").getByText("Loaded scene 9007199254740993.", { exact: false }).waitFor({ state: "attached" });
         assert.ok(pluginRequests.includes("vendor/three/build/three.module.js"));
@@ -69,6 +81,13 @@ test("independently built Razor columns open the renderer in Blazor WASM", async
             : setup.getByText("Server asset streaming can only be configured", { exact: false });
         await status.or(setup.getByRole("alert")).first().waitFor();
         assert.equal(await status.isVisible(), true, await setup.innerText());
+        // The host centers the stacked setup dialog; it must not hug the left edge or fill the height.
+        const setupBox = await settledBox(setup);
+        // Centered in the viewport, less the scrollbar gutter Quasar keeps while a dialog is open.
+        const layoutWidth = await page.evaluate(() => document.documentElement.getBoundingClientRect().width);
+        assert.ok(Math.abs(setupBox.x + setupBox.width / 2 - layoutWidth / 2) <= 1, JSON.stringify(setupBox));
+        assert.equal(await setup.evaluate(element => getComputedStyle(element).position), "fixed");
+        assert.ok(setupBox.width <= 760 && setupBox.height < viewport.height, JSON.stringify(setupBox));
         if (manager) {
             await status.click();
             await setup.getByText("Consent accepted", { exact: true }).waitFor();
@@ -85,9 +104,12 @@ test("independently built Razor columns open the renderer in Blazor WASM", async
             assert.ok(await refreshedPath.isVisible(), await setup.innerText());
             assert.equal(await refreshedPath.inputValue(), "/fixture/refreshed");
         }
-        await page.getByRole("button", { name: "Close", exact: true }).click();
+        await setup.getByRole("button", { name: "Close", exact: true }).click();
+        await setup.waitFor({ state: "detached" });
         await page.keyboard.press("Escape");
-        await page.locator("dialog").waitFor({ state: "detached" });
+        await viewer.waitFor({ state: "detached" });
+        // Quasar removes each element once its native close handshake finishes.
+        await page.waitForFunction(() => document.querySelectorAll("dialog").length === 0);
         assert.equal(await open.evaluate(button => button === document.activeElement), true);
     });
 });

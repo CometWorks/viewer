@@ -1,10 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><IsPackable>false</IsPackable><IsTestProject>true</IsTestProject></PropertyGroup>
+  <PropertyGroup>
+    <QuasarUiAbstractionsProject Condition="'$(QuasarUiAbstractionsProject)' == '' and Exists('$(MSBuildThisFileDirectory)../../../quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj')">$(MSBuildThisFileDirectory)../../../quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj</QuasarUiAbstractionsProject>
+    <QuasarUiAbstractionsProject Condition="'$(QuasarUiAbstractionsProject)' == ''">$(MSBuildThisFileDirectory)../../../Quasar/Quasar.Ui.Abstractions/Quasar.Ui.Abstractions.csproj</QuasarUiAbstractionsProject>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="bunit" Version="2.10.3" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
     <ProjectReference Include="../../src/CometWorks.EntityViewer/CometWorks.EntityViewer.csproj" />
+    <!-- The plugin leaves Quasar.Ui.Abstractions to the host; the tests stand in for the host. -->
+    <ProjectReference Include="$(QuasarUiAbstractionsProject)" />
   </ItemGroup>
 </Project>

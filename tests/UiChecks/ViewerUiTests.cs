@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Components;
 using CometWorks.EntityViewer.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
+using Quasar.Ui;
 using Xunit;
 
 namespace Viewer.UiChecks;
@@ -13,12 +14,14 @@ public sealed class ViewerUiTests
     [Theory]
     [InlineData("/")]
     [InlineData("/my-server-panel/")]
-    public async Task ColumnOpensNativeViewerWithContextAndReturnsFocusThroughClose(string prefix)
+    public async Task ColumnOpensViewerThroughQuasarDialogHost(string prefix)
     {
         await using var context = new BunitContext();
         context.Services.AddSingleton<NavigationManager>(new PanelNavigation(prefix));
         var js = new ViewerJs();
         context.Services.AddSingleton<IJSRuntime>(js);
+        var dialogs = new FakeDialogs();
+        context.Services.AddSingleton<IQuasarDialogService>(dialogs);
         var cell = context.Render<EntityViewerColumnCell>(p => p.Add(x => x.AgentId, "agent/one")
             .Add(x => x.EntityId, 42).Add(x => x.EntityType, "Grid").Add(x => x.EntityDisplayName, "Freighter")
             .Add(x => x.CanViewEntity, true).Add(x => x.AutoOpenAssetSetup, false));
@@ -29,16 +32,44 @@ public sealed class ViewerUiTests
         var header = context.Render<EntityViewerColumnHeader>();
         Assert.Contains("mud-table-cell", header.Find("th").ClassList);
         await cell.Find("button").ClickAsync();
-        Assert.Contains("agentId=agent%2Fone&entityId=42&voxels=1&context=1", cell.Find("iframe").GetAttribute("src"));
-        Assert.StartsWith("https://dash.test" + prefix + "_quasar/plugins/", cell.Find("iframe").GetAttribute("src"));
-        Assert.Contains("entity-viewer-fullscreen", cell.Find("dialog").ClassName);
-        Assert.Contains(js.Calls, x => x.Name == "import" && (string)x.Arguments![0]! == "https://dash.test" + prefix + "_quasar/plugins/cometworks.entityviewer/viewer-dialog.js");
-        Assert.Contains(js.Calls, x => x.Name == "open");
-        if (Environment.GetEnvironmentVariable("VIEWER_UI_PREVIEW_OUTPUT") is { Length: > 0 } preview)
-            await File.WriteAllTextAsync(preview, cell.Markup);
-        await cell.Find("button[aria-label='Close viewer']").ClickAsync();
+
+        // The dialog belongs to Quasar's shell host, never to the table cell.
         Assert.Empty(cell.FindAll("dialog"));
-        Assert.Contains(js.Calls, x => x.Name == "close");
+        var shown = Assert.Single(dialogs.Shown);
+        Assert.Equal(typeof(EntityViewerDialog), shown.Component);
+        Assert.Equal("Freighter", shown.Title);
+        Assert.Contains("entity-viewer-fullscreen", shown.Options!.Class);
+        Assert.Equal(QuasarDialogWidth.ExtraLarge, shown.Options.MaxWidth);
+        Assert.True(shown.Options.FullWidth);
+
+        var viewer = context.Render<EntityViewerDialog>(p => p.AddCascadingValue<IQuasarDialogInstance>(shown.Instance)
+            .Add(x => x.ViewerUrl, (string)shown.Parameters!["ViewerUrl"]!)
+            .Add(x => x.Subtitle, (string)shown.Parameters["Subtitle"]!)
+            .Add(x => x.AssetSetupModuleUrl, (string)shown.Parameters["AssetSetupModuleUrl"]!)
+            .Add(x => x.AssetSetupApiBasePath, (string)shown.Parameters["AssetSetupApiBasePath"]!)
+            .Add(x => x.AutoOpenAssetSetup, (bool)shown.Parameters["AutoOpenAssetSetup"]!));
+        Assert.Equal("Freighter", viewer.Find("h2.quasar-dialog-title").TextContent);
+        Assert.Contains("agentId=agent%2Fone&entityId=42&voxels=1&context=1", viewer.Find("iframe").GetAttribute("src"));
+        Assert.StartsWith("https://dash.test" + prefix + "_quasar/plugins/", viewer.Find("iframe").GetAttribute("src"));
+        if (Environment.GetEnvironmentVariable("VIEWER_UI_PREVIEW_OUTPUT") is { Length: > 0 } preview)
+            await File.WriteAllTextAsync(preview, viewer.Markup);
+
+        // Asset setup stacks as a second host dialog; a change made there reloads the viewer once it closes.
+        var revision = viewer.Find("iframe");
+        // The handler stays pending until the setup dialog closes, like the real host.
+        var opening = viewer.Find("button[aria-label='Server asset streaming']").ClickAsync();
+        var setup = dialogs.Shown[1];
+        Assert.Equal(typeof(EntityViewerAssetSetupDialog), setup.Component);
+        Assert.Equal(EntityViewerAssetSetupDialog.DefaultTitle, setup.Title);
+        Assert.False(setup.Options!.FullWidth && setup.Options.Class!.Contains("entity-viewer-fullscreen"));
+        await viewer.InvokeAsync(() => ((EventCallback)setup.Parameters!["Changed"]!).InvokeAsync());
+        await viewer.InvokeAsync(() => setup.Instance.Cancel());
+        await opening.WaitAsync(TimeSpan.FromSeconds(10));
+        viewer.WaitForAssertion(() => Assert.Contains("Reloading viewer asset session.", viewer.Markup));
+        Assert.NotSame(revision, viewer.Find("iframe"));
+
+        await viewer.Find("button[aria-label='Close viewer']").ClickAsync();
+        Assert.True(shown.Instance.Result!.Canceled);
         cell.Render(p => p.Add(x => x.CanViewEntity, false));
         Assert.True(cell.Find("button").HasAttribute("disabled"));
         Assert.Single(cell.FindAll("button svg path[stroke='currentColor']"));
@@ -60,6 +91,8 @@ public sealed class ViewerUiTests
         string entityType, string? subType, bool canView, string? agentId, string? viewerUrl, string tooltip)
     {
         using var context = new BunitContext();
+        var dialogs = new FakeDialogs();
+        context.Services.AddSingleton<IQuasarDialogService>(dialogs);
         var cell = context.Render<EntityViewerColumnCell>(p => p.Add(x => x.EntityId, 42)
             .Add(x => x.EntityType, entityType).Add(x => x.EntitySubType, subType)
             .Add(x => x.CanViewEntity, canView).Add(x => x.AgentId, agentId).Add(x => x.ViewerUrl, viewerUrl));
@@ -72,7 +105,7 @@ public sealed class ViewerUiTests
         if (disabled)
         {
             button.Click();
-            Assert.Empty(cell.FindAll("dialog"));
+            Assert.Empty(dialogs.Shown);
         }
     }
 
@@ -85,8 +118,11 @@ public sealed class ViewerUiTests
         context.Services.AddSingleton<NavigationManager>(new PanelNavigation(prefix));
         var js = new ViewerJs { CanManage = true, ConsentRequired = true };
         context.Services.AddSingleton<IJSRuntime>(js);
-        bool? changed = null;
-        var setup = context.Render<EntityViewerAssetSetupDialog>(p => p.Add(x => x.Closed, value => changed = value));
+        var changes = 0;
+        var instance = new FakeInstance(EntityViewerAssetSetupDialog.DefaultTitle);
+        var setup = context.Render<EntityViewerAssetSetupDialog>(p => p.AddCascadingValue<IQuasarDialogInstance>(instance)
+            .Add(x => x.Changed, () => changes++));
+        Assert.Equal(EntityViewerAssetSetupDialog.DefaultTitle, setup.Find("h2.quasar-dialog-title").TextContent);
         Assert.Contains("Consent Required", setup.Markup);
         if (Environment.GetEnvironmentVariable("VIEWER_UI_PREVIEW_OUTPUT") is { Length: > 0 } preview)
             await File.WriteAllTextAsync(preview + ".assets", setup.Markup);
@@ -102,7 +138,8 @@ public sealed class ViewerUiTests
         Assert.Equal("ExternalInstall", request.GetProperty("baseGameSourceMode").GetString());
         Assert.Equal("/games/SpaceEngineers/Content", request.GetProperty("baseGameContentPath").GetString());
         await setup.FindAll("button").Single(x => x.TextContent.Trim() == "Close").ClickAsync();
-        Assert.True(changed);
+        Assert.Equal(1, changes);
+        Assert.True(instance.Result!.TryGetData(out bool changed) && changed);
     }
 
     [Fact]
@@ -114,6 +151,50 @@ public sealed class ViewerUiTests
         Assert.Contains("management access", setup.Markup);
         Assert.Empty(setup.FindAll("input, select"));
         Assert.DoesNotContain("Accept and Enable", setup.Markup);
+    }
+
+    private sealed record ShownDialog(Type Component, string? Title, QuasarDialogParameters? Parameters,
+        QuasarDialogOptions? Options, FakeInstance Instance);
+
+    // Stands in for Quasar's shell host: records each request and lets the test close it.
+    private sealed class FakeDialogs : IQuasarDialogService
+    {
+        public List<ShownDialog> Shown { get; } = [];
+
+        public IQuasarDialogReference Show<TComponent>(string? title = null, QuasarDialogParameters? parameters = null,
+            QuasarDialogOptions? options = null, CancellationToken cancellationToken = default) where TComponent : IComponent =>
+            Show(typeof(TComponent), title, parameters, options, cancellationToken);
+
+        public IQuasarDialogReference Show(Type componentType, string? title = null, QuasarDialogParameters? parameters = null,
+            QuasarDialogOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var instance = new FakeInstance(title);
+            Shown.Add(new ShownDialog(componentType, title, parameters, options, instance));
+            return instance;
+        }
+
+        public Task<IQuasarDialogReference> ShowAsync<TComponent>(string? title = null, QuasarDialogParameters? parameters = null,
+            QuasarDialogOptions? options = null, CancellationToken cancellationToken = default) where TComponent : IComponent =>
+            Task.FromResult(Show(typeof(TComponent), title, parameters, options, cancellationToken));
+
+        public Task<IQuasarDialogReference> ShowAsync(Type componentType, string? title = null, QuasarDialogParameters? parameters = null,
+            QuasarDialogOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Show(componentType, title, parameters, options, cancellationToken));
+
+        public Task<bool?> ShowMessageBoxAsync(string title, string message, string yesText = "OK", string? noText = null,
+            string? cancelText = null, QuasarDialogOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class FakeInstance(string? title) : IQuasarDialogInstance, IQuasarDialogReference
+    {
+        private readonly TaskCompletionSource<QuasarDialogResult> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Guid Id { get; } = Guid.NewGuid();
+        public string? Title { get; } = title;
+        public QuasarDialogResult? Result => _result.Task.IsCompleted ? _result.Task.Result : null;
+        Task<QuasarDialogResult> IQuasarDialogReference.Result => _result.Task;
+        public void Close(QuasarDialogResult? result = null) => _result.TrySetResult(result ?? QuasarDialogResult.Ok());
+        public void Cancel() => _result.TrySetResult(QuasarDialogResult.Cancel());
     }
 
     private sealed class PanelNavigation : NavigationManager

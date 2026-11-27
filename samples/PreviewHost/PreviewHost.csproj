@@ -4,10 +4,18 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Quasar checkout that supplies the native dialog host the plugin opens its dialogs in. -->
+    <QuasarRoot Condition="'$(QuasarRoot)' == '' and Exists('$(MSBuildThisFileDirectory)../../../quasar/Quasar.Client/Quasar.Client.csproj')">$(MSBuildThisFileDirectory)../../../quasar/</QuasarRoot>
+    <QuasarRoot Condition="'$(QuasarRoot)' == ''">$(MSBuildThisFileDirectory)../../../Quasar/</QuasarRoot>
+    <QuasarRoot>$([MSBuild]::EnsureTrailingSlash('$(QuasarRoot)'))</QuasarRoot>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CometWorks.EntityViewer\CometWorks.EntityViewer.csproj" />
+    <ProjectReference Include="$(QuasarRoot)Quasar.Client/Quasar.Client.csproj" />
+    <!-- Served by Program.cs: the Web SDK does not publish linked files outside the project as static web assets. -->
+    <None Include="$(QuasarRoot)Quasar/wwwroot/quasar-ui.js" Link="quasar-ui/quasar-ui.js" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(QuasarRoot)Quasar/wwwroot/quasar-ui.css" Link="quasar-ui/quasar-ui.css" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

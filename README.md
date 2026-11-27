@@ -26,7 +26,7 @@ and mounts `src/CometWorks.EntityViewer/wwwroot` under
 
 The repository follows the Quasar UI plugin template split:
 
-- `CometWorks.EntityViewer` owns Razor components, native browser dialog UI, shared UI
+- `CometWorks.EntityViewer` owns Razor components, the viewer and asset setup dialog content, shared UI
   service registration, and static assets.
 - `CometWorks.EntityViewer.Quasar` implements `IQuasarPlugin` and contributes the
   Entities page viewer column extension targets. Its scene API endpoint calls
@@ -53,8 +53,11 @@ also asks Quasar to inject scoped `quasar-plugin.css` from that static asset
 directory so the viewer dialog and replacement column can share host page
 styling without loading the iframe-global viewer runtime CSS into Quasar. The
 manifest also declares the `cometworks.entityviewer` companion plugin id. The
-adapter opens a fullscreen native browser dialog that serves the viewer from
-`/_quasar/plugins/cometworks.entityviewer/`.
+adapter opens a fullscreen dialog through Quasar's `IQuasarDialogService`
+(`Quasar.Ui.Abstractions`) that serves the viewer from
+`/_quasar/plugins/cometworks.entityviewer/`. The host renders the dialog in its
+shell, so it is centered and stacked in the top layer rather than inside the
+Entities table cell.
 
 The DIS-0042 Viewer follow-up needs both Quasar's shared browser trusted-principal
 update and this plugin's asset path update. See [asset boundaries and rollout](Docs/EntityViewer.md#asset-boundary).
@@ -127,13 +130,18 @@ self-hosted SDK calls use HTTP(S). Live transport acceptance belongs in the
 integrated host and SDK tests.
 
 To exercise the independent installation, publish the test host, then build
-the plugin and run the Chromium check from this checkout. Supply the Quasar
-abstractions assembly path when a sibling Quasar checkout is unavailable.
+the plugin and run the Chromium check from this checkout. The test host mounts
+Quasar's real dialog host from `Quasar.Client`, so it needs a Quasar checkout:
+a sibling `../Quasar` is found automatically, otherwise pass `-p:QuasarRoot`.
+Supply the Quasar abstractions assembly paths when a sibling Quasar checkout is
+unavailable; the browser assembly compiles against `Quasar.Ui.Abstractions.dll`,
+which the host supplies at runtime and the plugin never ships.
 
 ```bash
-dotnet publish tests/WasmChecks -c Release
+dotnet publish tests/WasmChecks -c Release -p:QuasarRoot=/path/to/Quasar/
 dotnet build src/CometWorks.EntityViewer.Quasar -c Release \
-  -p:QuasarPluginAbstractionsAssembly=/path/to/Quasar.Plugin.Abstractions.dll
+  -p:QuasarPluginAbstractionsAssembly=/path/to/Quasar.Plugin.Abstractions.dll \
+  -p:QuasarUiAbstractionsAssembly=/path/to/Quasar.Ui.Abstractions.dll
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROME_PATH=/path/to/chrome \
   node --test tests/WasmChecks/browser.test.mjs
 ```
@@ -183,8 +191,8 @@ v1. Quasar owns transport discovery, sessions, CSRF, transfer limits and cancell
 the viewer retains consent, user-bound asset tokens, private caches and history
 rules. Both existing URL prefixes remain compatibility aliases to the same SDK
 handlers and administrator-editable authorization rules. See [SDK integration](Docs/BrowserSdk.md).
-Entity Viewer 0.1.14 requires Quasar 1.7.0 or later for its independently
-installed Razor components and uses browser SDK v1 for all viewer operations.
+Entity Viewer 0.1.15 requires Quasar 1.7.1 or later for its independently
+installed Razor components and Quasar's native dialog host and uses browser SDK v1 for all viewer operations.
 
 ## Recording history
 

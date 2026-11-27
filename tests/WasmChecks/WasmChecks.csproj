@@ -3,13 +3,25 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Quasar checkout that supplies the real dialog host. Quasar's check-viewer.py passes it explicitly. -->
+    <QuasarRoot Condition="'$(QuasarRoot)' == '' and Exists('$(MSBuildThisFileDirectory)../../../quasar/Quasar.Client/Quasar.Client.csproj')">$(MSBuildThisFileDirectory)../../../quasar/</QuasarRoot>
+    <QuasarRoot Condition="'$(QuasarRoot)' == ''">$(MSBuildThisFileDirectory)../../../Quasar/</QuasarRoot>
+    <QuasarRoot>$([MSBuild]::EnsureTrailingSlash('$(QuasarRoot)'))</QuasarRoot>
   </PropertyGroup>
   <ItemGroup>
     <!-- Installed components use Razor renderer APIs unknown at host publish time. -->
     <TrimmerRootAssembly Include="Microsoft.AspNetCore.Components" />
     <TrimmerRootAssembly Include="Microsoft.AspNetCore.Components.Web" />
     <TrimmerRootAssembly Include="Microsoft.JSInterop" />
+    <!-- The plugin compiles against the host's public UI contract, including members the host never calls. -->
+    <TrimmerRootAssembly Include="Quasar.Ui.Abstractions" />
     <TrimmerRootDescriptor Include="framework.xml" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.13" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.14" />
+    <ProjectReference Include="$(QuasarRoot)Quasar.Client/Quasar.Client.csproj" />
+    <Content Include="$(QuasarRoot)Quasar/wwwroot/quasar-ui.js" Link="wwwroot/quasar-ui.js" />
+    <Content Include="$(QuasarRoot)Quasar/wwwroot/quasar-ui.css" Link="wwwroot/quasar-ui.css" />
   </ItemGroup>
+  <Target Name="RequireQuasarCheckout" BeforeTargets="ResolveProjectReferences" Condition="!Exists('$(QuasarRoot)Quasar.Client/Quasar.Client.csproj')">
+    <Error Text="WasmChecks hosts the plugin in Quasar's dialog host. Pass -p:QuasarRoot=&lt;Quasar checkout&gt;; '$(QuasarRoot)' has no Quasar.Client project." />
+  </Target>
 </Project>
